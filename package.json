@@ -8,7 +8,8 @@
   },
   "scripts": {
     "prebuild": "rimraf dist",
-    "build": "node scripts/obfuscate.js",
+    "build": "node scripts/build-simple.js",
+    "build:obfuscated": "node scripts/obfuscate.js",
     "verify": "node scripts/verify-obfuscation.js",
     "prepublishOnly": "node scripts/prepublish.js && npm run build && npm run verify",
     "publish:protected": "node scripts/publish-protected.js",

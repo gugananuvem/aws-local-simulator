@@ -11,57 +11,47 @@ const path = require('path');
 const { rimrafSync } = require('rimraf');
 const mkdirp = require('mkdirp');
 
-// Configuração do obfuscator
+// Configuração do obfuscator - REMOVENDO optionsPreset
 const obfuscatorConfig = {
     compact: true,
-    controlFlowFlattening: true,
-    controlFlowFlatteningThreshold: 0.75,
-    deadCodeInjection: true,
-    deadCodeInjectionThreshold: 0.4,
+    controlFlowFlattening: false, // Desabilitado para evitar problemas
+    deadCodeInjection: false,
     debugProtection: false,
     debugProtectionInterval: false,
     disableConsoleOutput: false,
-    domainLock: [],
-    domainLockRedirectUrl: 'about:blank',
-    forceTransformStrings: [],
-    identifierNamesCache: null,
     identifierNamesGenerator: 'hexadecimal',
-    identifiersDictionary: [],
     identifiersPrefix: '',
-    ignoreImports: true,
     inputFileName: '',
     log: false,
-    numbersToExpressions: true,
-    optionsPreset: 'high',
+    numbersToExpressions: false,
     renameGlobals: false,
     renameProperties: false,
     renamePropertiesMode: 'safe',
     reservedNames: [],
     reservedStrings: [],
     seed: 0,
-    selfDefending: true,
+    selfDefending: false, // Desabilitado para evitar problemas
     simplify: true,
     sourceMap: false,
     sourceMapBaseUrl: '',
     sourceMapFileName: '',
     sourceMapMode: 'separate',
-    splitStrings: true,
-    splitStringsChunkLength: 10,
+    splitStrings: false,
     stringArray: true,
-    stringArrayCallsTransform: true,
+    stringArrayCallsTransform: false,
     stringArrayCallsTransformThreshold: 0.5,
-    stringArrayEncoding: ['rc4'],
+    stringArrayEncoding: [],
     stringArrayIndexesType: ['hexadecimal-number'],
     stringArrayIndexShift: true,
     stringArrayRotate: true,
     stringArrayShuffle: true,
-    stringArrayWrappersCount: 2,
+    stringArrayWrappersCount: 1,
     stringArrayWrappersChainedCalls: true,
-    stringArrayWrappersParametersMaxCount: 4,
+    stringArrayWrappersParametersMaxCount: 2,
     stringArrayWrappersType: 'function',
     stringArrayThreshold: 0.75,
     target: 'node',
-    transformObjectKeys: true,
+    transformObjectKeys: false,
     unicodeEscapeSequence: false
 };
 
@@ -131,18 +121,17 @@ class Obfuscator {
         console.log('📋 Copiando arquivos de configuração...');
         
         // Copia templates
-        const templates = [
-            'src/templates/aws-config-template.js',
-            'src/templates/aws-config-template.mjs',
-            'src/templates/config-template.json'
-        ];
+        const templatesDir = path.join(process.cwd(), 'src', 'templates');
+        const templatesDestDir = path.join(this.buildDir, 'src', 'templates');
         
-        for (const template of templates) {
-            const srcPath = path.join(process.cwd(), template);
-            const destPath = path.join(this.buildDir, template);
-            if (fs.existsSync(srcPath)) {
+        if (fs.existsSync(templatesDir)) {
+            mkdirp.sync(templatesDestDir);
+            const files = fs.readdirSync(templatesDir);
+            for (const file of files) {
+                const srcPath = path.join(templatesDir, file);
+                const destPath = path.join(templatesDestDir, file);
                 fs.copyFileSync(srcPath, destPath);
-                console.log(`   ✅ Copiado: ${template}`);
+                console.log(`   ✅ Copiado: src/templates/${file}`);
             }
         }
         
@@ -151,6 +140,8 @@ class Obfuscator {
             const srcPath = path.join(process.cwd(), file);
             const destPath = path.join(this.buildDir, file);
             if (fs.existsSync(srcPath)) {
+                const destDir = path.dirname(destPath);
+                mkdirp.sync(destDir);
                 fs.copyFileSync(srcPath, destPath);
                 console.log(`   ✅ Preservado: ${file}`);
             }
@@ -197,15 +188,17 @@ class Obfuscator {
         try {
             const code = fs.readFileSync(inputPath, 'utf8');
             
-            // Aplica obfuscation
-            const obfuscated = JavaScriptObfuscator.obfuscate(code, {
+            // Configuração simplificada para evitar erros
+            const config = {
                 ...obfuscatorConfig,
-                // Configurações específicas para arquivos binários
                 ...(inputPath.includes('bin/') && {
                     disableConsoleOutput: false,
                     selfDefending: false
                 })
-            });
+            };
+            
+            // Aplica obfuscation
+            const obfuscated = JavaScriptObfuscator.obfuscate(code, config);
             
             // Cria diretório de destino
             mkdirp.sync(path.dirname(outputPath));
@@ -217,7 +210,7 @@ class Obfuscator {
             console.log(`   ✅ Ofuscado: ${relativePath}`);
             
         } catch (error) {
-            console.error(`   ❌ Erro ao ofuscar ${inputPath}:`, error.message);
+            console.error(`   ❌ Erro ao ofuscar ${path.basename(inputPath)}: ${error.message}`);
             // Em caso de erro, copia o arquivo original
             mkdirp.sync(path.dirname(outputPath));
             fs.copyFileSync(inputPath, outputPath);
@@ -233,6 +226,10 @@ class Obfuscator {
             const stat = fs.statSync(filePath);
             
             if (stat.isDirectory()) {
+                // Pula diretório templates para não ofuscar
+                if (file === 'templates') {
+                    continue;
+                }
                 this.getAllFiles(filePath, fileList);
             } else {
                 fileList.push(filePath);
@@ -271,22 +268,26 @@ class Obfuscator {
         
         // Atualiza paths para apontar para os arquivos ofuscados
         packageJson.main = 'src/index.js';
-        packageJson.bin = {
-            'aws-local-simulator': 'bin/aws-local-simulator.js'
+        if (packageJson.bin) {
+            packageJson.bin = {
+                'aws-local-simulator': 'bin/aws-local-simulator.js'
+            };
+        }
+        
+        // Remove scripts de desenvolvimento
+        delete packageJson.scripts;
+        
+        // Adiciona script básico
+        packageJson.scripts = {
+            "start": "node bin/aws-local-simulator.js start"
         };
+        
+        // Remove devDependencies
+        delete packageJson.devDependencies;
         
         // Adiciona metadados sobre ofuscação
         packageJson.obfuscated = true;
         packageJson.obfuscatedAt = new Date().toISOString();
-        packageJson.obfuscator = 'javascript-obfuscator';
-        
-        // Remove scripts de desenvolvimento
-        delete packageJson.scripts.test;
-        delete packageJson.scripts.lint;
-        delete packageJson.scripts.dev;
-        
-        // Remove devDependencies
-        delete packageJson.devDependencies;
         
         fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
         console.log('   ✅ Package.json atualizado');
