@@ -10,7 +10,13 @@ const path = require("path");
 class DynamoDBSimulator {
   constructor(config) {
     this.config = config;
-    this.dataDir = path.join(process.env.AWS_LOCAL_SIMULATOR_DATA_DIR, "dynamodb");
+    const dataDir = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR || config.dataDir || "./.aws-local-simulator-data";
+
+    if (!dataDir) {
+      throw new Error("AWS_LOCAL_SIMULATOR_DATA_DIR not set");
+    }
+
+    this.dataDir = path.join(dataDir, "dynamodb");
     this.store = new LocalStore(this.dataDir);
     this.tables = new Map();
   }

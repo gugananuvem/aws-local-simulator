@@ -1,26 +1,49 @@
 {
   "name": "aws-local-simulator",
   "version": "1.0.0",
-  "description": "Simulador local completo para serviços AWS (DynamoDB, S3, SQS, Lambda, SNS, EventBridge)",
+  "description": "Simulador local completo para serviços AWS",
   "main": "src/index.js",
-  "exports": {
-    ".": {
-      "require": "./src/index.js",
-      "import": "./src/index.mjs"
-    },
-    "./aws-config": {
-      "require": "./src/templates/aws-config-template.js",
-      "import": "./src/templates/aws-config-template.mjs"
-    }
-  },
   "bin": {
-    "aws-local-simulator": "./bin/aws-local-simulator.js"
+    "aws-local-simulator": "bin/aws-local-simulator.js"
   },
   "scripts": {
+    "prebuild": "rimraf dist",
+    "build": "node scripts/obfuscate.js",
+    "verify": "node scripts/verify-obfuscation.js",
+    "prepublishOnly": "node scripts/prepublish.js && npm run build && npm run verify",
+    "publish:protected": "node scripts/publish-protected.js",
     "start": "node bin/aws-local-simulator.js start",
-    "test": "jest",
-    "lint": "eslint src/",
-    "prepublishOnly": "npm test"
+    "dev": "node bin/aws-local-simulator.js start",
+    "test": "jest --passWithNoTests",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/ --fix || true",
+    "clean": "rimraf dist .aws-local-simulator-data",
+    "prepack": "npm run build"
+  },
+ "jest": {
+    "setupFilesAfterEnv": ["<rootDir>/tests/setup.js"],
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/templates/**",
+      "!**/node_modules/**"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 30,
+        "functions": 30,
+        "lines": 30,
+        "statements": 30
+      }
+    },
+    "verbose": true,
+    "testTimeout": 30000,
+    "forceExit": true,
+    "detectOpenHandles": true
   },
   "keywords": [
     "aws",
@@ -30,35 +53,53 @@
     "s3",
     "sqs",
     "lambda",
-    "sns",
-    "eventbridge",
+    "cognito",
+    "apigateway",
+    "ecs",
     "development",
     "testing"
   ],
-  "author": "Your Name",
+  "author": {
+    "name": "gugananuvem",
+    "email": "lgustavor@hotmail.com"
+  },
   "license": "MIT",
-  "dependencies": {
-    "body-parser": "^1.20.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "glob": "^10.3.0",
-    "jsonwebtoken": "^9.0.3",
-    "mkdirp": "^3.0.1",
-    "urlpattern-polyfill": "^10.1.0",
-    "uuid": "^9.0.0"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seu-usuario/aws-local-simulator.git"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "files": [
+    "dist/"
+  ],
+  "publishConfig": {
+    "directory": "dist"
   },
   "devDependencies": {
-    "eslint": "^8.44.0",
+    "javascript-obfuscator": "^4.0.0",
+    "rimraf": "^5.0.0",
+    "mkdirp": "^3.0.0",
     "jest": "^29.6.0",
-    "nodemon": "^3.0.1"
+    "eslint": "^8.44.0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "uuid": "^9.0.0",
+    "glob": "^10.3.0",
+    "dotenv": "^16.3.1",
+    "jsonwebtoken": "^9.0.2",
+    "urlpattern-polyfill": "^10.0.0"
   },
   "peerDependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
-    "@aws-sdk/client-eventbridge": "^3.0.0",
     "@aws-sdk/client-s3": "^3.0.0",
-    "@aws-sdk/client-sns": "^3.0.0",
     "@aws-sdk/client-sqs": "^3.0.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.0.0",
+    "@aws-sdk/client-api-gateway": "^3.0.0",
+    "@aws-sdk/client-ecs": "^3.0.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0"
   },
   "peerDependenciesMeta": {
@@ -70,15 +111,15 @@
     },
     "@aws-sdk/client-sqs": {
       "optional": true
+    },
+    "@aws-sdk/client-cognito-identity-provider": {
+      "optional": true
+    },
+    "@aws-sdk/client-api-gateway": {
+      "optional": true
+    },
+    "@aws-sdk/client-ecs": {
+      "optional": true
     }
-  },
-  "engines": {
-    "node": ">=14.0.0"
-  },
-  "files": [
-    "bin/",
-    "src/",
-    "README.md",
-    "LICENSE"
-  ]
+  }
 }

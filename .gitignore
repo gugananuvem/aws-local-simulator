@@ -1,29 +1,47 @@
-# Diretórios de build e dependências
+# Dependências
 node_modules/
+package-lock.json
+yarn.lock
+
+# Build
 dist/
-dist-ssr/
-.aws-sam
+build/
+lib/
+
 # Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
-pnpm-debug.log*
-lerna-debug.log*
-samconfig.toml
+yarn-error.log*
 
-# Arquivos locais
-*.local
+# Ambiente
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 .DS_Store
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
+# Testes
+coverage/
+.nyc_output/
+
+# Dados locais
+.aws-local-simulator-data/
+
+# Arquivos temporários
+*.tmp
+*.temp
+
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 .kiro
 .env
+SECURITY.md
