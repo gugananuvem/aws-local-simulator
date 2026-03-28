@@ -1,0 +1,29 @@
+# Diretórios de build e dependências
+node_modules/
+dist/
+dist-ssr/
+.aws-sam
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+samconfig.toml
+
+# Arquivos locais
+*.local
+.DS_Store
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.kiro
+.env

@@ -1,0 +1,848 @@
+/**
+ * Cognito Simulator Core
+ * Simula User Pools, Identity Pools, Autenticação, Tokens JWT
+ */
+
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
+const logger = require('../../utils/logger');
+const LocalStore = require('../../utils/local-store');
+const path = require('path');
+
+class CognitoSimulator {
+  constructor(config) {
+    this.config = config;
+    this.dataDir = path.join(process.env.AWS_LOCAL_SIMULATOR_DATA_DIR, 'cognito');
+    this.store = new LocalStore(this.dataDir);
+    this.userPools = new Map();
+    this.identityPools = new Map();
+    this.users = new Map();
+    this.sessions = new Map();
+    this.refreshTokens = new Map();
+    this.accessTokens = new Map();
+    this.jwtSecret = crypto.randomBytes(64).toString('hex');
+  }
+
+  async initialize() {
+    logger.debug('Inicializando Cognito Simulator...');
+    this.loadUserPools();
+    this.loadIdentityPools();
+    this.loadUsers();
+    this.loadSessions();
+    
+    logger.debug(`✅ Cognito Simulator inicializado com ${this.userPools.size} user pools, ${this.identityPools.size} identity pools, ${this.users.size} usuários`);
+  }
+
+  // ============ User Pool Operations ============
+
+  createUserPool(params) {
+    const { PoolName, Policies, LambdaConfig, AutoVerifiedAttributes, AliasAttributes, UsernameAttributes, MfaConfiguration } = params;
+    
+    const poolId = `local_${PoolName}_${Date.now()}`;
+    const userPool = {
+      Id: poolId,
+      Name: PoolName,
+      Arn: `arn:aws:cognito:local:000000000000:userpool/${poolId}`,
+      Status: 'ACTIVE',
+      CreationDate: new Date().toISOString(),
+      LastModifiedDate: new Date().toISOString(),
+      Policies: Policies || {
+        PasswordPolicy: {
+          MinimumLength: 8,
+          RequireUppercase: true,
+          RequireLowercase: true,
+          RequireNumbers: true,
+          RequireSymbols: false
+        }
+      },
+      LambdaConfig: LambdaConfig || {},
+      AutoVerifiedAttributes: AutoVerifiedAttributes || ['email'],
+      AliasAttributes: AliasAttributes || [],
+      UsernameAttributes: UsernameAttributes || ['email'],
+      MfaConfiguration: MfaConfiguration || 'OFF',
+      EstimatedNumberOfUsers: 0,
+      Users: [],
+      Clients: new Map(),
+      Groups: new Map(),
+      IdentityProviders: new Map(),
+      ResourceServers: new Map()
+    };
+    
+    this.userPools.set(poolId, userPool);
+    this.persistUserPools();
+    
+    logger.debug(`✅ User Pool criado: ${PoolName} (${poolId})`);
+    
+    return {
+      UserPool: {
+        Id: userPool.Id,
+        Name: userPool.Name,
+        Arn: userPool.Arn,
+        Status: userPool.Status,
+        CreationDate: userPool.CreationDate,
+        LastModifiedDate: userPool.LastModifiedDate,
+        MfaConfiguration: userPool.MfaConfiguration,
+        EstimatedNumberOfUsers: 0
+      }
+    };
+  }
+
+  listUserPools(params = {}) {
+    const { MaxResults = 60, NextToken } = params;
+    let userPools = Array.from(this.userPools.values());
+    
+    if (NextToken) {
+      const startIndex = parseInt(NextToken);
+      userPools = userPools.slice(startIndex);
+    }
+    
+    const results = userPools.slice(0, MaxResults);
+    const nextToken = results.length === MaxResults ? String(MaxResults) : null;
+    
+    return {
+      UserPools: results.map(pool => ({
+        Id: pool.Id,
+        Name: pool.Name,
+        Arn: pool.Arn,
+        Status: pool.Status,
+        CreationDate: pool.CreationDate,
+        LastModifiedDate: pool.LastModifiedDate
+      })),
+      NextToken: nextToken
+    };
+  }
+
+  describeUserPool(params) {
+    const { UserPoolId } = params;
+    const userPool = this.userPools.get(UserPoolId);
+    
+    if (!userPool) {
+      throw new Error(`User pool ${UserPoolId} not found`);
+    }
+    
+    return {
+      UserPool: {
+        Id: userPool.Id,
+        Name: userPool.Name,
+        Arn: userPool.Arn,
+        Status: userPool.Status,
+        CreationDate: userPool.CreationDate,
+        LastModifiedDate: userPool.LastModifiedDate,
+        Policies: userPool.Policies,
+        LambdaConfig: userPool.LambdaConfig,
+        AutoVerifiedAttributes: userPool.AutoVerifiedAttributes,
+        AliasAttributes: userPool.AliasAttributes,
+        UsernameAttributes: userPool.UsernameAttributes,
+        MfaConfiguration: userPool.MfaConfiguration,
+        EstimatedNumberOfUsers: userPool.Users.length
+      }
+    };
+  }
+
+  deleteUserPool(params) {
+    const { UserPoolId } = params;
+    
+    if (!this.userPools.has(UserPoolId)) {
+      throw new Error(`User pool ${UserPoolId} not found`);
+    }
+    
+    this.userPools.delete(UserPoolId);
+    this.persistUserPools();
+    
+    return {};
+  }
+
+  // ============ User Pool Client Operations ============
+
+  createUserPoolClient(params) {
+    const { UserPoolId, ClientName, GenerateSecret, RefreshTokenValidity, AccessTokenValidity, IdTokenValidity, AllowedOAuthFlows, AllowedOAuthScopes, CallbackURLs, LogoutURLs } = params;
+    
+    const userPool = this.userPools.get(UserPoolId);
+    if (!userPool) {
+      throw new Error(`User pool ${UserPoolId} not found`);
+    }
+    
+    const clientId = crypto.randomBytes(20).toString('hex');
+    const clientSecret = GenerateSecret ? crypto.randomBytes(32).toString('hex') : null;
+    
+    const client = {
+      ClientId: clientId,
+      ClientName: ClientName,
+      ClientSecret: clientSecret,
+      UserPoolId: UserPoolId,
+      RefreshTokenValidity: RefreshTokenValidity || 30,
+      AccessTokenValidity: AccessTokenValidity || 1,
+      IdTokenValidity: IdTokenValidity || 1,
+      AllowedOAuthFlows: AllowedOAuthFlows || ['code'],
+      AllowedOAuthScopes: AllowedOAuthScopes || ['openid', 'email', 'profile'],
+      CallbackURLs: CallbackURLs || [],
+      LogoutURLs: LogoutURLs || [],
+      CreatedDate: new Date().toISOString(),
+      LastModifiedDate: new Date().toISOString()
+    };
+    
+    userPool.Clients.set(clientId, client);
+    this.persistUserPools();
+    
+    logger.debug(`✅ User Pool Client criado: ${ClientName} (${clientId})`);
+    
+    return {
+      UserPoolClient: {
+        ClientId: client.ClientId,
+        ClientName: client.ClientName,
+        ClientSecret: client.ClientSecret,
+        UserPoolId: client.UserPoolId,
+        RefreshTokenValidity: client.RefreshTokenValidity,
+        AccessTokenValidity: client.AccessTokenValidity,
+        IdTokenValidity: client.IdTokenValidity,
+        AllowedOAuthFlows: client.AllowedOAuthFlows,
+        AllowedOAuthScopes: client.AllowedOAuthScopes,
+        CallbackURLs: client.CallbackURLs,
+        LogoutURLs: client.LogoutURLs,
+        CreationDate: client.CreatedDate
+      }
+    };
+  }
+
+  // ============ User Operations ============
+
+  signUp(params) {
+    const { ClientId, Username, Password, UserAttributes, ValidationData } = params;
+    
+    // Encontra o user pool pelo client id
+    const userPool = this.findUserPoolByClientId(ClientId);
+    if (!userPool) {
+      throw new Error(`Client ${ClientId} not found`);
+    }
+    
+    // Verifica se usuário já existe
+    const existingUser = Array.from(this.users.values()).find(
+      u => u.Username === Username && u.UserPoolId === userPool.Id
+    );
+    
+    if (existingUser) {
+      throw new Error(`User already exists: ${Username}`);
+    }
+    
+    const userId = uuidv4();
+    const user = {
+      Username: Username,
+      UserPoolId: userPool.Id,
+      UserId: userId,
+      Attributes: this.normalizeUserAttributes(UserAttributes || []),
+      Enabled: true,
+      UserStatus: 'CONFIRMED', // Por padrão, confirma imediatamente (para teste)
+      CreatedDate: new Date().toISOString(),
+      LastModifiedDate: new Date().toISOString(),
+      Password: this.hashPassword(Password),
+      MfaOptions: [],
+      PreferredMfaSetting: null,
+      UserMFASettingList: []
+    };
+    
+    this.users.set(userId, user);
+    userPool.Users.push(userId);
+    userPool.EstimatedNumberOfUsers++;
+    this.persistUsers();
+    this.persistUserPools();
+    
+    logger.debug(`✅ Usuário criado: ${Username} (${userId})`);
+    
+    return {
+      UserConfirmed: true,
+      UserSub: userId,
+      CodeDeliveryDetails: null
+    };
+  }
+
+  confirmSignUp(params) {
+    const { ClientId, Username, ConfirmationCode } = params;
+    
+    const user = this.findUserByUsername(Username, ClientId);
+    if (!user) {
+      throw new Error(`User not found: ${Username}`);
+    }
+    
+    user.UserStatus = 'CONFIRMED';
+    user.LastModifiedDate = new Date().toISOString();
+    this.persistUsers();
+    
+    return {};
+  }
+
+  initiateAuth(params) {
+    const { AuthFlow, ClientId, AuthParameters } = params;
+    const userPool = this.findUserPoolByClientId(ClientId);
+    
+    if (!userPool) {
+      throw new Error(`Client ${ClientId} not found`);
+    }
+    
+    const username = AuthParameters.USERNAME;
+    const password = AuthParameters.PASSWORD;
+    
+    const user = this.findUserByUsername(username, ClientId);
+    if (!user) {
+      throw new Error(`User not found: ${username}`);
+    }
+    
+    if (user.UserStatus !== 'CONFIRMED') {
+      throw new Error(`User not confirmed: ${username}`);
+    }
+    
+    if (!this.verifyPassword(password, user.Password)) {
+      throw new Error('Incorrect username or password');
+    }
+    
+    // Gera tokens JWT
+    const accessToken = this.generateAccessToken(user, userPool, ClientId);
+    const idToken = this.generateIdToken(user, userPool, ClientId);
+    const refreshToken = this.generateRefreshToken(user, userPool, ClientId);
+    
+    const sessionId = uuidv4();
+    const session = {
+      Id: sessionId,
+      UserId: user.UserId,
+      UserPoolId: userPool.Id,
+      ClientId: ClientId,
+      AccessToken: accessToken,
+      IdToken: idToken,
+      RefreshToken: refreshToken,
+      CreatedAt: new Date().toISOString(),
+      ExpiresAt: new Date(Date.now() + 3600000).toISOString() // 1 hora
+    };
+    
+    this.sessions.set(sessionId, session);
+    this.accessTokens.set(accessToken, session);
+    this.refreshTokens.set(refreshToken, session);
+    this.persistSessions();
+    
+    logger.debug(`🔐 Usuário autenticado: ${username}`);
+    
+    return {
+      AuthenticationResult: {
+        AccessToken: accessToken,
+        IdToken: idToken,
+        RefreshToken: refreshToken,
+        TokenType: 'Bearer',
+        ExpiresIn: 3600
+      },
+      ChallengeName: null,
+      Session: null
+    };
+  }
+
+  getToken(params) {
+    const { AuthFlow, ClientId, AuthParameters } = params;
+    
+    if (AuthFlow === 'REFRESH_TOKEN_AUTH') {
+      const refreshToken = AuthParameters.REFRESH_TOKEN;
+      const session = this.refreshTokens.get(refreshToken);
+      
+      if (!session) {
+        throw new Error('Invalid refresh token');
+      }
+      
+      const user = this.users.get(session.UserId);
+      const userPool = this.userPools.get(session.UserPoolId);
+      
+      if (!user || !userPool) {
+        throw new Error('Invalid session');
+      }
+      
+      // Gera novos tokens
+      const newAccessToken = this.generateAccessToken(user, userPool, session.ClientId);
+      const newIdToken = this.generateIdToken(user, userPool, session.ClientId);
+      
+      session.AccessToken = newAccessToken;
+      session.IdToken = newIdToken;
+      session.ExpiresAt = new Date(Date.now() + 3600000).toISOString();
+      
+      this.accessTokens.set(newAccessToken, session);
+      this.persistSessions();
+      
+      return {
+        AuthenticationResult: {
+          AccessToken: newAccessToken,
+          IdToken: newIdToken,
+          TokenType: 'Bearer',
+          ExpiresIn: 3600
+        }
+      };
+    }
+    
+    throw new Error(`Unsupported AuthFlow: ${AuthFlow}`);
+  }
+
+  // ============ Token Management ============
+
+  generateAccessToken(user, userPool, clientId) {
+    const payload = {
+      sub: user.UserId,
+      token_use: 'access',
+      client_id: clientId,
+      username: user.Username,
+      scope: 'aws.cognito.signin.user.admin',
+      iss: `https://cognito-idp.local/${userPool.Id}`,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000)
+    };
+    
+    return jwt.sign(payload, this.jwtSecret, { algorithm: 'HS256' });
+  }
+
+  generateIdToken(user, userPool, clientId) {
+    const payload = {
+      sub: user.UserId,
+      token_use: 'id',
+      client_id: clientId,
+      email: user.Attributes.email,
+      email_verified: user.Attributes.email_verified || true,
+      username: user.Username,
+      iss: `https://cognito-idp.local/${userPool.Id}`,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000)
+    };
+    
+    // Adiciona outros atributos do usuário
+    for (const [key, value] of Object.entries(user.Attributes)) {
+      if (key !== 'email' && key !== 'email_verified') {
+        payload[key] = value;
+      }
+    }
+    
+    return jwt.sign(payload, this.jwtSecret, { algorithm: 'HS256' });
+  }
+
+  generateRefreshToken(user, userPool, clientId) {
+    const payload = {
+      sub: user.UserId,
+      token_use: 'refresh',
+      client_id: clientId,
+      username: user.Username,
+      iss: `https://cognito-idp.local/${userPool.Id}`,
+      exp: Math.floor(Date.now() / 1000) + 2592000, // 30 dias
+      iat: Math.floor(Date.now() / 1000)
+    };
+    
+    return jwt.sign(payload, this.jwtSecret, { algorithm: 'HS256' });
+  }
+
+  verifyAccessToken(token) {
+    try {
+      const decoded = jwt.verify(token, this.jwtSecret);
+      const session = this.accessTokens.get(token);
+      
+      if (!session || session.ExpiresAt < new Date().toISOString()) {
+        return null;
+      }
+      
+      return decoded;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // ============ Admin Operations ============
+
+  adminGetUser(params) {
+    const { UserPoolId, Username } = params;
+    const userPool = this.userPools.get(UserPoolId);
+    
+    if (!userPool) {
+      throw new Error(`User pool ${UserPoolId} not found`);
+    }
+    
+    const user = this.findUserByUsername(Username, null, UserPoolId);
+    if (!user) {
+      throw new Error(`User not found: ${Username}`);
+    }
+    
+    return {
+      Username: user.Username,
+      UserAttributes: this.formatUserAttributes(user.Attributes),
+      UserCreateDate: user.CreatedDate,
+      UserLastModifiedDate: user.LastModifiedDate,
+      Enabled: user.Enabled,
+      UserStatus: user.UserStatus,
+      MFAOptions: user.MfaOptions,
+      PreferredMfaSetting: user.PreferredMfaSetting,
+      UserMFASettingList: user.UserMFASettingList
+    };
+  }
+
+  adminCreateUser(params) {
+    const { UserPoolId, Username, UserAttributes, TemporaryPassword, DesiredDeliveryMediums } = params;
+    const userPool = this.userPools.get(UserPoolId);
+    
+    if (!userPool) {
+      throw new Error(`User pool ${UserPoolId} not found`);
+    }
+    
+    const userId = uuidv4();
+    const user = {
+      Username: Username,
+      UserPoolId: UserPoolId,
+      UserId: userId,
+      Attributes: this.normalizeUserAttributes(UserAttributes || []),
+      Enabled: true,
+      UserStatus: 'FORCE_CHANGE_PASSWORD',
+      CreatedDate: new Date().toISOString(),
+      LastModifiedDate: new Date().toISOString(),
+      Password: this.hashPassword(TemporaryPassword || 'Temp123!'),
+      MfaOptions: [],
+      PreferredMfaSetting: null,
+      UserMFASettingList: []
+    };
+    
+    this.users.set(userId, user);
+    userPool.Users.push(userId);
+    userPool.EstimatedNumberOfUsers++;
+    this.persistUsers();
+    this.persistUserPools();
+    
+    logger.debug(`👤 Usuário administrador criado: ${Username}`);
+    
+    return {
+      User: {
+        Username: user.Username,
+        UserAttributes: this.formatUserAttributes(user.Attributes),
+        UserCreateDate: user.CreatedDate,
+        UserLastModifiedDate: user.LastModifiedDate,
+        Enabled: user.Enabled,
+        UserStatus: user.UserStatus
+      }
+    };
+  }
+
+  adminSetUserPassword(params) {
+    const { UserPoolId, Username, Password, Permanent } = params;
+    const user = this.findUserByUsername(Username, null, UserPoolId);
+    
+    if (!user) {
+      throw new Error(`User not found: ${Username}`);
+    }
+    
+    user.Password = this.hashPassword(Password);
+    if (Permanent) {
+      user.UserStatus = 'CONFIRMED';
+    }
+    user.LastModifiedDate = new Date().toISOString();
+    this.persistUsers();
+    
+    return {};
+  }
+
+  adminDeleteUser(params) {
+    const { UserPoolId, Username } = params;
+    const user = this.findUserByUsername(Username, null, UserPoolId);
+    
+    if (!user) {
+      throw new Error(`User not found: ${Username}`);
+    }
+    
+    const userPool = this.userPools.get(UserPoolId);
+    if (userPool) {
+      const index = userPool.Users.indexOf(user.UserId);
+      if (index !== -1) {
+        userPool.Users.splice(index, 1);
+        userPool.EstimatedNumberOfUsers--;
+      }
+    }
+    
+    this.users.delete(user.UserId);
+    this.persistUsers();
+    this.persistUserPools();
+    
+    return {};
+  }
+
+  // ============ Helper Methods ============
+
+  findUserPoolByClientId(clientId) {
+    for (const userPool of this.userPools.values()) {
+      if (userPool.Clients.has(clientId)) {
+        return userPool;
+      }
+    }
+    return null;
+  }
+
+  findUserByUsername(username, clientId = null, userPoolId = null) {
+    let targetUserPoolId = userPoolId;
+    
+    if (clientId && !targetUserPoolId) {
+      const userPool = this.findUserPoolByClientId(clientId);
+      if (userPool) {
+        targetUserPoolId = userPool.Id;
+      }
+    }
+    
+    for (const user of this.users.values()) {
+      if (user.Username === username && user.UserPoolId === targetUserPoolId) {
+        return user;
+      }
+    }
+    
+    return null;
+  }
+
+  normalizeUserAttributes(attributes) {
+    const normalized = {};
+    for (const attr of attributes) {
+      normalized[attr.Name] = attr.Value;
+    }
+    return normalized;
+  }
+
+  formatUserAttributes(attributes) {
+    return Object.entries(attributes).map(([Name, Value]) => ({ Name, Value }));
+  }
+
+  hashPassword(password) {
+    // Simulação de hash (não usar em produção real)
+    return crypto.createHash('sha256').update(password).digest('hex');
+  }
+
+  verifyPassword(password, hash) {
+    return this.hashPassword(password) === hash;
+  }
+
+  // ============ Identity Pool Operations ============
+
+  createIdentityPool(params) {
+    const { IdentityPoolName, AllowUnauthenticatedIdentities, SupportedLoginProviders, CognitoIdentityProviders } = params;
+    
+    const identityPoolId = `local:${IdentityPoolName}_${Date.now()}`;
+    const identityPool = {
+      IdentityPoolId: identityPoolId,
+      IdentityPoolName: IdentityPoolName,
+      AllowUnauthenticatedIdentities: AllowUnauthenticatedIdentities || false,
+      SupportedLoginProviders: SupportedLoginProviders || {},
+      CognitoIdentityProviders: CognitoIdentityProviders || [],
+      Identities: new Map()
+    };
+    
+    this.identityPools.set(identityPoolId, identityPool);
+    this.persistIdentityPools();
+    
+    logger.debug(`✅ Identity Pool criado: ${IdentityPoolName} (${identityPoolId})`);
+    
+    return {
+      IdentityPoolId: identityPoolId,
+      IdentityPoolName: identityPoolName,
+      AllowUnauthenticatedIdentities: identityPool.AllowUnauthenticatedIdentities
+    };
+  }
+
+  getId(params) {
+    const { IdentityPoolId, Logins } = params;
+    const identityPool = this.identityPools.get(IdentityPoolId);
+    
+    if (!identityPool) {
+      throw new Error(`Identity pool ${IdentityPoolId} not found`);
+    }
+    
+    let identityId = null;
+    
+    if (Logins) {
+      // Procura identidade existente com os logins fornecidos
+      for (const [id, identity] of identityPool.Identities) {
+        if (identity.Logins && this.matchesLogins(identity.Logins, Logins)) {
+          identityId = id;
+          break;
+        }
+      }
+    }
+    
+    if (!identityId) {
+      identityId = uuidv4();
+      identityPool.Identities.set(identityId, {
+        IdentityId: identityId,
+        Logins: Logins || {},
+        CreationDate: new Date().toISOString(),
+        LastModifiedDate: new Date().toISOString()
+      });
+      this.persistIdentityPools();
+    }
+    
+    return {
+      IdentityId: identityId
+    };
+  }
+
+  getCredentialsForIdentity(params) {
+    const { IdentityId, Logins } = params;
+    const identityPool = this.findIdentityPoolByIdentityId(IdentityId);
+    
+    if (!identityPool) {
+      throw new Error(`Identity ${IdentityId} not found`);
+    }
+    
+    const identity = identityPool.Identities.get(IdentityId);
+    if (!identity) {
+      throw new Error(`Identity ${IdentityId} not found in pool`);
+    }
+    
+    // Gera credenciais temporárias (simuladas)
+    const credentials = {
+      AccessKeyId: `AKIA${crypto.randomBytes(16).toString('hex').toUpperCase()}`,
+      SecretKey: crypto.randomBytes(32).toString('hex'),
+      SessionToken: crypto.randomBytes(64).toString('base64'),
+      Expiration: new Date(Date.now() + 3600000).toISOString()
+    };
+    
+    return {
+      Credentials: credentials,
+      IdentityId: IdentityId
+    };
+  }
+
+  findIdentityPoolByIdentityId(identityId) {
+    for (const pool of this.identityPools.values()) {
+      if (pool.Identities.has(identityId)) {
+        return pool;
+      }
+    }
+    return null;
+  }
+
+  matchesLogins(existingLogins, newLogins) {
+    const existingKeys = Object.keys(existingLogins);
+    const newKeys = Object.keys(newLogins);
+    
+    if (existingKeys.length !== newKeys.length) return false;
+    
+    for (const key of existingKeys) {
+      if (existingLogins[key] !== newLogins[key]) {
+        return false;
+      }
+    }
+    
+    return true;
+  }
+
+  // ============ Persistence ============
+
+  loadUserPools() {
+    const saved = this.store.read('__userpools__');
+    if (saved) {
+      for (const [id, data] of Object.entries(saved)) {
+        // Reconstitui Maps
+        data.Clients = new Map(Object.entries(data.Clients || {}));
+        data.Groups = new Map(Object.entries(data.Groups || {}));
+        data.IdentityProviders = new Map(Object.entries(data.IdentityProviders || {}));
+        data.ResourceServers = new Map(Object.entries(data.ResourceServers || {}));
+        this.userPools.set(id, data);
+      }
+    }
+  }
+
+  loadIdentityPools() {
+    const saved = this.store.read('__identitypools__');
+    if (saved) {
+      for (const [id, data] of Object.entries(saved)) {
+        data.Identities = new Map(Object.entries(data.Identities || {}));
+        this.identityPools.set(id, data);
+      }
+    }
+  }
+
+  loadUsers() {
+    const saved = this.store.read('__users__');
+    if (saved) {
+      for (const [id, user] of Object.entries(saved)) {
+        this.users.set(id, user);
+      }
+    }
+  }
+
+  loadSessions() {
+    const saved = this.store.read('__sessions__');
+    if (saved) {
+      for (const [id, session] of Object.entries(saved)) {
+        this.sessions.set(id, session);
+        this.accessTokens.set(session.AccessToken, session);
+        this.refreshTokens.set(session.RefreshToken, session);
+      }
+    }
+  }
+
+  persistUserPools() {
+    const poolsObj = {};
+    for (const [id, pool] of this.userPools.entries()) {
+      poolsObj[id] = {
+        ...pool,
+        Clients: Object.fromEntries(pool.Clients),
+        Groups: Object.fromEntries(pool.Groups),
+        IdentityProviders: Object.fromEntries(pool.IdentityProviders),
+        ResourceServers: Object.fromEntries(pool.ResourceServers)
+      };
+    }
+    this.store.write('__userpools__', poolsObj);
+  }
+
+  persistIdentityPools() {
+    const poolsObj = {};
+    for (const [id, pool] of this.identityPools.entries()) {
+      poolsObj[id] = {
+        ...pool,
+        Identities: Object.fromEntries(pool.Identities)
+      };
+    }
+    this.store.write('__identitypools__', poolsObj);
+  }
+
+  persistUsers() {
+    const usersObj = {};
+    for (const [id, user] of this.users.entries()) {
+      usersObj[id] = user;
+    }
+    this.store.write('__users__', usersObj);
+  }
+
+  persistSessions() {
+    const sessionsObj = {};
+    for (const [id, session] of this.sessions.entries()) {
+      sessionsObj[id] = session;
+    }
+    this.store.write('__sessions__', sessionsObj);
+  }
+
+  async reset() {
+    this.userPools.clear();
+    this.identityPools.clear();
+    this.users.clear();
+    this.sessions.clear();
+    this.accessTokens.clear();
+    this.refreshTokens.clear();
+    
+    this.persistUserPools();
+    this.persistIdentityPools();
+    this.persistUsers();
+    this.persistSessions();
+    
+    logger.debug('Cognito: Todos os dados resetados');
+  }
+
+  // ============ Stats ============
+
+  getUserPoolsCount() {
+    return this.userPools.size;
+  }
+
+  getTotalUsersCount() {
+    return this.users.size;
+  }
+
+  getIdentityPoolsCount() {
+    return this.identityPools.size;
+  }
+
+  getActiveSessionsCount() {
+    return this.sessions.size;
+  }
+}
+
+module.exports = CognitoSimulator;

@@ -1,0 +1,435 @@
+/**
+ * API Gateway Server - Servidor HTTP para API Gateway
+ */
+
+const express = require('express');
+const cors = require('cors');
+const logger = require('../../utils/logger');
+
+class APIGatewayServer {
+  constructor(port, config) {
+    this.port = port;
+    this.config = config;
+    this.app = express();
+    this.simulator = null;
+    this.server = null;
+    this.setupMiddlewares();
+  }
+
+  setupMiddlewares() {
+    this.app.use(express.json({ limit: '10mb' }));
+    this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+    this.app.use(cors());
+    
+    if (logger.currentLogLevel === 'verboso') {
+      this.app.use((req, res, next) => {
+        const start = Date.now();
+        res.on('finish', () => {
+          const duration = Date.now() - start;
+          logger.verboso(`API Gateway: ${req.method} ${req.path} - ${duration}ms`);
+        });
+        next();
+      });
+    }
+  }
+
+  async initialize() {
+    this.setupRoutes();
+    this.setupProxyRoutes();
+    logger.debug('API Gateway Server inicializado');
+  }
+
+  setupRoutes() {
+    // Health check
+    this.app.get('/health', (req, res) => {
+      res.json({
+        status: 'healthy',
+        service: 'apigateway-simulator',
+        version: '1.0.0'
+      });
+    });
+
+    // Control Plane - REST API
+    this.app.post('/restapis', async (req, res) => {
+      try {
+        const result = this.simulator.createRestApi(req.body);
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/restapis', (req, res) => {
+      const result = this.simulator.getRestApis();
+      res.json(result);
+    });
+
+    this.app.get('/restapis/:apiId', (req, res) => {
+      try {
+        const result = this.simulator.getRestApi({ restApiId: req.params.apiId });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/restapis/:apiId', (req, res) => {
+      try {
+        this.simulator.deleteRestApi({ restApiId: req.params.apiId });
+        res.json({});
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    // Resources
+    this.app.get('/restapis/:apiId/resources', (req, res) => {
+      try {
+        const result = this.simulator.getResources({ restApiId: req.params.apiId });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.post('/restapis/:apiId/resources', (req, res) => {
+      try {
+        const result = this.simulator.createResource({
+          ...req.body,
+          restApiId: req.params.apiId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/restapis/:apiId/resources/:resourceId', (req, res) => {
+      try {
+        this.simulator.deleteResource({
+          restApiId: req.params.apiId,
+          resourceId: req.params.resourceId
+        });
+        res.json({});
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    // Methods
+    this.app.put('/restapis/:apiId/resources/:resourceId/methods/:method', (req, res) => {
+      try {
+        const result = this.simulator.putMethod({
+          ...req.body,
+          restApiId: req.params.apiId,
+          resourceId: req.params.resourceId,
+          httpMethod: req.params.method
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/restapis/:apiId/resources/:resourceId/methods/:method', (req, res) => {
+      try {
+        const result = this.simulator.getMethod({
+          restApiId: req.params.apiId,
+          resourceId: req.params.resourceId,
+          httpMethod: req.params.method
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/restapis/:apiId/resources/:resourceId/methods/:method', (req, res) => {
+      try {
+        this.simulator.deleteMethod({
+          restApiId: req.params.apiId,
+          resourceId: req.params.resourceId,
+          httpMethod: req.params.method
+        });
+        res.json({});
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    // Integrations
+    this.app.put('/restapis/:apiId/resources/:resourceId/methods/:method/integration', (req, res) => {
+      try {
+        const result = this.simulator.putIntegration({
+          ...req.body,
+          restApiId: req.params.apiId,
+          resourceId: req.params.resourceId,
+          httpMethod: req.params.method
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/restapis/:apiId/resources/:resourceId/methods/:method/integration', (req, res) => {
+      try {
+        const result = this.simulator.getIntegration({
+          restApiId: req.params.apiId,
+          resourceId: req.params.resourceId,
+          httpMethod: req.params.method
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/restapis/:apiId/resources/:resourceId/methods/:method/integration', (req, res) => {
+      try {
+        this.simulator.deleteIntegration({
+          restApiId: req.params.apiId,
+          resourceId: req.params.resourceId,
+          httpMethod: req.params.method
+        });
+        res.json({});
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    // Deployments
+    this.app.post('/restapis/:apiId/deployments', (req, res) => {
+      try {
+        const result = this.simulator.createDeployment({
+          ...req.body,
+          restApiId: req.params.apiId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    // Stages
+    this.app.post('/restapis/:apiId/stages', (req, res) => {
+      try {
+        const result = this.simulator.createStage({
+          ...req.body,
+          restApiId: req.params.apiId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/restapis/:apiId/stages/:stageName', (req, res) => {
+      try {
+        const result = this.simulator.getStage({
+          restApiId: req.params.apiId,
+          stageName: req.params.stageName
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.patch('/restapis/:apiId/stages/:stageName', (req, res) => {
+      try {
+        const result = this.simulator.updateStage({
+          ...req.body,
+          restApiId: req.params.apiId,
+          stageName: req.params.stageName
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/restapis/:apiId/stages/:stageName', (req, res) => {
+      try {
+        this.simulator.deleteStage({
+          restApiId: req.params.apiId,
+          stageName: req.params.stageName
+        });
+        res.json({});
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    // API Keys
+    this.app.post('/apikeys', (req, res) => {
+      try {
+        const result = this.simulator.createApiKey(req.body);
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/apikeys', (req, res) => {
+      const result = this.simulator.getApiKeys(req.query);
+      res.json(result);
+    });
+
+    // Usage Plans
+    this.app.post('/usageplans', (req, res) => {
+      try {
+        const result = this.simulator.createUsagePlan(req.body);
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    // HTTP APIs
+    this.app.post('/httpapis', (req, res) => {
+      try {
+        const result = this.simulator.createHttpApi(req.body);
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.post('/httpapis/:apiId/routes', (req, res) => {
+      try {
+        const result = this.simulator.createRoute({
+          ...req.body,
+          apiId: req.params.apiId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    // Admin endpoints
+    this.setupAdminRoutes();
+  }
+
+  setupProxyRoutes() {
+    // Proxy para execução das APIs
+    this.app.all('/:apiId/:stageName/*', async (req, res) => {
+      const apiId = req.params.apiId;
+      const stageName = req.params.stageName;
+      const path = '/' + (req.params[0] || '');
+      
+      logger.debug(`🌐 Executando: ${req.method} ${path} (${apiId}/${stageName})`);
+      
+      try {
+        const result = await this.simulator.executeRequest(
+          apiId,
+          stageName,
+          req.method,
+          path,
+          req.headers,
+          req.body,
+          req.query
+        );
+        
+        res.status(result.statusCode);
+        
+        if (result.headers) {
+          Object.entries(result.headers).forEach(([key, value]) => {
+            res.set(key, value);
+          });
+        }
+        
+        res.send(result.body);
+      } catch (error) {
+        logger.error('Error executing request:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+  }
+
+  setupAdminRoutes() {
+    this.app.get('/__admin/apis', (req, res) => {
+      res.json({
+        totalApis: this.simulator.getAPIsCount(),
+        totalDeployments: this.simulator.getDeploymentsCount(),
+        totalStages: this.simulator.getStagesCount(),
+        totalResources: this.simulator.getResourcesCount()
+      });
+    });
+
+    this.app.get('/__admin/apis/:apiId', (req, res) => {
+      const api = this.simulator.apis.get(req.params.apiId);
+      if (api) {
+        res.json({
+          id: api.id,
+          name: api.name,
+          resources: Array.from(api.resources.keys()),
+          stages: Array.from(api.stages.keys()),
+          deployments: Array.from(api.deployments.keys())
+        });
+      } else {
+        res.status(404).json({ error: 'API not found' });
+      }
+    });
+
+    this.app.get('/__admin/apikeys', (req, res) => {
+      const keys = Array.from(this.simulator.apiKeys.values()).map(k => ({
+        id: k.id,
+        name: k.name,
+        enabled: k.enabled,
+        createdDate: k.createdDate
+      }));
+      res.json(keys);
+    });
+
+    this.app.get('/__admin/usageplans', (req, res) => {
+      const plans = Array.from(this.simulator.usagePlans.values());
+      res.json(plans);
+    });
+  }
+
+  start() {
+    return new Promise((resolve) => {
+      this.server = this.app.listen(this.port, () => {
+        logger.info(`🌐 API Gateway rodando em http://localhost:${this.port}`);
+        this.printInfo();
+        resolve();
+      });
+    });
+  }
+
+  printInfo() {
+    logger.info('\n📡 API Gateway Endpoints:');
+    logger.info(`   Control Plane: http://localhost:${this.port}/restapis`);
+    logger.info(`   Execute APIs: http://localhost:${this.port}/{apiId}/{stageName}/{path}`);
+    logger.info('\n📚 Admin Endpoints:');
+    logger.info(`   GET  http://localhost:${this.port}/__admin/apis`);
+    logger.info(`   GET  http://localhost:${this.port}/__admin/apikeys`);
+    logger.info(`   GET  http://localhost:${this.port}/__admin/usageplans`);
+  }
+
+  stop() {
+    return new Promise((resolve) => {
+      if (this.server) {
+        this.server.close(() => resolve());
+      } else {
+        resolve();
+      }
+    });
+  }
+
+  getStatus() {
+    return {
+      running: !!this.server,
+      port: this.port,
+      endpoint: `http://localhost:${this.port}`,
+      apisCount: this.simulator?.getAPIsCount() || 0,
+      deploymentsCount: this.simulator?.getDeploymentsCount() || 0,
+      stagesCount: this.simulator?.getStagesCount() || 0,
+      resourcesCount: this.simulator?.getResourcesCount() || 0
+    };
+  }
+}
+
+module.exports = APIGatewayServer;

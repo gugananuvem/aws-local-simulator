@@ -1,0 +1,165 @@
+{
+  "services": {
+    "dynamodb": true,
+    "s3": true,
+    "sqs": true,
+    "lambda": true,
+    "sns": false,
+    "eventbridge": false,
+    "apigateway": true
+  },
+  "ports": {
+    "dynamodb": 8000,
+    "s3": 4566,
+    "sqs": 9324,
+    "lambda": 3001,
+    "sns": 9911,
+    "eventbridge": 4010
+  },
+  "lambdas": [
+    {
+      "path": "/api/users",
+      "handler": "./src/handlers/users.js",
+      "type": "commonjs",
+      "env": {
+        "TABLE_NAME": "users-table",
+        "BUCKET_NAME": "user-files"
+      }
+    },
+    {
+      "path": "/api/products",
+      "handler": "./src/handlers/products.mjs",
+      "type": "module",
+      "env": {
+        "TABLE_NAME": "products-table"
+      }
+    }
+  ],
+  "dynamodb": {
+    "tables": [
+      {
+        "TableName": "users-table",
+        "KeySchema": [
+          { "AttributeName": "userId", "KeyType": "HASH" }
+        ],
+        "AttributeDefinitions": [
+          { "AttributeName": "userId", "AttributeType": "S" }
+        ],
+        "ProvisionedThroughput": {
+          "ReadCapacityUnits": 5,
+          "WriteCapacityUnits": 5
+        }
+      }
+    ]
+  },
+  "s3": {
+    "buckets": ["users-files", "public-assets"]
+  },
+  "sqs": {
+    "queues": [
+      {
+        "name": "notifications-queue",
+        "lambdaPath": "/api/notifications",
+        "batchSize": 10
+      }
+    ]
+  },
+  "apigateway": {
+    "defaultCors": {
+      "allowOrigins": ["http://localhost:3000"],
+      "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+      "allowHeaders": ["Content-Type", "Authorization"],
+      "maxAge": 300
+    },
+    "defaultThrottling": {
+      "burstLimit": 50,
+      "rateLimit": 10
+    },
+    "enableAccessLogging": true
+  },
+  "restApis": [
+    {
+      "name": "MyAPI",
+      "description": "My REST API",
+      "resources": [
+        {
+          "path": "/users",
+          "methods": [
+            {
+              "httpMethod": "GET",
+              "authorizationType": "NONE",
+              "integration": {
+                "type": "HTTP",
+                "uri": "http://localhost:3001/users",
+                "httpMethod": "GET"
+              }
+            },
+            {
+              "httpMethod": "POST",
+              "authorizationType": "NONE",
+              "integration": {
+                "type": "AWS",
+                "uri": "arn:aws:lambda:local:function:createUser"
+              }
+            }
+          ]
+        },
+        {
+          "path": "/users/{userId}",
+          "methods": [
+            {
+              "httpMethod": "GET",
+              "authorizationType": "NONE",
+              "integration": {
+                "type": "HTTP",
+                "uri": "http://localhost:3001/users/{userId}",
+                "httpMethod": "GET"
+              }
+            }
+          ]
+        }
+      ],
+      "stages": [
+        {
+          "stageName": "dev",
+          "variables": {
+            "ENVIRONMENT": "development"
+          }
+        },
+        {
+          "stageName": "prod",
+          "variables": {
+            "ENVIRONMENT": "production"
+          }
+        }
+      ]
+    }
+  ],
+  "apiKeys": [
+    {
+      "name": "MyAPIKey",
+      "description": "Key for MyAPI",
+      "enabled": true
+    }
+  ],
+  "usagePlans": [
+    {
+      "name": "BasicPlan",
+      "description": "Basic usage plan",
+      "throttle": {
+        "burstLimit": 100,
+        "rateLimit": 10
+      },
+      "quota": {
+        "limit": 10000,
+        "period": "DAY"
+      },
+      "apiStages": [
+        {
+          "apiId": "api_123",
+          "stage": "dev"
+        }
+      ]
+    }
+  ] 
+}
