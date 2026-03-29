@@ -46,3 +46,4 @@ coverage/
 .env
 SECURITY.md
 .publish-protected.js
+.npmrc
