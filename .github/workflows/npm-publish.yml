@@ -2,9 +2,9 @@ name: Publish to NPM
 
 on:
   # Publica quando cria uma tag
-  push:
-    tags:
-      - 'v*'
+  #push:
+  #  tags:
+  #    - 'v*'
   # Publica quando faz push na main (opcional)
   push:
     branches:
