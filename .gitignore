@@ -45,3 +45,4 @@ coverage/
 .kiro
 .env
 SECURITY.md
+.publish-protected.js
