@@ -1,0 +1,5 @@
+{
+  "TableName": "domain",
+  "KeyConditionExpression": "pk = :pkVal",
+  "ExpressionAttributeValues": { ":pkVal": { "S": "USER#1" } }
+}

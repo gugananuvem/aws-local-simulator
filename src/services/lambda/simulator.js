@@ -85,8 +85,15 @@ class LambdaSimulator {
     const runMiddlewares = async (index) => {
       if (index >= middlewares.length) {
         // Executa handler
+
         result = await this.executeHandler(matchedRoute.handler, event);
         handled = true;
+      
+        console.log(`✅ Resposta: ${result.statusCode}`);
+        res
+          .status(result.statusCode || 200)
+          .set(result.headers || {})
+          .send(result.body ? JSON.parse(result.body) : null);
         return;
       }
       
@@ -115,7 +122,7 @@ class LambdaSimulator {
     if (!handled && result) {
       return this.formatResponse(result);
     }
-    
+
     return null;
   }
 

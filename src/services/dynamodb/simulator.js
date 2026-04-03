@@ -420,7 +420,8 @@ class DynamoDBSimulator {
 
     if (hashValueMatch) {
       const hashValuePlaceholder = hashValueMatch[1];
-      const hashValue = ExpressionAttributeValues[hashValuePlaceholder];
+      const rawHashValue = ExpressionAttributeValues[hashValuePlaceholder];
+      const hashValue = rawHashValue && typeof rawHashValue === 'object' ? Object.values(rawHashValue)[0] : rawHashValue;
       items = items.filter((item) => item[hashKey] === hashValue);
     }
 
@@ -432,7 +433,8 @@ class DynamoDBSimulator {
       if (rangeConditionMatch) {
         const operator = rangeConditionMatch[1];
         const rangeValuePlaceholder = rangeConditionMatch[2];
-        const rangeValue = ExpressionAttributeValues[rangeValuePlaceholder];
+        const rawRangeValue = ExpressionAttributeValues[rangeValuePlaceholder];
+        const rangeValue = rawRangeValue && typeof rawRangeValue === 'object' ? Object.values(rawRangeValue)[0] : rawRangeValue;
 
         items = items.filter((item) => {
           const itemValue = item[rangeKey];
@@ -542,8 +544,10 @@ class DynamoDBSimulator {
   }
 
   getItemKeyFromKeys(keys, table) {
-    const hashValue = keys[table.hashKey];
-    const rangeValue = table.rangeKey ? keys[table.rangeKey] : null;
+    const rawHash = keys[table.hashKey];
+    const hashValue = rawHash && typeof rawHash === 'object' ? Object.values(rawHash)[0] : rawHash;
+    const rawRange = table.rangeKey ? keys[table.rangeKey] : null;
+    const rangeValue = rawRange && typeof rawRange === 'object' ? Object.values(rawRange)[0] : rawRange;
     return rangeValue ? `${hashValue}|${rangeValue}` : String(hashValue);
   }
 
@@ -557,7 +561,8 @@ class DynamoDBSimulator {
       for (const assignment of assignments) {
         const [path, valueExpr] = assignment.split("=").map((s) => s.trim());
         const attributeName = path.replace(/#/g, "");
-        const value = valueMap[valueExpr];
+        const rawValue = valueMap[valueExpr];
+        const value = rawValue && typeof rawValue === 'object' ? Object.values(rawValue)[0] : rawValue;
 
         item[attributeName] = value;
       }
@@ -570,7 +575,8 @@ class DynamoDBSimulator {
       const match = expression.match(/([^\s]+)\s*=\s*([^\s]+)/);
       if (match) {
         const [, attribute, placeholder] = match;
-        const expectedValue = values[placeholder];
+        const rawValue = values[placeholder];
+        const expectedValue = rawValue && typeof rawValue === 'object' ? Object.values(rawValue)[0] : rawValue;
         const actualValue = item[attribute];
         return actualValue === expectedValue;
       }

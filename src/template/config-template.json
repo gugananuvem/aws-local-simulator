@@ -6,7 +6,8 @@
     "lambda": true,
     "sns": false,
     "eventbridge": false,
-    "apigateway": true
+    "apigateway": true,
+    "ecs": false
   },
   "ports": {
     "dynamodb": 8000,
@@ -39,12 +40,8 @@
     "tables": [
       {
         "TableName": "users-table",
-        "KeySchema": [
-          { "AttributeName": "userId", "KeyType": "HASH" }
-        ],
-        "AttributeDefinitions": [
-          { "AttributeName": "userId", "AttributeType": "S" }
-        ],
+        "KeySchema": [{ "AttributeName": "userId", "KeyType": "HASH" }],
+        "AttributeDefinitions": [{ "AttributeName": "userId", "AttributeType": "S" }],
         "ProvisionedThroughput": {
           "ReadCapacityUnits": 5,
           "WriteCapacityUnits": 5
@@ -161,5 +158,46 @@
         }
       ]
     }
+  ],
+  "ecs": {
+    "clusters": ["production", "staging", "development"],
+    "defaultTaskCpu": 512,
+    "defaultTaskMemory": 1024,
+    "containerRuntime": "simulate"
+  },
+  "taskDefinitions": [
+    {
+      "family": "my-app",
+      "containerDefinitions": [
+        {
+          "name": "web",
+          "image": "nginx:alpine",
+          "cpu": 256,
+          "memory": 512,
+          "essential": true,
+          "portMappings": [
+            {
+              "containerPort": 80,
+              "hostPort": 0,
+              "protocol": "tcp"
+            }
+          ],
+          "environment": [{ "name": "ENVIRONMENT", "value": "local" }]
+        }
+      ],
+      "networkMode": "awsvpc",
+      "cpu": "512",
+      "memory": "1024"
+    }
+  ],
+  "services-ecs": [
+    {
+      "name": "my-web-service",
+      "cluster": "development",
+      "taskDefinition": "my-app",
+      "desiredCount": 2,
+      "schedulingStrategy": "REPLICA"
+    }
   ] 
+
 }

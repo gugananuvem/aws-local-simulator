@@ -47,3 +47,7 @@ coverage/
 SECURITY.md
 .publish-protected.js
 .npmrc
+webpack.config.js
+obfuscator-config.js
+.vscode
+*.tgz

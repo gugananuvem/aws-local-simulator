@@ -24,11 +24,11 @@ module.exports = {
         },
         production: {
             compact: true,
-            controlFlowFlattening: true,
+            controlFlowFlattening: false,
             controlFlowFlatteningThreshold: 0.75,
-            deadCodeInjection: true,
+            deadCodeInjection: false,
             deadCodeInjectionThreshold: 0.4,
-            selfDefending: true,
+            selfDefending: false,
             stringArray: true,
             stringArrayEncoding: ['rc4'],
             stringArrayThreshold: 0.75

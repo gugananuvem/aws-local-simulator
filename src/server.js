@@ -16,6 +16,7 @@ const SNSService = require("./services/sns");
 const EventBridgeService = require("./services/eventbridge");
 const CognitoService = require("./services/cognito");
 const APIGatewayService = require("./services/apigateway");
+const ECSService = require("./services/ecs");
 
 class Server {
   constructor(config) {
@@ -71,6 +72,7 @@ class Server {
       { name: "sns", class: SNSService, depends: [] },
       { name: "eventbridge", class: EventBridgeService, depends: [] },
       { name: "cognito", class: CognitoService, depends: [] },
+      { name: "ecs", class: ECSService, depends: [] },
       { name: "apigateway", class: APIGatewayService, depends: [] },
     ];
 

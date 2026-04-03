@@ -1,0 +1,8 @@
+{
+  "TableName": "domain",
+  "Key": { "pk": { "S": "USER#2" }, "sk": { "S": "METADATA" } },
+  "UpdateExpression": "SET #s = :val",
+  "ExpressionAttributeNames": { "#s": "status" },
+  "ExpressionAttributeValues": { ":val": { "S": "inactive" } },
+  "ReturnValues": "ALL_NEW"
+}

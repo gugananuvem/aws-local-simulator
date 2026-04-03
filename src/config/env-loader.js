@@ -13,8 +13,9 @@ class EnvLoader {
       dynamodb: this.getEnvBool('AWS_LOCAL_SIMULATOR_DYNAMODB', true),
       s3: this.getEnvBool('AWS_LOCAL_SIMULATOR_S3', true),
       sqs: this.getEnvBool('AWS_LOCAL_SIMULATOR_SQS', true),
-      lambda: this.getEnvBool('AWS_LOCAL_SIMULATOR_LAMBDA', true),
       sns: this.getEnvBool('AWS_LOCAL_SIMULATOR_SNS', false),
+      lambda: this.getEnvBool('AWS_LOCAL_SIMULATOR_LAMBDA', true),
+      apigateway: this.getEnvBool('AWS_LOCAL_SIMULATOR_APIGATEWAY', false),
       eventbridge: this.getEnvBool('AWS_LOCAL_SIMULATOR_EVENTBRIDGE', false)
     };
     
@@ -25,6 +26,7 @@ class EnvLoader {
       sqs: this.getEnvInt('AWS_LOCAL_SIMULATOR_SQS_PORT', 9324),
       lambda: this.getEnvInt('AWS_LOCAL_SIMULATOR_LAMBDA_PORT', 3001),
       sns: this.getEnvInt('AWS_LOCAL_SIMULATOR_SNS_PORT', 9911),
+      apigateway: this.getEnvInt('AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT', 4567),
       eventbridge: this.getEnvInt('AWS_LOCAL_SIMULATOR_EVENTBRIDGE_PORT', 4010)
     };
     

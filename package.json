@@ -1,6 +1,6 @@
 {
   "name": "@gugananuvem/aws-local-simulator",
-  "version": "1.0.5",
+  "version": "1.0.11",
   "description": "Simulador local completo para serviços AWS",
   "main": "src/index.js",
   "bin": {
@@ -10,18 +10,10 @@
     "prebuild": "rimraf dist",
     "build": "node scripts/build-simple.js",
     "build:obfuscated": "node scripts/obfuscate.js",
-    "verify": "node scripts/verify-obfuscation.js",
-    "prepublishOnly": "node scripts/prepublish.js && npm run build && npm run verify",
-    "publish:protected": "node scripts/publish-protected.js",
-    "publish:prd": "npm run build && npm publish --access public",
-    "start": "node bin/aws-local-simulator.js start",
-    "dev": "node bin/aws-local-simulator.js start",
-    "test": "jest --passWithNoTests",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "lint": "eslint src/ --fix || true",
-    "clean": "rimraf dist .aws-local-simulator-data",
-    "prepack": "npm run build"
+    "verify-build": "node scripts/verify-build.js",
+    "publish:obfuscated": "npm run build:obfuscated && npm run verify-build && cd dist && npm publish --access public",
+    "publish:clean": "npm run build && cd dist && npm publish --access public",
+    "clean": "rimraf dist"
   },
  "jest": {
     "setupFilesAfterEnv": ["<rootDir>/tests/setup.js"],

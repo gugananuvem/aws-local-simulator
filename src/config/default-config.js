@@ -9,8 +9,8 @@ module.exports = {
     s3: true,
     sqs: true,
     lambda: true,
-    sns: false, // Desabilitado por padrão
-    eventbridge: false, // Desabilitado por padrão
+    sns: false,
+    eventbridge: false,
     ecs: false,
     cognito: false,
     apigateway: false,

@@ -24,9 +24,10 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 
 ```bash
 npm install --save-dev aws-local-simulator
+```
 🚀 Uso Rápido
 1. Crie um arquivo de configuração aws-local-simulator.json:
-json
+```json
 {
   "services": {
     "dynamodb": true,
@@ -92,28 +93,32 @@ await dynamoDB.send(new PutCommand({
   TableName: 'users-table',
   Item: { id: '123', name: 'John' }
 }));
+```
+
 🔧 Configuração por Variáveis de Ambiente
-Variável	Descrição	Padrão
-AWS_LOCAL_SIMULATOR_DYNAMODB	Habilita DynamoDB	true
-AWS_LOCAL_SIMULATOR_S3	Habilita S3	true
-AWS_LOCAL_SIMULATOR_SQS	Habilita SQS	true
-AWS_LOCAL_SIMULATOR_LAMBDA	Habilita Lambda	true
-AWS_LOCAL_SIMULATOR_COGNITO	Habilita Cognito	false
-AWS_LOCAL_SIMULATOR_APIGATEWAY	Habilita API Gateway	false
-AWS_LOCAL_SIMULATOR_ECS	Habilita ECS/Fargate	false
-AWS_LOCAL_SIMULATOR_DYNAMODB_PORT	Porta DynamoDB	8000
-AWS_LOCAL_SIMULATOR_S3_PORT	Porta S3	4566
-AWS_LOCAL_SIMULATOR_SQS_PORT	Porta SQS	9324
-AWS_LOCAL_SIMULATOR_LAMBDA_PORT	Porta Lambda	3001
-AWS_LOCAL_SIMULATOR_COGNITO_PORT	Porta Cognito	9229
-AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT	Porta API Gateway	4567
-AWS_LOCAL_SIMULATOR_ECS_PORT	Porta ECS	8080
-AWS_LOCAL_SIMULATOR_DATA	Diretório de dados	./.aws-local-simulator-data
-AWS_LOCAL_SIMULATOR_LOG	Nível de log	info
+
+| Variável | Descrição | Padrão |
+|---------|----------|-------|
+| AWS_LOCAL_SIMULATOR_DYNAMODB |Habilita DynamoDB | true |
+| AWS_LOCAL_SIMULATOR_S3 |Habilita S3 | true |
+| AWS_LOCAL_SIMULATOR_SQS |Habilita SQS | true |
+| AWS_LOCAL_SIMULATOR_LAMBDA |Habilita Lambda | true |
+| AWS_LOCAL_SIMULATOR_COGNITO |Habilita Cognito | false |
+| AWS_LOCAL_SIMULATOR_APIGATEWAY |Habilita API Gateway | false |
+| AWS_LOCAL_SIMULATOR_ECS |Habilita ECS/Fargate | false |
+| AWS_LOCAL_SIMULATOR_DYNAMODB_PORT |Porta DynamoDB | 8000 |
+| AWS_LOCAL_SIMULATOR_S3_PORT |Porta S3 | 4566 |
+| AWS_LOCAL_SIMULATOR_SQS_PORT |Porta SQS | 9324 |
+| AWS_LOCAL_SIMULATOR_LAMBDA_PORT |Porta Lambda | 3001 |
+| AWS_LOCAL_SIMULATOR_COGNITO_PORT |Porta Cognito | 9229 |
+| AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT |Porta API Gateway | 4567 |
+| AWS_LOCAL_SIMULATOR_ECS_PORT |Porta ECS | 8080 |
+| AWS_LOCAL_SIMULATOR_DATA |Diretório de dados | ./aws-local-simulator-data |
+| AWS_LOCAL_SIMULATOR_LOG |Nível de log | info |
 ```
 
 # 📝 Comandos CLI
-bash
+```bash
 #### Iniciar simulador
 npx aws-local-simulator start [configPath]
 
@@ -128,18 +133,21 @@ npx aws-local-simulator reset
 
 #### Status
 npx aws-local-simulator status
+```
 
 # 🔌 Endpoints
-# Serviço	Endpoint	Admin
-DynamoDB	http://localhost:8000	http://localhost:8000/__admin/tables
-S3	http://localhost:4566	http://localhost:4566/__admin/buckets
-SQS	http://localhost:9324	http://localhost:9324/__admin/queues
-Lambda	http://localhost:3001	http://localhost:3001/__admin/lambdas
-Cognito	http://localhost:9229	http://localhost:9229/__admin/userpools
-API Gateway	http://localhost:4567	http://localhost:4567/__admin/apis
-ECS	http://localhost:8080	http://localhost:8080/__admin/clusters
+| Serviço | Endpoint | Admin |
+|---------|----------|-------|
+| DynamoDB | http://localhost:8000	| http://localhost:8000/__admin/tables |
+| S3 | http://localhost:4566	| http://localhost:4566/__admin/buckets |
+| SQS | http://localhost:9324	| http://localhost:9324/__admin/queues |
+| Lambda | http://localhost:3001	| http://localhost:3001/__admin/functions |
+| Cognito | http://localhost:9229	| http://localhost:9229/__admin/userpools |
+| API Gateway | http://localhost:4567	| http://localhost:4567/__admin/apis |
+| ECS | http://localhost:8080	| http://localhost:8080/__admin/clusters |
+
 🧪 Testando com AWS CLI
-bash
+```bash
 # DynamoDB
 aws dynamodb list-tables --endpoint-url http://localhost:8000
 
@@ -154,10 +162,12 @@ aws cognito-idp list-user-pools --max-results 10 --endpoint-url http://localhost
 
 # API Gateway
 aws apigateway get-rest-apis --endpoint-url http://localhost:4567
+```
+
 📁 Estrutura de Dados
 Os dados são persistidos em:
 
-text
+```text
 .aws-local-simulator-data/
 ├── dynamodb/
 ├── s3/
@@ -165,6 +175,8 @@ text
 ├── cognito/
 ├── apigateway/
 └── ecs/
+```
+
 🐛 Debug
 Para logs detalhados:
 

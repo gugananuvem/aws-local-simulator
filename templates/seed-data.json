@@ -1,0 +1,16 @@
+{
+  "RequestItems": {
+    "domain": [
+      { "PutRequest": { "Item": { "pk": { "S": "USER#1" }, "sk": { "S": "METADATA" }, "name": { "S": "Alice" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#2" }, "sk": { "S": "METADATA" }, "name": { "S": "Bob" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#3" }, "sk": { "S": "METADATA" }, "name": { "S": "Charlie" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#4" }, "sk": { "S": "METADATA" }, "name": { "S": "David" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#5" }, "sk": { "S": "METADATA" }, "name": { "S": "Eve" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#6" }, "sk": { "S": "METADATA" }, "name": { "S": "Frank" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#7" }, "sk": { "S": "METADATA" }, "name": { "S": "Grace" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#8" }, "sk": { "S": "METADATA" }, "name": { "S": "Heidi" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#9" }, "sk": { "S": "METADATA" }, "name": { "S": "Ivan" }, "status": { "S": "active" } } } },
+      { "PutRequest": { "Item": { "pk": { "S": "USER#10" }, "sk": { "S": "METADATA" }, "name": { "S": "Judy" }, "status": { "S": "active" } } } }
+    ]
+  }
+}
