@@ -3,6 +3,7 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const SQSSimulator = require('./simulator');
 const logger = require('../../utils/logger');
 
@@ -18,7 +19,7 @@ class SQSServer {
   }
 
   setupMiddlewares() {
-    this.app.use(express.json());
+    this.app.use(express.json({ type: ['application/json', 'application/x-amz-json-1.0'] }));
     this.app.use(express.urlencoded({ extended: true }));
     
     // Logging de requisições
@@ -42,16 +43,35 @@ class SQSServer {
 
   setupRoutes() {
     // Endpoint principal
+    this.app.use((req, res, next) => {
+      logger.info(`SQS incoming: ${req.method} ${req.path} headers=${JSON.stringify(req.headers)} query=${JSON.stringify(req.query)} body=${JSON.stringify(req.body)}`);
+      next();
+    });
+
     this.app.post('/', (req, res) => {
-      const action = req.query.Action || req.body.Action;
+      const action = req.query.Action || req.body.Action ||
+        (req.headers['x-amz-target'] && req.headers['x-amz-target'].split('.')[1]);
+      logger.info(`SQS action resolved: ${action}`);
       const result = this.simulator.handleRequest(action, req, res);
-      
+      const isJsonProtocol = req.headers['content-type'] && req.headers['content-type'].includes('application/x-amz-json-1.0');
+
       if (result && result.error) {
-        res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        const isJsonProtocol = req.headers['content-type'] && req.headers['content-type'].includes('application/x-amz-json-1.0');
+        if (isJsonProtocol) {
+          res.status(result.status).json({ __type: result.error.code, message: result.error.message });
+        } else {
+          res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
       } else if (result) {
-        // Gera resposta XML
-        res.set('Content-Type', 'application/xml');
-        res.send(this.generateResponse(action, result));
+        if (isJsonProtocol) {
+          res.set('Content-Type', 'application/x-amz-json-1.0');
+          res.json(this.generateJsonResponse(action, result));
+        } else {
+          const xml = this.generateResponse(action, result);
+          logger.info(`SQS response for ${action}: ${xml}`);
+          res.set('Content-Type', 'application/xml');
+          res.send(xml);
+        }
       }
     });
     
@@ -105,6 +125,37 @@ class SQSServer {
     });
   }
 
+  generateJsonResponse(action, result) {
+    switch (action) {
+      case 'CreateQueue':
+        return { QueueUrl: result.queueUrl };
+      case 'SendMessage':
+        return { MD5OfMessageBody: result.md5, MessageId: result.messageId };
+      case 'SendMessageBatch':
+        return {
+          Successful: (result.successful || []).map(s => ({ Id: s.Id, MessageId: s.MessageId, MD5OfMessageBody: s.MD5OfMessageBody })),
+          Failed: result.failed || []
+        };
+      case 'ReceiveMessage':
+        return {
+          Messages: (result.messages || []).map(m => ({
+            MessageId: m.MessageId,
+            ReceiptHandle: m.ReceiptHandle,
+            MD5OfBody: m.MD5OfBody,
+            Body: m.Body
+          }))
+        };
+      case 'DeleteMessage':
+        return {};
+      case 'GetQueueUrl':
+        return { QueueUrl: result.queueUrl };
+      case 'ListQueues':
+        return { QueueUrls: (result.queues || []).map(q => q.url) };
+      default:
+        return result;
+    }
+  }
+
   generateResponse(action, result) {
     switch(action) {
       case 'CreateQueue':
@@ -128,26 +179,28 @@ class SQSServer {
 
   generateCreateQueueResponse(queueUrl) {
     return `<?xml version="1.0" encoding="UTF-8"?>
-<CreateQueueResponse>
+<CreateQueueResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
   <CreateQueueResult>
     <QueueUrl>${queueUrl}</QueueUrl>
   </CreateQueueResult>
+  <ResponseMetadata><RequestId>${crypto.randomUUID()}</RequestId></ResponseMetadata>
 </CreateQueueResponse>`;
   }
 
   generateSendMessageResponse(messageId, md5) {
     return `<?xml version="1.0" encoding="UTF-8"?>
-<SendMessageResponse>
+<SendMessageResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
   <SendMessageResult>
     <MD5OfMessageBody>${md5}</MD5OfMessageBody>
     <MessageId>${messageId}</MessageId>
   </SendMessageResult>
+  <ResponseMetadata><RequestId>${crypto.randomUUID()}</RequestId></ResponseMetadata>
 </SendMessageResponse>`;
   }
 
   generateSendMessageBatchResponse(successful, failed) {
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
-<SendMessageBatchResponse>
+<SendMessageBatchResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
   <SendMessageBatchResult>`;
     
     for (const s of successful) {
@@ -170,6 +223,7 @@ class SQSServer {
     
     xml += `
   </SendMessageBatchResult>
+  <ResponseMetadata><RequestId>${crypto.randomUUID()}</RequestId></ResponseMetadata>
 </SendMessageBatchResponse>`;
     
     return xml;
@@ -177,7 +231,7 @@ class SQSServer {
 
   generateReceiveMessageResponse(messages) {
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
-<ReceiveMessageResponse>
+<ReceiveMessageResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
   <ReceiveMessageResult>`;
     
     for (const msg of messages) {
@@ -192,6 +246,7 @@ class SQSServer {
     
     xml += `
   </ReceiveMessageResult>
+  <ResponseMetadata><RequestId>${crypto.randomUUID()}</RequestId></ResponseMetadata>
 </ReceiveMessageResponse>`;
     
     return xml;
@@ -199,25 +254,26 @@ class SQSServer {
 
   generateDeleteMessageResponse() {
     return `<?xml version="1.0" encoding="UTF-8"?>
-<DeleteMessageResponse>
+<DeleteMessageResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
   <ResponseMetadata>
-    <RequestId>${Math.random().toString(36).substring(7)}</RequestId>
+    <RequestId>${crypto.randomUUID()}</RequestId>
   </ResponseMetadata>
 </DeleteMessageResponse>`;
   }
 
   generateGetQueueUrlResponse(queueUrl) {
     return `<?xml version="1.0" encoding="UTF-8"?>
-<GetQueueUrlResponse>
+<GetQueueUrlResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
   <GetQueueUrlResult>
     <QueueUrl>${queueUrl}</QueueUrl>
   </GetQueueUrlResult>
+  <ResponseMetadata><RequestId>${crypto.randomUUID()}</RequestId></ResponseMetadata>
 </GetQueueUrlResponse>`;
   }
 
   generateListQueuesResponse(queues) {
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
-<ListQueuesResponse>
+<ListQueuesResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
   <ListQueuesResult>`;
     
     for (const queue of queues) {
@@ -226,6 +282,7 @@ class SQSServer {
     
     xml += `
   </ListQueuesResult>
+  <ResponseMetadata><RequestId>${crypto.randomUUID()}</RequestId></ResponseMetadata>
 </ListQueuesResponse>`;
     
     return xml;

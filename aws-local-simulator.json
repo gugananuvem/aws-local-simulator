@@ -1,0 +1,54 @@
+{
+  "services": {
+    "dynamodb": true,
+    "s3": true,
+    "sqs": true,
+    "lambda": true,
+    "cognito": true,
+    "apigateway": true
+  },
+  "dynamodb": {
+    "tables": [
+      {
+        "TableName": "users-table",
+        "KeySchema": [
+          { "AttributeName": "id", "KeyType": "HASH" }
+        ],
+        "AttributeDefinitions": [
+          { "AttributeName": "id", "AttributeType": "S" }
+        ],
+        "ProvisionedThroughput": {
+          "ReadCapacityUnits": 5,
+          "WriteCapacityUnits": 5
+        }
+      },
+      {
+        "TableName": "products-table",
+        "KeySchema": [
+          { "AttributeName": "productId", "KeyType": "HASH" }
+        ],
+        "AttributeDefinitions": [
+          { "AttributeName": "productId", "AttributeType": "S" }
+        ],
+        "ProvisionedThroughput": {
+          "ReadCapacityUnits": 5,
+          "WriteCapacityUnits": 5
+        }
+      }
+    ]
+  },
+  "s3": {
+    "buckets": ["my-demo-bucket", "uploads-bucket"]
+  },
+  "sqs": {
+    "queues": ["my-queue", "dead-letter-queue"]
+  },
+  "cognito": {
+    "userPools": [
+      {
+        "PoolName": "my-user-pool",
+        "AutoVerifiedAttributes": ["email"]
+      }
+    ]
+  }
+}
