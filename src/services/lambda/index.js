@@ -22,7 +22,8 @@ class LambdaService {
     
     // Cria o simulador
     this.simulator = new LambdaSimulator(this.config);
-    
+    await this.simulator.initialize();
+
     // Cria o servidor HTTP
     this.server = new LambdaServer(this.port, this.config);
     this.server.simulator = this.simulator;

@@ -1,4 +1,7 @@
-import { AWSLocalSimulator} from  './src/index.js';
+const { AWSLocalSimulator } = require('./src/index');
 
 const simulator = new AWSLocalSimulator();
-await simulator.start();
+simulator.start().catch(err => {
+  console.error('Erro ao iniciar simulador:', err);
+  process.exit(1);
+});

@@ -35,8 +35,61 @@ class APIGatewayServer {
 
   async initialize() {
     this.setupRoutes();
+    this.setupConfigRoutes();
     this.setupProxyRoutes();
     logger.debug('API Gateway Server inicializado');
+  }
+
+  setupConfigRoutes() {
+    // Register routes from aws-local-simulator.json config directly
+    const apis = this.config.apigateway?.apis || [];
+    for (const api of apis) {
+      for (const endpoint of (api.endpoints || [])) {
+        const { path, method, lambdaName, integrationType } = endpoint;
+        if (!path || !method) continue;
+
+        const expressPath = path.replace(/\{([^}]+)\}/g, ':$1');
+        const httpMethod = method.toLowerCase();
+
+        logger.debug(`📡 Registrando rota: ${method} ${path} -> ${lambdaName}`);
+
+        this.app[httpMethod](expressPath, async (req, res) => {
+          try {
+            const lambdaService = this.lambdaService;
+            if (!lambdaService) {
+              return res.status(500).json({ error: 'Lambda service not available' });
+            }
+
+            const event = {
+              httpMethod: req.method,
+              path: req.path,
+              headers: req.headers,
+              queryStringParameters: Object.keys(req.query).length ? req.query : null,
+              pathParameters: Object.keys(req.params).length ? req.params : null,
+              body: req.body ? JSON.stringify(req.body) : null,
+              isBase64Encoded: false,
+              requestContext: {
+                path: req.path,
+                stage: 'local',
+                requestId: Math.random().toString(36).substring(7),
+                identity: { sourceIp: req.ip }
+              }
+            };
+
+            const result = await lambdaService.simulator.invoke(lambdaName, event);
+            const payload = result.Payload || {};
+            const statusCode = payload.statusCode || 200;
+            const headers = payload.headers || { 'Content-Type': 'application/json' };
+            const body = payload.body;
+
+            res.status(statusCode).set(headers).send(body);
+          } catch (err) {
+            logger.error(`Lambda invoke error (${lambdaName}):`, err);
+            res.status(500).json({ error: err.message });
+          }
+        });
+      }
+    }
   }
 
   setupRoutes() {

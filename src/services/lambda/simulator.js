@@ -3,42 +3,40 @@
  */
 
 const HandlerLoader = require('./handler-loader');
-const RouteRegistry = require('./route-registry');
 const logger = require('../../utils/logger');
 
 class LambdaSimulator {
   constructor(config) {
     this.config = config;
-    this.routeRegistry = new RouteRegistry();
-    this.lambdas = new Map();
+    this.lambdas = new Map(); // functionName -> { handler, env, config }
     this.environment = { ...process.env };
   }
 
   async initialize() {
     logger.debug('Inicializando Lambda Simulator...');
-    
+
     if (this.config.lambdas && this.config.lambdas.length > 0) {
       for (const lambdaConfig of this.config.lambdas) {
         await this.registerLambda(lambdaConfig);
       }
     }
-    
+
     logger.debug(`✅ ${this.lambdas.size} Lambdas registradas`);
   }
 
   async registerLambda(lambdaConfig) {
     try {
-      const { path, handler: handlerPath, env = {}, type = 'auto' } = lambdaConfig;
-      
-      // Carrega o handler
+      const { name, handler: handlerPath, env = {}, type = 'auto' } = lambdaConfig;
+
+      if (!name) {
+        logger.warn(`Lambda sem nome ignorada: ${JSON.stringify(lambdaConfig)}`);
+        return;
+      }
+
       const handler = await HandlerLoader.load(handlerPath, type);
-      
-      // Registra no route registry
-      this.routeRegistry.register(path, handler, env);
-      
-      // Armazena metadata
-      this.lambdas.set(path, {
-        path,
+
+      this.lambdas.set(name, {
+        name,
         handler,
         handlerPath,
         handlerName: handler.name || 'anonymous',
@@ -46,84 +44,33 @@ class LambdaSimulator {
         type,
         registeredAt: new Date().toISOString()
       });
-      
-      logger.debug(`✅ Lambda registrada: ${path} -> ${handler.name || 'anonymous'}`);
-      
+
+      logger.debug(`✅ Lambda registrada: ${name} -> ${handlerPath}`);
     } catch (error) {
-      logger.error(`❌ Erro ao registrar Lambda ${lambdaConfig.path}:`, error);
+      logger.error(`❌ Erro ao registrar Lambda ${lambdaConfig.name}:`, error);
       throw error;
     }
   }
 
-  async handleRequest(req, res) {
-    const matchedRoute = this.routeRegistry.find(req.path);
-    
-    if (!matchedRoute) {
-      return {
-        error: {
-          statusCode: 404,
-          message: `Route not found: ${req.path}`,
-          availableRoutes: this.listRoutes()
-        },
-        status: 404
-      };
-    }
-    
-    // Aplica variáveis de ambiente específicas da rota
-    this.applyEnvironment(matchedRoute.env);
-    
-    // Prepara evento Lambda
-    const event = this.toLambdaEvent(req, matchedRoute.params);
-    
-    logger.debug(`🎯 Executando: ${matchedRoute.path} -> ${matchedRoute.handler.name || 'anonymous'}`);
-    
-    // Executa middlewares
-    const middlewares = this.routeRegistry.getMiddlewares(matchedRoute);
-    let handled = false;
-    let result = null;
-    
-    const runMiddlewares = async (index) => {
-      if (index >= middlewares.length) {
-        // Executa handler
+  async invoke(functionName, event, invocationType = 'RequestResponse') {
+    const lambda = this.lambdas.get(functionName);
 
-        result = await this.executeHandler(matchedRoute.handler, event);
-        handled = true;
-      
-        console.log(`✅ Resposta: ${result.statusCode}`);
-        res
-          .status(result.statusCode || 200)
-          .set(result.headers || {})
-          .send(result.body ? JSON.parse(result.body) : null);
-        return;
-      }
-      
-      const middleware = middlewares[index];
-      await new Promise((resolve, reject) => {
-        middleware(event, {
-          status: (code) => ({ json: (data) => {
-            result = { statusCode: code, body: data };
-            handled = true;
-            resolve();
-          }}),
-          send: (data) => {
-            result = { statusCode: 200, body: data };
-            handled = true;
-            resolve();
-          },
-          next: () => {
-            runMiddlewares(index + 1).then(resolve).catch(reject);
-          }
-        });
-      });
-    };
-    
-    await runMiddlewares(0);
-    
-    if (!handled && result) {
-      return this.formatResponse(result);
+    if (!lambda) {
+      throw new Error(`Function not found: ${functionName}`);
     }
 
-    return null;
+    this.applyEnvironment(lambda.env);
+    logger.debug(`🎯 Invocando Lambda: ${functionName}`);
+
+    if (invocationType === 'Event') {
+      this.executeHandler(lambda.handler, event).catch(err =>
+        logger.error(`❌ Async Lambda error (${functionName}):`, err)
+      );
+      return { StatusCode: 202 };
+    }
+
+    const result = await this.executeHandler(lambda.handler, event);
+    return { StatusCode: result.statusCode || 200, Payload: result };
   }
 
   async executeHandler(handler, event) {
@@ -135,49 +82,9 @@ class LambdaSimulator {
       logger.error('❌ Erro no handler:', error);
       return {
         statusCode: 500,
-        body: {
-          error: 'Internal Server Error',
-          message: error.message,
-          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        }
+        body: JSON.stringify({ error: 'Internal Server Error', message: error.message })
       };
     }
-  }
-
-  toLambdaEvent(req, params = {}) {
-    return {
-      httpMethod: req.method,
-      path: req.path,
-      headers: req.headers,
-      queryStringParameters: req.query,
-      pathParameters: params,
-      body: req.body ? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body)) : null,
-      isBase64Encoded: false,
-      requestContext: {
-        path: req.path,
-        stage: process.env.STAGE_NAME || 'dev',
-        requestId: Math.random().toString(36).substring(7),
-        identity: {
-          sourceIp: req.ip,
-          userAgent: req.headers['user-agent']
-        }
-      },
-      stageVariables: {},
-      resource: req.path
-    };
-  }
-
-  formatResponse(result) {
-    const statusCode = result.statusCode || 200;
-    const body = result.body;
-    const headers = result.headers || { 'Content-Type': 'application/json' };
-    
-    return {
-      statusCode,
-      headers,
-      body: typeof body === 'string' ? body : JSON.stringify(body),
-      isBase64Encoded: false
-    };
   }
 
   createContext() {
@@ -185,7 +92,7 @@ class LambdaSimulator {
       awsRequestId: Math.random().toString(36).substring(7),
       functionName: 'local-lambda',
       functionVersion: '$LATEST',
-      invokedFunctionArn: 'arn:aws:lambda:local:function',
+      invokedFunctionArn: 'arn:aws:lambda:local:000000000000:function:local-lambda',
       memoryLimitInMB: '1024',
       logGroupName: '/aws/lambda/local-lambda',
       logStreamName: 'local-stream',
@@ -214,7 +121,7 @@ class LambdaSimulator {
 
   listLambdas() {
     return Array.from(this.lambdas.values()).map(l => ({
-      path: l.path,
+      name: l.name,
       handlerName: l.handlerName,
       handlerPath: l.handlerPath,
       type: l.type,
@@ -223,12 +130,8 @@ class LambdaSimulator {
     }));
   }
 
-  getLambda(path) {
-    return this.lambdas.get(path);
-  }
-
-  listRoutes() {
-    return this.routeRegistry.list();
+  getLambda(name) {
+    return this.lambdas.get(name);
   }
 
   getLambdasCount() {
@@ -237,46 +140,30 @@ class LambdaSimulator {
 
   async reloadLambdas() {
     logger.info('🔄 Recarregando Lambdas...');
-    
-    for (const [path, lambda] of this.lambdas.entries()) {
+
+    for (const [name, lambda] of this.lambdas.entries()) {
       try {
         const newHandler = await HandlerLoader.reload(lambda.handlerPath, lambda.type);
-        this.routeRegistry.register(path, newHandler, lambda.env);
         lambda.handler = newHandler;
         lambda.handlerName = newHandler.name || 'anonymous';
-        logger.debug(`✅ Lambda recarregada: ${path}`);
+        logger.debug(`✅ Lambda recarregada: ${name}`);
       } catch (error) {
-        logger.error(`❌ Erro ao recarregar Lambda ${path}:`, error);
+        logger.error(`❌ Erro ao recarregar Lambda ${name}:`, error);
       }
     }
-    
+
     logger.info(`✅ ${this.lambdas.size} Lambdas recarregadas`);
   }
 
   getStats() {
-    const lambdas = this.listLambdas();
     return {
-      totalLambdas: lambdas.length,
-      lambdas: lambdas.map(l => ({
-        path: l.path,
-        handler: l.handlerName
-      })),
-      routes: this.routeRegistry.getStats(),
-      environment: Object.keys(this.environment).length
+      totalLambdas: this.lambdas.size,
+      lambdas: this.listLambdas().map(l => ({ name: l.name, handler: l.handlerName }))
     };
   }
 
   async reset() {
-    // Recarrega Lambdas
     await this.reloadLambdas();
-    
-    // Limpa variáveis de ambiente customizadas
-    for (const key of Object.keys(this.environment)) {
-      if (!process.env.hasOwnProperty(key) || key.startsWith('AWS_LOCAL_SIMULATOR_')) {
-        delete process.env[key];
-      }
-    }
-    
     this.environment = { ...process.env };
     logger.debug('Lambda: Estado resetado');
   }

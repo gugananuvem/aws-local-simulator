@@ -44,53 +44,48 @@ class LambdaServer {
   setupRoutes() {
     // Health check
     this.app.get('/health', (req, res) => {
-      res.json({
-        status: 'healthy',
-        version: require('../../../package.json').version,
-        lambdas: this.simulator.getLambdasCount(),
-        routes: this.simulator.listRoutes()
-      });
+      res.json({ status: 'healthy', lambdas: this.simulator.getLambdasCount() });
     });
-    
-    // Rota catch-all para todas as Lambdas
-    this.app.all('*', async (req, res) => {
-      const result = await this.simulator.handleRequest(req, res);
-      
-      if (result && result.error) {
-        res.status(result.status).json(result.error);
+
+    // AWS Lambda Invoke API: POST /2015-03-31/functions/{functionName}/invocations
+    this.app.post('/2015-03-31/functions/:functionName/invocations', async (req, res) => {
+      const { functionName } = req.params;
+      const invocationType = req.headers['x-amz-invocation-type'] || 'RequestResponse';
+      const event = req.body || {};
+
+      logger.debug(`Lambda invoke: ${functionName} (${invocationType})`);
+
+      try {
+        const result = await this.simulator.invoke(functionName, event, invocationType);
+
+        if (invocationType === 'Event') {
+          return res.status(202).send();
+        }
+
+        res.status(result.StatusCode || 200).json(result.Payload);
+      } catch (err) {
+        if (err.message && err.message.includes('Function not found')) {
+          return res.status(404).json({ __type: 'ResourceNotFoundException', message: err.message });
+        }
+        logger.error('Lambda invoke error:', err);
+        res.status(500).json({ __type: 'ServiceException', message: err.message });
       }
     });
-    
+
     // Admin endpoints
     this.setupAdminRoutes();
   }
 
   setupAdminRoutes() {
-    // Listar todas as Lambdas
-    this.app.get('/__admin/lambdas', (req, res) => {
+    this.app.get('/__admin/functions', (req, res) => {
       res.json(this.simulator.listLambdas());
     });
-    
-    // Detalhes de uma Lambda
-    this.app.get('/__admin/lambdas/:path', (req, res) => {
-      const lambda = this.simulator.getLambda(req.params.path);
-      if (lambda) {
-        res.json(lambda);
-      } else {
-        res.status(404).json({ error: 'Lambda not found' });
-      }
-    });
-    
-    // Recarregar Lambdas
+
     this.app.post('/__admin/reload', async (req, res) => {
       await this.simulator.reloadLambdas();
-      res.json({ 
-        message: 'Lambdas recarregadas', 
-        count: this.simulator.getLambdasCount() 
-      });
+      res.json({ message: 'Lambdas recarregadas', count: this.simulator.getLambdasCount() });
     });
-    
-    // Injetar variável de ambiente
+
     this.app.post('/__admin/env', (req, res) => {
       const { key, value } = req.body;
       if (key && value !== undefined) {
@@ -100,13 +95,11 @@ class LambdaServer {
         res.status(400).json({ error: 'Missing key or value' });
       }
     });
-    
-    // Listar variáveis de ambiente
+
     this.app.get('/__admin/env', (req, res) => {
       res.json(this.simulator.getEnvironmentVariables());
     });
-    
-    // Estatísticas
+
     this.app.get('/__admin/stats', (req, res) => {
       res.json(this.simulator.getStats());
     });
@@ -126,7 +119,7 @@ class LambdaServer {
     logger.info('\n📚 Lambdas registradas:');
     const lambdas = this.simulator.listLambdas();
     for (const lambda of lambdas) {
-      logger.info(`   ${lambda.path.padEnd(30)} -> ${lambda.handlerName || 'anonymous'}`);
+      logger.info(`   ${lambda.name.padEnd(30)} -> ${lambda.handlerName || 'anonymous'}`);
     }
   }
 

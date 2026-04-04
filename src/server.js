@@ -75,7 +75,7 @@ class Server {
       { name: "eventbridge", class: EventBridgeService, depends: [] },
       { name: "cognito", class: CognitoService, depends: [] },
       { name: "ecs", class: ECSService, depends: [] },
-      { name: "apigateway", class: APIGatewayService, depends: [] },
+      { name: "apigateway", class: APIGatewayService, depends: ["lambda"] },
     ];
 
     for (const serviceDef of serviceOrder) {

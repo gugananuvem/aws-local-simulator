@@ -13,11 +13,11 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 | DynamoDB | ✅ | 8000 | Banco de dados NoSQL |
 | S3 | ✅ | 4566 | Armazenamento de objetos |
 | SQS | ✅ | 9324 | Filas de mensagens |
-| Lambda | ✅ | 3001 | Funções serverless |
+| Lambda | ✅ | 3001 | Funções serverless (invocação por nome) |
 | Cognito | ✅ | 9229 | Autenticação e autorização |
 | API Gateway | ✅ | 4567 | APIs REST e HTTP |
-| STS | ✅ | 9326 | credenciais temporárias com permissões específicas
-| ECS/Fargate |  🚧 | 8080 | Orquestração de containers (em desenvolvimento) |
+| STS | ✅ | 9326 | Credenciais temporárias (AssumeRole, GetCallerIdentity) |
+| ECS/Fargate | 🚧 | 8080 | Orquestração de containers (em desenvolvimento) |
 | SNS | 🚧 | 9911 | Notificações (em desenvolvimento) |
 | EventBridge | 🚧 | 4010 | Barramento de eventos (em desenvolvimento) |
 
@@ -26,8 +26,11 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 ```bash
 npm install --save-dev aws-local-simulator
 ```
-🚀 Uso Rápido
-1. Crie um arquivo de configuração aws-local-simulator.json:
+
+## 🚀 Uso Rápido
+
+### 1. Crie um arquivo de configuração `aws-local-simulator.json`:
+
 ```json
 {
   "services": {
@@ -36,11 +39,12 @@ npm install --save-dev aws-local-simulator
     "sqs": true,
     "lambda": true,
     "cognito": true,
-    "apigateway": true
+    "apigateway": true,
+    "sts": true
   },
   "lambdas": [
     {
-      "path": "/api/users",
+      "name": "my-function",
       "handler": "./src/handlers/users.js",
       "env": {
         "TABLE_NAME": "users-table"
@@ -51,17 +55,16 @@ npm install --save-dev aws-local-simulator
     "tables": [
       {
         "TableName": "users-table",
-        "KeySchema": [
-          { "AttributeName": "id", "KeyType": "HASH" }
-        ],
-        "AttributeDefinitions": [
-          { "AttributeName": "id", "AttributeType": "S" }
-        ]
+        "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }],
+        "AttributeDefinitions": [{ "AttributeName": "id", "AttributeType": "S" }]
       }
     ]
   },
   "s3": {
     "buckets": ["my-bucket"]
+  },
+  "sqs": {
+    "queues": ["my-queue", "dead-letter-queue"]
   },
   "cognito": {
     "userPools": [
@@ -74,81 +77,86 @@ npm install --save-dev aws-local-simulator
 }
 ```
 
-# 2. Inicie o simulador:
-## Via CLI
+### 2. Inicie o simulador:
+
+```bash
+# Via CLI
 npx aws-local-simulator start
 
 # Ou via código
 const { AWSLocalSimulator } = require('aws-local-simulator');
 const simulator = new AWSLocalSimulator();
 await simulator.start();
+```
 
-# 3. Configure seu código para usar os serviços locais:
+### 3. Configure seu código para usar os serviços locais:
 
 ```javascript
-// Importe a configuração AWS pronta
-const { dynamoDB, s3, sqs, cognito, apigateway } = require('aws-local-simulator/aws-config');
+const { dynamoDB, s3, sqs, cognito } = require('aws-local-simulator/aws-config');
 
-// Use como normalmente faria
 await dynamoDB.send(new PutCommand({
   TableName: 'users-table',
   Item: { id: '123', name: 'John' }
 }));
 ```
 
-🔧 Configuração por Variáveis de Ambiente
+## 🔧 Configuração por Variáveis de Ambiente
 
 | Variável | Descrição | Padrão |
 |---------|----------|-------|
-| AWS_LOCAL_SIMULATOR_DYNAMODB |Habilita DynamoDB | true |
-| AWS_LOCAL_SIMULATOR_S3 |Habilita S3 | true |
-| AWS_LOCAL_SIMULATOR_SQS |Habilita SQS | true |
-| AWS_LOCAL_SIMULATOR_LAMBDA |Habilita Lambda | true |
-| AWS_LOCAL_SIMULATOR_COGNITO |Habilita Cognito | false |
-| AWS_LOCAL_SIMULATOR_APIGATEWAY |Habilita API Gateway | false |
-| AWS_LOCAL_SIMULATOR_ECS |Habilita ECS/Fargate | false |
-| AWS_LOCAL_SIMULATOR_DYNAMODB_PORT |Porta DynamoDB | 8000 |
-| AWS_LOCAL_SIMULATOR_S3_PORT |Porta S3 | 4566 |
-| AWS_LOCAL_SIMULATOR_SQS_PORT |Porta SQS | 9324 |
-| AWS_LOCAL_SIMULATOR_LAMBDA_PORT |Porta Lambda | 3001 |
-| AWS_LOCAL_SIMULATOR_COGNITO_PORT |Porta Cognito | 9229 |
-| AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT |Porta API Gateway | 4567 |
-| AWS_LOCAL_SIMULATOR_STS_PORT |Porta STS | 9326 |
-| AWS_LOCAL_SIMULATOR_ECS_PORT |Porta ECS | 8080 |
-| AWS_LOCAL_SIMULATOR_DATA |Diretório de dados | ./aws-local-simulator-data |
-| AWS_LOCAL_SIMULATOR_LOG |Nível de log | info |
-```
+| AWS_LOCAL_SIMULATOR_DYNAMODB | Habilita DynamoDB | true |
+| AWS_LOCAL_SIMULATOR_S3 | Habilita S3 | true |
+| AWS_LOCAL_SIMULATOR_SQS | Habilita SQS | true |
+| AWS_LOCAL_SIMULATOR_LAMBDA | Habilita Lambda | true |
+| AWS_LOCAL_SIMULATOR_COGNITO | Habilita Cognito | false |
+| AWS_LOCAL_SIMULATOR_APIGATEWAY | Habilita API Gateway | false |
+| AWS_LOCAL_SIMULATOR_STS | Habilita STS | true |
+| AWS_LOCAL_SIMULATOR_ECS | Habilita ECS/Fargate | false |
+| AWS_LOCAL_SIMULATOR_DYNAMODB_PORT | Porta DynamoDB | 8000 |
+| AWS_LOCAL_SIMULATOR_S3_PORT | Porta S3 | 4566 |
+| AWS_LOCAL_SIMULATOR_SQS_PORT | Porta SQS | 9324 |
+| AWS_LOCAL_SIMULATOR_LAMBDA_PORT | Porta Lambda | 3001 |
+| AWS_LOCAL_SIMULATOR_COGNITO_PORT | Porta Cognito | 9229 |
+| AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT | Porta API Gateway | 4567 |
+| AWS_LOCAL_SIMULATOR_STS_PORT | Porta STS | 9326 |
+| AWS_LOCAL_SIMULATOR_ECS_PORT | Porta ECS | 8080 |
+| AWS_LOCAL_SIMULATOR_DATA | Diretório de dados | ./aws-local-simulator-data |
+| AWS_LOCAL_SIMULATOR_LOG | Nível de log | info |
 
-# 📝 Comandos CLI
+## 📝 Comandos CLI
+
 ```bash
-#### Iniciar simulador
+# Iniciar simulador
 npx aws-local-simulator start [configPath]
 
-#### Parar simulador
+# Parar simulador
 npx aws-local-simulator stop
 
-#### Reiniciar
+# Reiniciar
 npx aws-local-simulator restart
 
-#### Resetar dados
+# Resetar dados
 npx aws-local-simulator reset
 
-#### Status
+# Status
 npx aws-local-simulator status
 ```
 
-# 🔌 Endpoints
+## 🔌 Endpoints
+
 | Serviço | Endpoint | Admin |
 |---------|----------|-------|
-| DynamoDB | http://localhost:8000	| http://localhost:8000/__admin/tables |
-| S3 | http://localhost:4566	| http://localhost:4566/__admin/buckets |
-| SQS | http://localhost:9324	| http://localhost:9324/__admin/queues |
-| Lambda | http://localhost:3001	| http://localhost:3001/__admin/functions |
-| Cognito | http://localhost:9229	| http://localhost:9229/__admin/userpools |
-| API Gateway | http://localhost:4567	| http://localhost:4567/__admin/apis |
-| ECS | http://localhost:8080	| http://localhost:8080/__admin/clusters |
+| DynamoDB | http://localhost:8000 | http://localhost:8000/__admin/tables |
+| S3 | http://localhost:4566 | http://localhost:4566/__admin/buckets |
+| SQS | http://localhost:9324 | http://localhost:9324/__admin/queues |
+| Lambda | http://localhost:3001 | http://localhost:3001/__admin/functions |
+| Cognito | http://localhost:9229 | http://localhost:9229/__admin/userpools |
+| API Gateway | http://localhost:4567 | http://localhost:4567/__admin/apis |
+| STS | http://localhost:9326 | — |
+| ECS | http://localhost:8080 | http://localhost:8080/__admin/clusters |
 
-🧪 Testando com AWS CLI
+## 🧪 Testando com AWS CLI
+
 ```bash
 # DynamoDB
 aws dynamodb list-tables --endpoint-url http://localhost:8000
@@ -159,14 +167,59 @@ aws s3 ls --endpoint-url http://localhost:4566
 # SQS
 aws sqs list-queues --endpoint-url http://localhost:9324
 
+# Lambda — invocar por nome (não por path HTTP)
+aws lambda invoke \
+  --function-name my-function \
+  --payload '{"key":"value"}' \
+  --endpoint-url http://localhost:3001 \
+  output.json
+
 # Cognito
 aws cognito-idp list-user-pools --max-results 10 --endpoint-url http://localhost:9229
+
+# STS
+aws sts get-caller-identity --endpoint-url http://localhost:9326
+aws sts assume-role \
+  --role-arn "arn:aws:iam::123456789012:role/my-role" \
+  --role-session-name "my-session" \
+  --endpoint-url http://localhost:9326
 
 # API Gateway
 aws apigateway get-rest-apis --endpoint-url http://localhost:4567
 ```
 
-📁 Estrutura de Dados
+## ⚙️ Configuração de Lambdas
+
+Lambdas são registradas por **nome** e invocadas via API de invocação (igual à AWS real). O roteamento HTTP é feito pelo API Gateway.
+
+```json
+{
+  "lambdas": [
+    {
+      "name": "my-function",
+      "handler": "./src/handlers/my-function.js",
+      "env": {
+        "TABLE_NAME": "users-table",
+        "BUCKET_NAME": "my-bucket"
+      }
+    }
+  ]
+}
+```
+
+O handler deve exportar uma função padrão:
+
+```javascript
+exports.handler = async (event, context) => {
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: 'Hello from Lambda!' })
+  };
+};
+```
+
+## 📁 Estrutura de Dados
+
 Os dados são persistidos em:
 
 ```text
@@ -179,28 +232,26 @@ Os dados são persistidos em:
 └── ecs/
 ```
 
-🐛 Debug
-Para logs detalhados:
+## 🐛 Debug
 
-bash
+```bash
 AWS_LOCAL_SIMULATOR_LOG=verboso npx aws-local-simulator start
-🤝 Contribuindo
-Fork o projeto
+```
 
-Crie sua feature branch (git checkout -b feature/AmazingFeature)
+## 🤝 Contribuindo
 
-Commit suas mudanças (git commit -m 'Add some AmazingFeature')
+1. Fork o projeto
+2. Crie sua feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
+5. Abra um Pull Request
 
-Push para a branch (git push origin feature/AmazingFeature)
+## 📄 Licença
 
-Abra um Pull Request
-
-📄 Licença
 MIT © Luiz Gustavo Ribeiro
 
-⚠️ Limitações
-SNS e EventBridge em desenvolvimento
+## ⚠️ Limitações
 
-WebSocket APIs em desenvolvimento
-
-Para uso em desenvolvimento e testes apenas
+- SNS e EventBridge em desenvolvimento
+- WebSocket APIs em desenvolvimento
+- Para uso em desenvolvimento e testes apenas

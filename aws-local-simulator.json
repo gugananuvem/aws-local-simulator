@@ -7,7 +7,7 @@
     "cognito": true,
     "apigateway": true
   },
- "sts": {
+  "sts": {
     "roles": [
       {
         "RoleName": "developer-role",
@@ -34,12 +34,8 @@
     "tables": [
       {
         "TableName": "users-table",
-        "KeySchema": [
-          { "AttributeName": "id", "KeyType": "HASH" }
-        ],
-        "AttributeDefinitions": [
-          { "AttributeName": "id", "AttributeType": "S" }
-        ],
+        "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }],
+        "AttributeDefinitions": [{ "AttributeName": "id", "AttributeType": "S" }],
         "ProvisionedThroughput": {
           "ReadCapacityUnits": 5,
           "WriteCapacityUnits": 5
@@ -47,12 +43,8 @@
       },
       {
         "TableName": "products-table",
-        "KeySchema": [
-          { "AttributeName": "productId", "KeyType": "HASH" }
-        ],
-        "AttributeDefinitions": [
-          { "AttributeName": "productId", "AttributeType": "S" }
-        ],
+        "KeySchema": [{ "AttributeName": "productId", "KeyType": "HASH" }],
+        "AttributeDefinitions": [{ "AttributeName": "productId", "AttributeType": "S" }],
         "ProvisionedThroughput": {
           "ReadCapacityUnits": 5,
           "WriteCapacityUnits": 5
@@ -75,5 +67,52 @@
         "ClientId": "dea9b7903393ed6dcf5006f2a31658e93d65b3db"
       }
     ]
-  }
+  },
+  "apigateway": {
+    "apis": [
+      {
+        "name": "Users API",
+        "description": "API para gerenciamento de usuários",
+        "endpoints": [
+          {
+            "path": "/users",
+            "method": "GET",
+            "lambdaName": "users-api",
+            "integrationType": "lambda"
+          },
+          {
+            "path": "/users",
+            "method": "POST",
+            "lambdaName": "users-api",
+            "integrationType": "lambda"
+          },
+          {
+            "path": "/users/{id}",
+            "method": "GET",
+            "lambdaName": "users-api",
+            "integrationType": "lambda"
+          },
+          {
+            "path": "/users/{id}",
+            "method": "DELETE",
+            "lambdaName": "users-api",
+            "integrationType": "lambda"
+          }
+        ]
+      }
+    ]
+  },
+  "lambdas": [
+    {
+      "name": "users-api",
+      "handler": "./handlers/users.js",
+      "runtime": "nodejs18.x",
+      "env": {
+        "TABLE_NAME": "users-table",
+        "REGION": "us-east-1"
+      },
+      "timeout": 30,
+      "memorySize": 128
+    }
+  ]
 }

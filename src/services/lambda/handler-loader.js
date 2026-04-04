@@ -16,8 +16,19 @@ class HandlerLoader {
    * @returns {Promise<Function>} - Função handler
    */
   static async load(handlerPath, type = 'auto') {
-    const fullPath = path.resolve(process.cwd(), handlerPath);
-    
+    // Resolve path: try cwd first, then data dir
+    let fullPath = path.resolve(process.cwd(), handlerPath);
+
+    if (!fs.existsSync(fullPath)) {
+      const dataDir = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR;
+      if (dataDir) {
+        const dataPath = path.resolve(dataDir, 'lambda', handlerPath.replace(/^\.\//, ''));
+        if (fs.existsSync(dataPath)) {
+          fullPath = dataPath;
+        }
+      }
+    }
+
     if (!fs.existsSync(fullPath)) {
       throw new Error(`Handler não encontrado: ${fullPath}`);
     }

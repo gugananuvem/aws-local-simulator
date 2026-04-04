@@ -51,3 +51,4 @@ webpack.config.js
 obfuscator-config.js
 .vscode
 *.tgz
+aws-local-simulator.json

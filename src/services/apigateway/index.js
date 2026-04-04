@@ -7,24 +7,26 @@ const APIGatewayServer = require('./server');
 const APIGatewaySimulator = require('./simulator');
 
 class APIGatewayService {
-  constructor(config) {
+  constructor(config, dependencies = {}) {
     this.config = config;
     this.name = 'apigateway';
     this.port = config.ports.apigateway || 4567;
     this.server = null;
     this.simulator = null;
     this.isRunning = false;
+    this.lambdaService = dependencies.lambda || null;
   }
 
   async initialize() {
     const logger = require('../../utils/logger');
     logger.debug(`Inicializando API Gateway Service na porta ${this.port}...`);
-    
+
     this.simulator = new APIGatewaySimulator(this.config);
     await this.simulator.initialize();
-    
+
     this.server = new APIGatewayServer(this.port, this.config);
     this.server.simulator = this.simulator;
+    this.server.lambdaService = this.lambdaService;
     
     await this.server.initialize();
     
