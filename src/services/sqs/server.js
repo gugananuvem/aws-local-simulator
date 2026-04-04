@@ -19,8 +19,23 @@ class SQSServer {
   }
 
   setupMiddlewares() {
-    this.app.use(express.json({ type: ['application/json', 'application/x-amz-json-1.0'] }));
-    this.app.use(express.urlencoded({ extended: true }));
+    this.app.use(express.raw({ type: '*/*', limit: '10mb' }));
+    this.app.use((req, res, next) => {
+      if (req.body && Buffer.isBuffer(req.body)) {
+        const str = req.body.toString('utf8');
+        const contentType = req.headers['content-type'] || '';
+        if (contentType.includes('application/x-amz-json-1.0') || contentType.includes('application/json')) {
+          try { req.body = JSON.parse(str); } catch (e) { req.body = {}; }
+        } else if (contentType.includes('application/x-www-form-urlencoded')) {
+          req.body = Object.fromEntries(new URLSearchParams(str));
+        } else {
+          try { req.body = JSON.parse(str); } catch (e) { req.body = {}; }
+        }
+      } else if (!req.body) {
+        req.body = {};
+      }
+      next();
+    });
     
     // Logging de requisições
     if (logger.currentLogLevel === 'verboso') {

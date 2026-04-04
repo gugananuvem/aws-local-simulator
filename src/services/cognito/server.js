@@ -16,7 +16,19 @@ class CognitoServer {
   }
 
   setupMiddlewares() {
-    this.app.use(express.json());
+    this.app.use(express.raw({ type: '*/*', limit: '10mb' }));
+    this.app.use((req, res, next) => {
+      if (req.body && Buffer.isBuffer(req.body)) {
+        try {
+          req.body = JSON.parse(req.body.toString('utf8'));
+        } catch (e) {
+          req.body = {};
+        }
+      } else if (!req.body) {
+        req.body = {};
+      }
+      next();
+    });
     
     if (logger.currentLogLevel === 'verboso') {
       this.app.use((req, res, next) => {
@@ -48,12 +60,13 @@ class CognitoServer {
     // User Pool operations
     this.app.post('/', async (req, res) => {
       const target = req.headers['x-amz-target'];
+      logger.info(`Cognito incoming: target=${target} body=${JSON.stringify(req.body)}`);
       if (!target) {
         return res.status(400).json({ error: 'Missing X-Amz-Target header' });
       }
 
       try {
-        const result = await this.handleRequest(target, req.body);
+        const result = await this.handleRequest(target, req.body || {});
         res.json(result);
       } catch (error) {
         logger.error('Cognito Error:', error);
@@ -84,20 +97,46 @@ class CognitoServer {
       case 'DeleteUserPool':
         return this.simulator.deleteUserPool(params);
       
+      case 'ListUsers':
+        return this.simulator.listUsers(params);
       // User Pool Client Management
       case 'CreateUserPoolClient':
         return this.simulator.createUserPoolClient(params);
+      case 'ListUserPoolClients':
+        return this.simulator.listUserPoolClients(params);
+      case 'DescribeUserPoolClient':
+        return this.simulator.describeUserPoolClient(params);
+      case 'DeleteUserPoolClient':
+        return this.simulator.deleteUserPoolClient(params);
       
       // User Operations
       case 'SignUp':
         return this.simulator.signUp(params);
       case 'ConfirmSignUp':
         return this.simulator.confirmSignUp(params);
+      case 'ForgotPassword':
+        return this.simulator.forgotPassword(params);
+      case 'ConfirmForgotPassword':
+        return this.simulator.confirmForgotPassword(params);
+      case 'ChangePassword':
+        return this.simulator.changePassword(params);
       case 'InitiateAuth':
         return this.simulator.initiateAuth(params);
+      case 'RespondToAuthChallenge':
+        return this.simulator.respondToAuthChallenge(params);
       case 'GetToken':
         return this.simulator.getToken(params);
-      
+      case 'GlobalSignOut':
+        return this.simulator.globalSignOut(params);
+      case 'RevokeToken':
+        return this.simulator.revokeToken(params);
+      case 'GetUser':
+        return this.simulator.getUser(params);
+      case 'UpdateUserAttributes':
+        return this.simulator.updateUserAttributes(params);
+      case 'DeleteUser':
+        return this.simulator.deleteUser(params);
+
       // Admin Operations
       case 'AdminGetUser':
         return this.simulator.adminGetUser(params);
@@ -107,6 +146,18 @@ class CognitoServer {
         return this.simulator.adminSetUserPassword(params);
       case 'AdminDeleteUser':
         return this.simulator.adminDeleteUser(params);
+      case 'AdminDisableUser':
+        return this.simulator.adminDisableUser(params);
+      case 'AdminEnableUser':
+        return this.simulator.adminEnableUser(params);
+      case 'AdminResetUserPassword':
+        return this.simulator.adminResetUserPassword(params);
+      case 'AdminInitiateAuth':
+        return this.simulator.initiateAuth(params);
+      case 'AdminListGroupsForUser':
+        return this.simulator.adminListGroupsForUser(params);
+      case 'AdminUserGlobalSignOut':
+        return this.simulator.adminUserGlobalSignOut(params);
       
       // Identity Pool Operations
       case 'CreateIdentityPool':

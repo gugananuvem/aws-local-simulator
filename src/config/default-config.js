@@ -14,6 +14,7 @@ module.exports = {
     ecs: false,
     cognito: false,
     apigateway: false,
+    sts: true,
   },
 
   // Portas padrão
@@ -27,6 +28,7 @@ module.exports = {
     ecs: 8080,
     cognito: 9229,
     apigateway: 4567,
+    sts: 9326,
   },
   apigateway: {
     defaultCors: {

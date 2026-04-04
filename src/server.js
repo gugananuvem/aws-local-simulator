@@ -17,6 +17,7 @@ const EventBridgeService = require("./services/eventbridge");
 const CognitoService = require("./services/cognito");
 const APIGatewayService = require("./services/apigateway");
 const ECSService = require("./services/ecs");
+const STSService = require("./services/sts");
 
 class Server {
   constructor(config) {
@@ -65,6 +66,7 @@ class Server {
   async initializeServices() {
     // Ordem de inicialização importante
     const serviceOrder = [
+      { name: "sts", class: STSService, depends: [] },
       { name: "lambda", class: LambdaService, depends: [] },
       { name: "dynamodb", class: DynamoDBService, depends: [] },
       { name: "s3", class: S3Service, depends: [] },

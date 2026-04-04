@@ -140,6 +140,215 @@ class CognitoSimulator {
     };
   }
 
+  listUsers(params = {}) {
+    const { UserPoolId, Filter, Limit = 60, PaginationToken } = params;
+    const userPool = this.userPools.get(UserPoolId);
+
+    if (!userPool) {
+      throw new Error(`User pool ${UserPoolId} not found`);
+    }
+
+    let users = Array.from(this.users.values()).filter(u => u.UserPoolId === UserPoolId);
+
+    if (PaginationToken) {
+      const startIndex = parseInt(PaginationToken);
+      users = users.slice(startIndex);
+    }
+
+    const results = users.slice(0, Limit);
+    const nextToken = results.length === Limit && users.length > Limit ? String(Limit) : null;
+
+    return {
+      Users: results.map(u => ({
+        Username: u.Username,
+        UserStatus: u.UserStatus,
+        Enabled: u.Enabled,
+        UserCreateDate: u.CreatedDate,
+        UserLastModifiedDate: u.LastModifiedDate,
+        Attributes: this.formatUserAttributes(u.Attributes)
+      })),
+      PaginationToken: nextToken
+    };
+  }
+
+  listUserPoolClients(params = {}) {
+    const { UserPoolId, MaxResults = 60, NextToken } = params;
+    const userPool = this.userPools.get(UserPoolId);
+    if (!userPool) throw new Error(`User pool ${UserPoolId} not found`);
+
+    let clients = Array.from(userPool.Clients.values());
+    if (NextToken) clients = clients.slice(parseInt(NextToken));
+    const results = clients.slice(0, MaxResults);
+
+    return {
+      UserPoolClients: results.map(c => ({
+        ClientId: c.ClientId,
+        ClientName: c.ClientName,
+        UserPoolId: c.UserPoolId
+      })),
+      NextToken: results.length === MaxResults && clients.length > MaxResults ? String(MaxResults) : null
+    };
+  }
+
+  describeUserPoolClient(params = {}) {
+    const { UserPoolId, ClientId } = params;
+    const userPool = this.userPools.get(UserPoolId);
+    if (!userPool) throw new Error(`User pool ${UserPoolId} not found`);
+    const client = userPool.Clients.get(ClientId);
+    if (!client) throw new Error(`Client ${ClientId} not found`);
+    return { UserPoolClient: client };
+  }
+
+  deleteUserPoolClient(params = {}) {
+    const { UserPoolId, ClientId } = params;
+    const userPool = this.userPools.get(UserPoolId);
+    if (!userPool) throw new Error(`User pool ${UserPoolId} not found`);
+    userPool.Clients.delete(ClientId);
+    this.persistUserPools();
+    return {};
+  }
+
+  forgotPassword(params = {}) {
+    const { ClientId, Username } = params;
+    const userPool = this.findUserPoolByClientId(ClientId);
+    if (!userPool) throw new Error(`Client ${ClientId} not found`);
+    return { CodeDeliveryDetails: { Destination: 'test@example.com', DeliveryMedium: 'EMAIL', AttributeName: 'email' } };
+  }
+
+  confirmForgotPassword(params = {}) {
+    const { ClientId, Username, ConfirmationCode, Password } = params;
+    const user = this.findUserByUsername(Username, ClientId);
+    if (!user) throw new Error(`User not found: ${Username}`);
+    user.Password = this.hashPassword(Password);
+    user.UserStatus = 'CONFIRMED';
+    this.persistUsers();
+    return {};
+  }
+
+  changePassword(params = {}) {
+    const { AccessToken, PreviousPassword, ProposedPassword } = params;
+    const session = this.accessTokens.get(AccessToken);
+    if (!session) throw new Error('Invalid access token');
+    const user = this.users.get(session.UserId);
+    if (!user) throw new Error('User not found');
+    if (!this.verifyPassword(PreviousPassword, user.Password)) throw new Error('Incorrect previous password');
+    user.Password = this.hashPassword(ProposedPassword);
+    this.persistUsers();
+    return {};
+  }
+
+  respondToAuthChallenge(params = {}) {
+    return { AuthenticationResult: null, ChallengeName: null };
+  }
+
+  revokeToken(params = {}) {
+    const { Token, ClientId } = params;
+    // Remove refresh token session if it exists
+    const session = this.refreshTokens.get(Token);
+    if (session) {
+      this.sessions.delete(session.Id);
+      this.accessTokens.delete(session.AccessToken);
+      this.refreshTokens.delete(Token);
+      this.persistSessions();
+    }
+    return {};
+  }
+
+  globalSignOut(params = {}) {
+    const { AccessToken } = params;
+    const session = this.accessTokens.get(AccessToken);
+    if (session) {
+      this.sessions.delete(session.Id);
+      this.accessTokens.delete(AccessToken);
+      this.refreshTokens.delete(session.RefreshToken);
+      this.persistSessions();
+    }
+    return {};
+  }
+
+  getUser(params = {}) {
+    const { AccessToken } = params;
+    const session = this.accessTokens.get(AccessToken);
+    if (!session) throw new Error('Invalid access token');
+    // Check session is still active
+    if (!this.sessions.has(session.Id)) throw new Error('Token has been revoked');
+    const user = this.users.get(session.UserId);
+    if (!user) throw new Error('User not found');
+    return {
+      Username: user.Username,
+      UserAttributes: this.formatUserAttributes(user.Attributes),
+      UserStatus: user.UserStatus
+    };
+  }
+
+  updateUserAttributes(params = {}) {
+    const { AccessToken, UserAttributes } = params;
+    const session = this.accessTokens.get(AccessToken);
+    if (!session) throw new Error('Invalid access token');
+    const user = this.users.get(session.UserId);
+    if (!user) throw new Error('User not found');
+    const updates = this.normalizeUserAttributes(UserAttributes || []);
+    Object.assign(user.Attributes, updates);
+    this.persistUsers();
+    return { CodeDeliveryDetailsList: [] };
+  }
+
+  deleteUser(params = {}) {
+    const { AccessToken } = params;
+    const session = this.accessTokens.get(AccessToken);
+    if (!session) throw new Error('Invalid access token');
+    this.users.delete(session.UserId);
+    this.persistUsers();
+    return {};
+  }
+
+  adminDisableUser(params = {}) {
+    const { UserPoolId, Username } = params;
+    const user = this.findUserByUsername(Username, null, UserPoolId);
+    if (!user) throw new Error(`User not found: ${Username}`);
+    user.Enabled = false;
+    this.persistUsers();
+    return {};
+  }
+
+  adminEnableUser(params = {}) {
+    const { UserPoolId, Username } = params;
+    const user = this.findUserByUsername(Username, null, UserPoolId);
+    if (!user) throw new Error(`User not found: ${Username}`);
+    user.Enabled = true;
+    this.persistUsers();
+    return {};
+  }
+
+  adminResetUserPassword(params = {}) {
+    const { UserPoolId, Username } = params;
+    const user = this.findUserByUsername(Username, null, UserPoolId);
+    if (!user) throw new Error(`User not found: ${Username}`);
+    user.UserStatus = 'RESET_REQUIRED';
+    this.persistUsers();
+    return {};
+  }
+
+  adminUserGlobalSignOut(params = {}) {
+    const { UserPoolId, Username } = params;
+    const user = this.findUserByUsername(Username, null, UserPoolId);
+    if (!user) throw new Error(`User not found: ${Username}`);
+    // Invalidate all sessions for this user
+    for (const [id, session] of this.sessions.entries()) {
+      if (session.UserId === user.UserId) {
+        this.accessTokens.delete(session.AccessToken);
+        this.refreshTokens.delete(session.RefreshToken);
+        this.sessions.delete(id);
+      }
+    }
+    this.persistSessions();
+    return {};
+  }
+
+  adminListGroupsForUser(params = {}) {
+    return { Groups: [], NextToken: null };
+  }
+
   deleteUserPool(params) {
     const { UserPoolId } = params;
     
@@ -207,7 +416,7 @@ class CognitoSimulator {
 
   // ============ User Operations ============
 
-  signUp(params) {
+  signUp(params = {}) {
     const { ClientId, Username, Password, UserAttributes, ValidationData } = params;
     
     // Encontra o user pool pelo client id
@@ -726,15 +935,73 @@ class CognitoSimulator {
   // ============ Persistence ============
 
   loadUserPools() {
+    // Load persisted pools first
     const saved = this.store.read('__userpools__');
     if (saved) {
       for (const [id, data] of Object.entries(saved)) {
-        // Reconstitui Maps
         data.Clients = new Map(Object.entries(data.Clients || {}));
         data.Groups = new Map(Object.entries(data.Groups || {}));
         data.IdentityProviders = new Map(Object.entries(data.IdentityProviders || {}));
         data.ResourceServers = new Map(Object.entries(data.ResourceServers || {}));
         this.userPools.set(id, data);
+      }
+    }
+
+    // Create user pools from config if not already persisted
+    if (this.config.cognito?.userPools) {
+      let configChanged = false;
+      const configPath = this.config._configPath;
+
+      for (let i = 0; i < this.config.cognito.userPools.length; i++) {
+        const poolConfig = this.config.cognito.userPools[i];
+        const existing = Array.from(this.userPools.values()).find(p => p.Name === poolConfig.PoolName);
+
+        if (!existing) {
+          const result = this.createUserPool(poolConfig);
+          const poolId = result.UserPool.Id;
+          logger.debug(`✅ User Pool criado a partir da config: ${poolConfig.PoolName} (${poolId})`);
+
+          // Auto-create a default client if not specified
+          if (!poolConfig.ClientId) {
+            const clientResult = this.createUserPoolClient({
+              UserPoolId: poolId,
+              ClientName: `${poolConfig.PoolName}-client`,
+              GenerateSecret: false
+            });
+            const clientId = clientResult.UserPoolClient.ClientId;
+            this.config.cognito.userPools[i].ClientId = clientId;
+            this.config.cognito.userPools[i].UserPoolId = poolId;
+            configChanged = true;
+            logger.debug(`✅ Client criado automaticamente: ${clientId}`);
+          }
+        } else if (!poolConfig.ClientId) {
+          // Pool exists but no clientId in config — write it back
+          const firstClient = existing.Clients.size > 0 ? existing.Clients.values().next().value : null;
+          if (firstClient) {
+            this.config.cognito.userPools[i].ClientId = firstClient.ClientId;
+            this.config.cognito.userPools[i].UserPoolId = existing.Id;
+            configChanged = true;
+          }
+        }
+      }
+
+      // Write clientId back to aws-local-simulator.json
+      if (configChanged && configPath) {
+        try {
+          const fs = require('fs');
+          const fileContent = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          fileContent.cognito = fileContent.cognito || {};
+          fileContent.cognito.userPools = this.config.cognito.userPools.map(p => ({
+            PoolName: p.PoolName,
+            AutoVerifiedAttributes: p.AutoVerifiedAttributes,
+            UserPoolId: p.UserPoolId,
+            ClientId: p.ClientId
+          }));
+          fs.writeFileSync(configPath, JSON.stringify(fileContent, null, 2));
+          logger.info(`✅ ClientId gravado em: ${configPath}`);
+        } catch (err) {
+          logger.warn(`⚠️ Não foi possível gravar clientId no config: ${err.message}`);
+        }
       }
     }
   }

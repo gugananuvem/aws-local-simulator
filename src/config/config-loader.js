@@ -23,6 +23,7 @@ class ConfigLoader {
     if (configPath) {
       const userConfig = await this.loadUserConfig(configPath);
       config = this.mergeDeep(config, userConfig);
+      config._configPath = path.resolve(process.cwd(), configPath);
     } else {
       // Tenta encontrar arquivo de configuração padrão
       const possiblePaths = [
@@ -35,6 +36,7 @@ class ConfigLoader {
         if (fs.existsSync(possiblePath)) {
           const userConfig = await this.loadUserConfig(possiblePath);
           config = this.mergeDeep(config, userConfig);
+          config._configPath = possiblePath;
           logger.info(`✅ Configuração carregada de: ${possiblePath}`);
           break;
         }

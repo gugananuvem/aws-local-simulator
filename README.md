@@ -16,6 +16,7 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 | Lambda | ✅ | 3001 | Funções serverless |
 | Cognito | ✅ | 9229 | Autenticação e autorização |
 | API Gateway | ✅ | 4567 | APIs REST e HTTP |
+| STS | ✅ | 9326 | credenciais temporárias com permissões específicas
 | ECS/Fargate |  🚧 | 8080 | Orquestração de containers (em desenvolvimento) |
 | SNS | 🚧 | 9911 | Notificações (em desenvolvimento) |
 | EventBridge | 🚧 | 4010 | Barramento de eventos (em desenvolvimento) |
@@ -112,6 +113,7 @@ await dynamoDB.send(new PutCommand({
 | AWS_LOCAL_SIMULATOR_LAMBDA_PORT |Porta Lambda | 3001 |
 | AWS_LOCAL_SIMULATOR_COGNITO_PORT |Porta Cognito | 9229 |
 | AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT |Porta API Gateway | 4567 |
+| AWS_LOCAL_SIMULATOR_STS_PORT |Porta STS | 9326 |
 | AWS_LOCAL_SIMULATOR_ECS_PORT |Porta ECS | 8080 |
 | AWS_LOCAL_SIMULATOR_DATA |Diretório de dados | ./aws-local-simulator-data |
 | AWS_LOCAL_SIMULATOR_LOG |Nível de log | info |

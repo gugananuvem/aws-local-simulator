@@ -7,6 +7,29 @@
     "cognito": true,
     "apigateway": true
   },
+ "sts": {
+    "roles": [
+      {
+        "RoleName": "developer-role",
+        "Arn": "arn:aws:iam::123456789012:role/developer-role",
+        "Policies": [
+          {
+            "PolicyName": "S3ReadOnlyAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["s3:GetObject", "s3:ListBucket"],
+                  "Resource": ["arn:aws:s3:::my-bucket", "arn:aws:s3:::my-bucket/*"]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "dynamodb": {
     "tables": [
       {
@@ -47,7 +70,9 @@
     "userPools": [
       {
         "PoolName": "my-user-pool",
-        "AutoVerifiedAttributes": ["email"]
+        "AutoVerifiedAttributes": ["email"],
+        "UserPoolId": "local_my-user-pool_1775267443311",
+        "ClientId": "dea9b7903393ed6dcf5006f2a31658e93d65b3db"
       }
     ]
   }
