@@ -1,6 +1,6 @@
 {
   "name": "@gugananuvem/aws-local-simulator",
-  "version": "1.0.12",
+  "version": "1.0.14",
   "description": "Simulador local completo para serviços AWS",
   "main": "src/index.js",
   "bin": {
@@ -49,7 +49,17 @@
     "lambda",
     "cognito",
     "apigateway",
+    "kms",
+    "config",
+    "parameter-store",
+    "secret-manager",
+    "cloudformation",
+    "eventbridge",
+    "sns",
     "ecs",
+    "sts",
+    "cloudtrail",
+    "cloudwatch",
     "development",
     "testing"
   ],

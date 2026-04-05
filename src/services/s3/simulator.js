@@ -3,9 +3,11 @@
  */
 
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const LocalStore = require("../../utils/local-store");
 const logger = require("../../utils/logger");
-const path = require("path");
+const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
 
 class S3Simulator {
   constructor(config) {
@@ -13,6 +15,7 @@ class S3Simulator {
     this.dataDir = path.join(process.env.AWS_LOCAL_SIMULATOR_DATA_DIR, "s3");
     this.store = new LocalStore(this.dataDir);
     this.buckets = new Map();
+    this.audit = new CloudTrailAudit("s3.amazonaws.com");
   }
 
   async initialize() {
@@ -22,22 +25,31 @@ class S3Simulator {
   }
 
   loadBuckets() {
-    // Carrega buckets da configuração
     if (this.config.s3?.buckets) {
       for (const bucketName of this.config.s3.buckets) {
         this.createBucket(bucketName);
       }
     }
 
-    // Carrega buckets existentes do disco
     const savedBuckets = this.store.read("__buckets__");
-    if (savedBuckets) {
+    if (savedBuckets && typeof savedBuckets === "object" && !Array.isArray(savedBuckets)) {
       for (const [name, data] of Object.entries(savedBuckets)) {
         if (!this.buckets.has(name)) {
+          const objects = new Map();
+          for (const [key, meta] of Object.entries(data.objects || {})) {
+            objects.set(key, {
+              key: meta.key,
+              size: meta.size,
+              etag: meta.etag,
+              contentType: meta.contentType,
+              metadata: meta.metadata,
+              lastModified: new Date(meta.lastModified),
+            });
+          }
           this.buckets.set(name, {
             name,
             creationDate: new Date(data.creationDate),
-            objects: new Map(Object.entries(data.objects || {})),
+            objects,
             objectCount: data.objectCount || 0,
             totalSize: data.totalSize || 0,
           });
@@ -45,6 +57,39 @@ class S3Simulator {
       }
     }
   }
+
+  // ─── Helpers de conteúdo em arquivo ───────────────────────────────────────
+
+  _objectFilePath(bucketName, key) {
+    const safePath = key.split("/").map((part) =>
+      part.replace(/[<>:"|?*\\]/g, "_")
+    ).join(path.sep);
+    return path.join(this.dataDir, bucketName, safePath);
+  }
+
+  _writeObjectContent(bucketName, key, content) {
+    const filePath = this._objectFilePath(bucketName, key);
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      require("mkdirp").sync(dir);
+    }
+    fs.writeFileSync(filePath, content);
+  }
+
+  _readObjectContent(bucketName, key) {
+    const filePath = this._objectFilePath(bucketName, key);
+    if (!fs.existsSync(filePath)) return null;
+    return fs.readFileSync(filePath);
+  }
+
+  _deleteObjectContent(bucketName, key) {
+    const filePath = this._objectFilePath(bucketName, key);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+
+  // ─── Buckets ──────────────────────────────────────────────────────────────
 
   createBucket(bucketName) {
     if (!this.isValidBucketName(bucketName)) {
@@ -65,183 +110,25 @@ class S3Simulator {
 
     this.buckets.set(bucketName, bucket);
     this.persistBuckets();
-
     logger.debug(`✅ Bucket S3 criado: ${bucketName}`);
-
+    this.audit.record({ eventName: "CreateBucket", readOnly: false, resources: [{ ARN: `arn:aws:s3:::${bucketName}`, type: "AWS::S3::Bucket" }], requestParameters: { bucketName } });
     return { bucket };
   }
 
   deleteBucket(bucketName) {
     const bucket = this.buckets.get(bucketName);
-
     if (!bucket) {
       return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
     }
-
     if (bucket.objects.size > 0) {
       return { error: { code: "BucketNotEmpty", message: "Bucket is not empty" }, status: 409 };
     }
-
     this.buckets.delete(bucketName);
     this.store.delete(bucketName);
     this.persistBuckets();
-
     logger.debug(`🗑️ Bucket S3 deletado: ${bucketName}`);
-
+    this.audit.record({ eventName: "DeleteBucket", readOnly: false, resources: [{ ARN: `arn:aws:s3:::${bucketName}`, type: "AWS::S3::Bucket" }] });
     return { success: true };
-  }
-
-  putObject(bucketName, key, content, headers) {
-    const bucket = this.buckets.get(bucketName);
-
-    if (!bucket) {
-      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
-    }
-
-    // Normaliza o conteúdo
-    let body = content;
-    if (Buffer.isBuffer(content)) {
-      body = content;
-    } else if (typeof content === "object") {
-      body = Buffer.from(JSON.stringify(content));
-    } else if (typeof content === "string") {
-      body = Buffer.from(content);
-    }
-
-    const contentType = headers["content-type"] || "application/octet-stream";
-    const metadata = this.extractMetadata(headers);
-    const etag = crypto.createHash("md5").update(body).digest("hex");
-
-    const object = {
-      key,
-      size: body.length,
-      etag,
-      contentType,
-      metadata,
-      lastModified: new Date(),
-      content: body,
-    };
-
-    // Atualiza ou adiciona objeto
-    const oldObject = bucket.objects.get(key);
-    if (oldObject) {
-      bucket.totalSize -= oldObject.size;
-    } else {
-      bucket.objectCount++;
-    }
-
-    bucket.objects.set(key, object);
-    bucket.totalSize += body.length;
-
-    this.persistBucket(bucketName);
-
-    logger.verboso(`📤 Upload S3: ${bucketName}/${key} (${body.length} bytes)`);
-
-    return { etag };
-  }
-
-  getObject(bucketName, key, headers) {
-    const bucket = this.buckets.get(bucketName);
-
-    if (!bucket) {
-      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
-    }
-
-    const object = bucket.objects.get(key);
-    if (!object) {
-      return { error: { code: "NoSuchKey", message: "The specified key does not exist" }, status: 404 };
-    }
-
-    let content = object.content;
-    let start = 0;
-    let end = content.length - 1;
-
-    // Suporte a Range headers
-    if (headers.range) {
-      const range = headers.range.match(/bytes=(\d+)-(\d+)?/);
-      if (range) {
-        start = parseInt(range[1], 10);
-        end = range[2] ? parseInt(range[2], 10) : content.length - 1;
-        content = content.slice(start, end + 1);
-      }
-    }
-
-    return {
-      content,
-      etag: object.etag,
-      lastModified: object.lastModified.toUTCString(),
-      contentType: object.contentType,
-      size: content.length,
-      metadata: object.metadata,
-    };
-  }
-
-  deleteObject(bucketName, key) {
-    const bucket = this.buckets.get(bucketName);
-
-    if (!bucket) {
-      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
-    }
-
-    const object = bucket.objects.get(key);
-    if (object) {
-      bucket.objects.delete(key);
-      bucket.objectCount--;
-      bucket.totalSize -= object.size;
-      this.persistBucket(bucketName);
-      logger.verboso(`🗑️ Delete S3: ${bucketName}/${key}`);
-    }
-
-    return { success: true };
-  }
-
-  listObjects(bucketName, options = {}) {
-    const bucket = this.buckets.get(bucketName);
-
-    if (!bucket) {
-      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
-    }
-
-    const { prefix = "", delimiter, maxKeys = 1000 } = options;
-
-    let objects = Array.from(bucket.objects.values())
-      .filter((obj) => obj.key.startsWith(prefix))
-      .sort((a, b) => a.key.localeCompare(b.key));
-
-    const commonPrefixes = new Set();
-
-    if (delimiter) {
-      const filteredObjects = [];
-      for (const obj of objects) {
-        const afterPrefix = obj.key.substring(prefix.length);
-        const delimiterIndex = afterPrefix.indexOf(delimiter);
-
-        if (delimiterIndex !== -1) {
-          const prefixPath = prefix + afterPrefix.substring(0, delimiterIndex + 1);
-          commonPrefixes.add(prefixPath);
-        } else {
-          filteredObjects.push(obj);
-        }
-      }
-      objects = filteredObjects;
-    }
-
-    const contents = objects.slice(0, maxKeys).map((obj) => ({
-      Key: obj.key,
-      LastModified: obj.lastModified.toISOString(),
-      ETag: `"${obj.etag}"`,
-      Size: obj.size,
-      StorageClass: "STANDARD",
-    }));
-
-    return {
-      name: bucketName,
-      prefix,
-      maxKeys,
-      isTruncated: objects.length > maxKeys,
-      contents,
-      commonPrefixes: Array.from(commonPrefixes),
-    };
   }
 
   listBuckets() {
@@ -265,7 +152,6 @@ class S3Simulator {
     if (!bucket) {
       return { error: { code: "NoSuchBucket", message: "Bucket not found" } };
     }
-
     return {
       name: bucket.name,
       creationDate: bucket.creationDate,
@@ -282,78 +168,8 @@ class S3Simulator {
     };
   }
 
-  clearBucket(bucketName) {
-    const bucket = this.buckets.get(bucketName);
-    if (bucket) {
-      bucket.objects.clear();
-      bucket.objectCount = 0;
-      bucket.totalSize = 0;
-      this.persistBucket(bucketName);
-    }
-  }
-
-  getBucketsCount() {
-    return this.buckets.size;
-  }
-
-  isValidBucketName(bucketName) {
-    const regex = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
-    return regex.test(bucketName) && !bucketName.includes("..") && !bucketName.includes(".-") && !bucketName.includes("-.");
-  }
-
-  extractMetadata(headers) {
-    const metadata = {};
-    for (const [key, value] of Object.entries(headers)) {
-      if (key.startsWith("x-amz-meta-")) {
-        const metaKey = key.replace("x-amz-meta-", "");
-        metadata[metaKey] = value;
-      }
-    }
-    return metadata;
-  }
-  persistBuckets() {
-    const bucketsObj = {};
-    for (const [name, bucket] of this.buckets.entries()) {
-      const objectsObj = {};
-      for (const [key, obj] of bucket.objects.entries()) {
-        objectsObj[key] = {
-          key: obj.key,
-          size: obj.size,
-          etag: obj.etag,
-          contentType: obj.contentType,
-          metadata: obj.metadata,
-          lastModified: obj.lastModified,
-          content: obj.content,
-        };
-      }
-
-      bucketsObj[name] = {
-        creationDate: bucket.creationDate.toISOString(),
-        objects: objectsObj,
-        objectCount: bucket.objectCount,
-        totalSize: bucket.totalSize,
-      };
-    }
-    this.store.write("__buckets__", bucketsObj);
-  }
-
-  isValidBucketName(bucketName) {
-    const regex = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
-    return regex.test(bucketName) && !bucketName.includes("..") && !bucketName.includes(".-") && !bucketName.includes("-.");
-  }
-
-  async reset() {
-    for (const [name] of this.buckets) {
-      const bucket = this.buckets.get(name);
-      if (bucket) {
-        bucket.objects.clear();
-        bucket.objectCount = 0;
-        bucket.totalSize = 0;
-        this.store.write(name, {});
-      }
-    }
-    this.persistBuckets();
-    logger.debug("S3: Todos os dados resetados");
+  getBucket(bucketName) {
+    return this.buckets.get(bucketName);
   }
 
   getBucketsCount() {
@@ -368,81 +184,23 @@ class S3Simulator {
     return total;
   }
 
-  getBucket(bucketName) {
-    return this.buckets.get(bucketName);
-  }
-
-  listBuckets() {
-    return Array.from(this.buckets.values()).map((bucket) => ({
-      Name: bucket.name,
-      CreationDate: bucket.creationDate.toISOString(),
-    }));
-  }
-
-  getBucketsInfo() {
-    return Array.from(this.buckets.values()).map((bucket) => ({
-      name: bucket.name,
-      creationDate: bucket.creationDate,
-      objectCount: bucket.objectCount,
-      totalSize: bucket.totalSize,
-    }));
-  }
-
-  getBucketInfo(bucketName) {
+  clearBucket(bucketName) {
     const bucket = this.buckets.get(bucketName);
-    if (!bucket) {
-      return { error: { code: "NoSuchBucket", message: "Bucket not found" } };
+    if (bucket) {
+      for (const key of bucket.objects.keys()) {
+        this._deleteObjectContent(bucketName, key);
+      }
+      bucket.objects.clear();
+      bucket.objectCount = 0;
+      bucket.totalSize = 0;
+      this.persistBucket(bucketName);
     }
-
-    return {
-      name: bucket.name,
-      creationDate: bucket.creationDate,
-      objectCount: bucket.objectCount,
-      totalSize: bucket.totalSize,
-      objects: Array.from(bucket.objects.values())
-        .slice(0, 20)
-        .map((obj) => ({
-          key: obj.key,
-          size: obj.size,
-          etag: obj.etag,
-          lastModified: obj.lastModified,
-        })),
-    };
   }
 
-  listAllObjects(bucketName) {
-    const bucket = this.buckets.get(bucketName);
-    if (!bucket) return [];
-    return Array.from(bucket.objects.values()).map((obj) => ({
-      key: obj.key,
-      size: obj.size,
-      etag: obj.etag,
-      lastModified: obj.lastModified,
-    }));
-  }
-
-  headObject(bucketName, key) {
-    const bucket = this.buckets.get(bucketName);
-    if (!bucket) {
-      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
-    }
-
-    const object = bucket.objects.get(key);
-    if (!object) {
-      return { error: { code: "NoSuchKey", message: "Key does not exist" }, status: 404 };
-    }
-
-    return {
-      etag: object.etag,
-      lastModified: object.lastModified.toUTCString(),
-      contentType: object.contentType,
-      size: object.size,
-    };
-  }
+  // ─── Objects ──────────────────────────────────────────────────────────────
 
   putObject(bucketName, key, content, headers) {
     const bucket = this.buckets.get(bucketName);
-
     if (!bucket) {
       return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
     }
@@ -460,16 +218,6 @@ class S3Simulator {
     const metadata = this.extractMetadata(headers);
     const etag = crypto.createHash("md5").update(body).digest("hex");
 
-    const object = {
-      key,
-      size: body.length,
-      etag,
-      contentType,
-      metadata,
-      lastModified: new Date(),
-      content: body,
-    };
-
     const oldObject = bucket.objects.get(key);
     if (oldObject) {
       bucket.totalSize -= oldObject.size;
@@ -477,19 +225,27 @@ class S3Simulator {
       bucket.objectCount++;
     }
 
-    bucket.objects.set(key, object);
+    // Apenas metadados no Map — conteúdo vai para arquivo
+    bucket.objects.set(key, {
+      key,
+      size: body.length,
+      etag,
+      contentType,
+      metadata,
+      lastModified: new Date(),
+    });
     bucket.totalSize += body.length;
 
+    this._writeObjectContent(bucketName, key, body);
     this.persistBucket(bucketName);
 
     logger.verboso(`📤 Upload S3: ${bucketName}/${key} (${body.length} bytes)`);
-
+    this.audit.record({ eventName: "PutObject", readOnly: false, isDataEvent: true, resources: [{ ARN: `arn:aws:s3:::${bucketName}/${key}`, type: "AWS::S3::Object" }], requestParameters: { bucketName, key, contentType }, responseElements: { etag } });
     return { etag };
   }
 
   getObject(bucketName, key, headers) {
     const bucket = this.buckets.get(bucketName);
-
     if (!bucket) {
       return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
     }
@@ -499,20 +255,21 @@ class S3Simulator {
       return { error: { code: "NoSuchKey", message: "The specified key does not exist" }, status: 404 };
     }
 
-    let content = object.content;
-    let start = 0;
-    let end = content.length - 1;
+    let content = this._readObjectContent(bucketName, key);
+    if (!content) {
+      return { error: { code: "NoSuchKey", message: "Object content not found on disk" }, status: 404 };
+    }
 
-    if (headers.range) {
+    if (headers && headers.range) {
       const range = headers.range.match(/bytes=(\d+)-(\d+)?/);
       if (range) {
-        start = parseInt(range[1], 10);
-        end = range[2] ? parseInt(range[2], 10) : content.length - 1;
-        content = content.slice(start, end + 1);
+        const start = parseInt(range[1], 10);
+        const end = range[2] ? parseInt(range[2], 10) : content.length - 1;
+        content = content.subarray(start, end + 1);
       }
     }
 
-    return {
+    const result = {
       content,
       etag: object.etag,
       lastModified: object.lastModified.toUTCString(),
@@ -520,51 +277,64 @@ class S3Simulator {
       size: content.length,
       metadata: object.metadata,
     };
+    this.audit.record({ eventName: "GetObject", readOnly: true, isDataEvent: true, resources: [{ ARN: `arn:aws:s3:::${bucketName}/${key}`, type: "AWS::S3::Object" }], requestParameters: { bucketName, key } });
+    return result;
+  }
+
+  headObject(bucketName, key) {
+    const bucket = this.buckets.get(bucketName);
+    if (!bucket) {
+      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
+    }
+    const object = bucket.objects.get(key);
+    if (!object) {
+      return { error: { code: "NoSuchKey", message: "Key does not exist" }, status: 404 };
+    }
+    return {
+      etag: object.etag,
+      lastModified: object.lastModified.toUTCString(),
+      contentType: object.contentType,
+      size: object.size,
+    };
   }
 
   deleteObject(bucketName, key) {
     const bucket = this.buckets.get(bucketName);
-
     if (!bucket) {
       return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
     }
-
     const object = bucket.objects.get(key);
     if (object) {
       bucket.objects.delete(key);
       bucket.objectCount--;
       bucket.totalSize -= object.size;
+      this._deleteObjectContent(bucketName, key);
       this.persistBucket(bucketName);
       logger.verboso(`🗑️ Delete S3: ${bucketName}/${key}`);
+      this.audit.record({ eventName: "DeleteObject", readOnly: false, isDataEvent: true, resources: [{ ARN: `arn:aws:s3:::${bucketName}/${key}`, type: "AWS::S3::Object" }], requestParameters: { bucketName, key } });
     }
-
     return { success: true };
   }
 
   listObjects(bucketName, options = {}) {
     const bucket = this.buckets.get(bucketName);
-
     if (!bucket) {
       return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
     }
 
     const { prefix = "", delimiter, maxKeys = 1000 } = options;
-
     let objects = Array.from(bucket.objects.values())
       .filter((obj) => obj.key.startsWith(prefix))
       .sort((a, b) => a.key.localeCompare(b.key));
 
     const commonPrefixes = new Set();
-
     if (delimiter) {
       const filteredObjects = [];
       for (const obj of objects) {
         const afterPrefix = obj.key.substring(prefix.length);
         const delimiterIndex = afterPrefix.indexOf(delimiter);
-
         if (delimiterIndex !== -1) {
-          const prefixPath = prefix + afterPrefix.substring(0, delimiterIndex + 1);
-          commonPrefixes.add(prefixPath);
+          commonPrefixes.add(prefix + afterPrefix.substring(0, delimiterIndex + 1));
         } else {
           filteredObjects.push(obj);
         }
@@ -590,20 +360,41 @@ class S3Simulator {
     };
   }
 
-  extractMetadata(headers) {
-    const metadata = {};
-    for (const [key, value] of Object.entries(headers)) {
-      if (key.startsWith("x-amz-meta-")) {
-        const metaKey = key.replace("x-amz-meta-", "");
-        metadata[metaKey] = value;
-      }
-    }
-    return metadata;
+  listAllObjects(bucketName) {
+    const bucket = this.buckets.get(bucketName);
+    if (!bucket) return [];
+    return Array.from(bucket.objects.values()).map((obj) => ({
+      key: obj.key,
+      size: obj.size,
+      etag: obj.etag,
+      lastModified: obj.lastModified,
+    }));
   }
+
+  // ─── Persistência ─────────────────────────────────────────────────────────
 
   persistBucket(bucketName) {
     const bucket = this.buckets.get(bucketName);
-    if (bucket) {
+    if (!bucket) return;
+    // Persiste apenas metadados — sem content
+    const objectsObj = {};
+    for (const [key, obj] of bucket.objects.entries()) {
+      objectsObj[key] = {
+        key: obj.key,
+        size: obj.size,
+        etag: obj.etag,
+        contentType: obj.contentType,
+        metadata: obj.metadata,
+        lastModified: obj.lastModified,
+      };
+    }
+    this.store.write(bucketName, objectsObj);
+    this.persistBuckets();
+  }
+
+  persistBuckets() {
+    const bucketsObj = {};
+    for (const [name, bucket] of this.buckets.entries()) {
       const objectsObj = {};
       for (const [key, obj] of bucket.objects.entries()) {
         objectsObj[key] = {
@@ -613,22 +404,47 @@ class S3Simulator {
           contentType: obj.contentType,
           metadata: obj.metadata,
           lastModified: obj.lastModified,
-          content: obj.content,
         };
       }
-      this.store.write(bucketName, objectsObj);
-      this.persistBuckets();
+      bucketsObj[name] = {
+        creationDate: bucket.creationDate.toISOString(),
+        objects: objectsObj,
+        objectCount: bucket.objectCount,
+        totalSize: bucket.totalSize,
+      };
     }
+    this.store.write("__buckets__", bucketsObj);
   }
 
-  clearBucket(bucketName) {
-    const bucket = this.buckets.get(bucketName);
-    if (bucket) {
+  async reset() {
+    for (const [name, bucket] of this.buckets) {
+      for (const key of bucket.objects.keys()) {
+        this._deleteObjectContent(name, key);
+      }
       bucket.objects.clear();
       bucket.objectCount = 0;
       bucket.totalSize = 0;
-      this.persistBucket(bucketName);
+      this.store.write(name, {});
     }
+    this.persistBuckets();
+    logger.debug("S3: Todos os dados resetados");
+  }
+
+  // ─── Utilitários ──────────────────────────────────────────────────────────
+
+  isValidBucketName(bucketName) {
+    const regex = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+    return regex.test(bucketName) && !bucketName.includes("..") && !bucketName.includes(".-") && !bucketName.includes("-.");
+  }
+
+  extractMetadata(headers) {
+    const metadata = {};
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.startsWith("x-amz-meta-")) {
+        metadata[key.replace("x-amz-meta-", "")] = value;
+      }
+    }
+    return metadata;
   }
 
   getStats() {
@@ -639,6 +455,8 @@ class S3Simulator {
     };
   }
 
+  // ─── XML Responses ────────────────────────────────────────────────────────
+
   generateListBucketsResponse(buckets) {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <ListAllMyBucketsResult>
@@ -647,16 +465,7 @@ class S3Simulator {
     <DisplayName>local-simulator</DisplayName>
   </Owner>
   <Buckets>
-    ${buckets
-      .map(
-        (bucket) => `
-      <Bucket>
-        <Name>${bucket.Name}</Name>
-        <CreationDate>${bucket.CreationDate}</CreationDate>
-      </Bucket>
-    `,
-      )
-      .join("")}
+    ${buckets.map((b) => `<Bucket><Name>${b.Name}</Name><CreationDate>${b.CreationDate}</CreationDate></Bucket>`).join("")}
   </Buckets>
 </ListAllMyBucketsResult>`;
   }
@@ -668,28 +477,8 @@ class S3Simulator {
   <Prefix>${data.prefix}</Prefix>
   <MaxKeys>${data.maxKeys}</MaxKeys>
   <IsTruncated>${data.isTruncated}</IsTruncated>
-  ${data.contents
-    .map(
-      (obj) => `
-    <Contents>
-      <Key>${obj.Key}</Key>
-      <LastModified>${obj.LastModified}</LastModified>
-      <ETag>${obj.ETag}</ETag>
-      <Size>${obj.Size}</Size>
-      <StorageClass>${obj.StorageClass}</StorageClass>
-    </Contents>
-  `,
-    )
-    .join("")}
-  ${data.commonPrefixes
-    .map(
-      (prefix) => `
-    <CommonPrefixes>
-      <Prefix>${prefix}</Prefix>
-    </CommonPrefixes>
-  `,
-    )
-    .join("")}
+  ${data.contents.map((obj) => `<Contents><Key>${obj.Key}</Key><LastModified>${obj.LastModified}</LastModified><ETag>${obj.ETag}</ETag><Size>${obj.Size}</Size><StorageClass>${obj.StorageClass}</StorageClass></Contents>`).join("")}
+  ${data.commonPrefixes.map((p) => `<CommonPrefixes><Prefix>${p}</Prefix></CommonPrefixes>`).join("")}
 </ListBucketResult>`;
   }
 
@@ -701,28 +490,8 @@ class S3Simulator {
   <MaxKeys>${data.maxKeys}</MaxKeys>
   <IsTruncated>${data.isTruncated}</IsTruncated>
   <KeyCount>${data.contents.length}</KeyCount>
-  ${data.contents
-    .map(
-      (obj) => `
-    <Contents>
-      <Key>${obj.Key}</Key>
-      <LastModified>${obj.LastModified}</LastModified>
-      <ETag>${obj.ETag}</ETag>
-      <Size>${obj.Size}</Size>
-      <StorageClass>${obj.StorageClass}</StorageClass>
-    </Contents>
-  `,
-    )
-    .join("")}
-  ${data.commonPrefixes
-    .map(
-      (prefix) => `
-    <CommonPrefixes>
-      <Prefix>${prefix}</Prefix>
-    </CommonPrefixes>
-  `,
-    )
-    .join("")}
+  ${data.contents.map((obj) => `<Contents><Key>${obj.Key}</Key><LastModified>${obj.LastModified}</LastModified><ETag>${obj.ETag}</ETag><Size>${obj.Size}</Size><StorageClass>${obj.StorageClass}</StorageClass></Contents>`).join("")}
+  ${data.commonPrefixes.map((p) => `<CommonPrefixes><Prefix>${p}</Prefix></CommonPrefixes>`).join("")}
 </ListBucketResult>`;
   }
 

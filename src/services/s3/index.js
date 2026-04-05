@@ -20,16 +20,18 @@ class S3Service {
     const logger = require('../../utils/logger');
     logger.debug(`Inicializando S3 Service na porta ${this.port}...`);
     
-    // Cria o simulador
     this.simulator = new S3Simulator(this.config);
-    
-    // Cria o servidor HTTP
     this.server = new S3Server(this.port, this.config);
     this.server.simulator = this.simulator;
     
     await this.server.initialize();
     
     logger.debug('S3 Service inicializado');
+  }
+
+  injectDependencies(server) {
+    const ct = server.getService('cloudtrail');
+    if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
   }
 
   async start() {

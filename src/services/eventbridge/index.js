@@ -1,45 +1,76 @@
+'use strict';
+
 /**
- * EventBridge Service - Ponto de entrada (Stub para implementação futura)
+ * @fileoverview EventBridge Service — entry point
+ * Porta padrão: 4010
  */
 
-const logger = require('../../utils/logger');
+const http = require('http');
+const path = require('path');
+const { EventBridgeSimulator } = require('./simulator');
+const { createEventBridgeServer } = require('./server');
+const LocalStore = require('../../utils/local-store');
 
 class EventBridgeService {
   constructor(config) {
     this.config = config;
+    this.logger = require('../../utils/logger');
     this.name = 'eventbridge';
-    this.port = config.ports.eventbridge;
+    this.port = config?.ports?.eventbridge || config?.services?.eventbridge?.port || 4010;
+    this.store = null;
+    this.simulator = null;
+    this.app = null;
+    this.server = null;
     this.isRunning = false;
-    this.buses = new Map();
-    this.events = [];
   }
 
   async initialize() {
-    logger.debug(`Inicializando EventBridge Service na porta ${this.port}...`);
-    logger.warn('⚠️ EventBridge Service ainda não está completamente implementado');
-    
-    // TODO: Implementar EventBridge simulator
-    this.buses = new Map();
-    this.events = [];
+    this.logger.debug(`Inicializando EventBridge Service na porta ${this.port}...`);
+    const dataDir = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR;
+    this.store = new LocalStore(path.join(dataDir, 'eventbridge'));
+    this.simulator = new EventBridgeSimulator(this.config, this.store, this.logger);
+    this.app = createEventBridgeServer(this.simulator, this.config, this.logger);
+    this.logger.debug('EventBridge Service inicializado');
+  }
+
+  injectDependencies(server) {
+    if (!server) return;
+    const lambda = server.getService('lambda');
+    if (lambda) this.simulator.setLambdaService(lambda);
+    const sqs = server.getService('sqs');
+    if (sqs) this.simulator.setSqsService(sqs);
+    const sns = server.getService('sns');
+    if (sns) this.simulator.setSnsService(sns);
   }
 
   async start() {
     if (this.isRunning) return;
-    
-    // TODO: Iniciar servidor HTTP para EventBridge
-    this.isRunning = true;
-    logger.info(`🎯 EventBridge Service stub rodando (porta ${this.port}) - Implementação em breve`);
+    await this.store.ensureDir();
+    await this.simulator.load();
+    return new Promise((resolve, reject) => {
+      this.server = http.createServer(this.app);
+      this.server.on('error', reject);
+      this.server.listen(this.port, () => {
+        this.isRunning = true;
+        this.logger.debug(`EventBridge rodando na porta ${this.port}`);
+        resolve();
+      });
+    });
   }
 
   async stop() {
-    if (!this.isRunning) return;
-    this.isRunning = false;
+    if (!this.isRunning || !this.server) return;
+    return new Promise((resolve, reject) => {
+      this.server.close((err) => {
+        if (err) return reject(err);
+        this.isRunning = false;
+        resolve();
+      });
+    });
   }
 
   async reset() {
-    this.buses.clear();
-    this.events = [];
-    logger.debug('EventBridge: Todos os dados resetados');
+    await this.simulator.reset();
   }
 
   getStatus() {
@@ -47,39 +78,12 @@ class EventBridgeService {
       running: this.isRunning,
       port: this.port,
       endpoint: `http://localhost:${this.port}`,
-      implemented: false,
-      busesCount: this.buses.size,
-      eventsCount: this.events.length
+      buses: this.simulator?.buses.size || 0,
+      rules: this.simulator?.rules.size || 0,
     };
   }
 
-  // Métodos stub para compatibilidade
-  async createEventBus(name) {
-    if (!this.buses.has(name)) {
-      this.buses.set(name, {
-        name,
-        arn: `arn:aws:events:local:000000000000:event-bus/${name}`,
-        createdAt: new Date().toISOString()
-      });
-    }
-    return this.buses.get(name);
-  }
-
-  async putEvents(entries) {
-    const results = [];
-    for (const entry of entries) {
-      const eventId = Math.random().toString(36).substring(7);
-      this.events.push({
-        ...entry,
-        eventId,
-        time: new Date().toISOString(),
-        receivedAt: new Date().toISOString()
-      });
-      results.push({ EventId: eventId });
-      logger.verboso(`EventBridge: Event ${eventId} published to ${entry.EventBusName || 'default'}`);
-    }
-    return { Entries: results, FailedEntryCount: 0 };
-  }
+  getSimulator() { return this.simulator; }
 }
 
-module.exports = EventBridgeService;
+module.exports = { EventBridgeService };

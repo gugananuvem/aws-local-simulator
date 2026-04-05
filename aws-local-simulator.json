@@ -5,7 +5,18 @@
     "sqs": true,
     "lambda": true,
     "cognito": true,
-    "apigateway": true
+    "apigateway": true,
+    "sts": false,
+    "sns": false,
+    "eventbridge": false,
+    "kms": true,
+    "secret-manager": true,
+    "parameter-store": true,
+    "cloudwatch": true,
+    "cloudtrail": true,
+    "cloudformation": true,
+    "xray": false,
+    "config": true
   },
   "sts": {
     "roles": [

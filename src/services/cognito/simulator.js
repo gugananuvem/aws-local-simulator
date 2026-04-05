@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const logger = require('../../utils/logger');
 const LocalStore = require('../../utils/local-store');
 const path = require('path');
+const { CloudTrailAudit } = require('../../utils/cloudtrail-audit');
 
 class CognitoSimulator {
   constructor(config) {
@@ -22,6 +23,7 @@ class CognitoSimulator {
     this.refreshTokens = new Map();
     this.accessTokens = new Map();
     this.jwtSecret = crypto.randomBytes(64).toString('hex');
+    this.audit = new CloudTrailAudit('cognito-idp.amazonaws.com');
   }
 
   async initialize() {
@@ -73,6 +75,7 @@ class CognitoSimulator {
     this.persistUserPools();
     
     logger.debug(`✅ User Pool criado: ${PoolName} (${poolId})`);
+    this.audit.record({ eventName: 'CreateUserPool', readOnly: false, resources: [{ ARN: userPool.Arn, type: 'AWS::Cognito::UserPool' }], requestParameters: { poolName: PoolName } });
     
     return {
       UserPool: {
@@ -528,6 +531,7 @@ class CognitoSimulator {
     this.persistSessions();
     
     logger.debug(`🔐 Usuário autenticado: ${username}`);
+    this.audit.record({ eventName: 'InitiateAuth', readOnly: false, resources: [{ ARN: userPool.Arn, type: 'AWS::Cognito::UserPool' }], requestParameters: { clientId: ClientId, authFlow: AuthFlow } });
     
     return {
       AuthenticationResult: {

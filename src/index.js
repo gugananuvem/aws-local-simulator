@@ -11,8 +11,16 @@ const DynamoDBService = require('./services/dynamodb');
 const S3Service = require('./services/s3');
 const SQSService = require('./services/sqs');
 const LambdaService = require('./services/lambda');
-const SNSService = require('./services/sns');
-const EventBridgeService = require('./services/eventbridge');
+const { SNSService } = require('./services/sns');
+const { EventBridgeService } = require('./services/eventbridge');
+const { CloudWatchService } = require('./services/cloudwatch');
+const CloudTrailService = require('./services/cloudtrail');
+const { KMSService } = require('./services/kms');
+const CloudFormationService = require('./services/cloudformation');
+const { XRayService } = require('./services/xray');
+const { SecretManagerService } = require('./services/secret-manager');
+const { ParameterStoreService } = require('./services/parameter-store');
+const { ConfigService } = require('./services/config');
 
 // Exporta utilitários
 const LocalStore = require('./utils/local-store');
@@ -122,6 +130,14 @@ module.exports = {
   LambdaService,
   SNSService,
   EventBridgeService,
+  CloudWatchService,
+  CloudTrailService,
+  KMSService,
+  CloudFormationService,
+  XRayService,
+  SecretManagerService,
+  ParameterStoreService,
+  ConfigService,
   LocalStore,
   HandlerLoader,
   RouteRegistry

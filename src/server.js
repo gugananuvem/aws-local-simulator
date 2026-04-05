@@ -12,12 +12,20 @@ const DynamoDBService = require("./services/dynamodb");
 const S3Service = require("./services/s3");
 const SQSService = require("./services/sqs");
 const LambdaService = require("./services/lambda");
-const SNSService = require("./services/sns");
-const EventBridgeService = require("./services/eventbridge");
+const { SNSService } = require("./services/sns");
+const { EventBridgeService } = require("./services/eventbridge");
 const CognitoService = require("./services/cognito");
 const APIGatewayService = require("./services/apigateway");
 const ECSService = require("./services/ecs");
 const STSService = require("./services/sts");
+const { CloudWatchService } = require("./services/cloudwatch");
+const CloudTrailService = require("./services/cloudtrail");
+const { KMSService } = require("./services/kms");
+const CloudFormationService = require("./services/cloudformation");
+const { XRayService } = require("./services/xray");
+const { SecretManagerService } = require("./services/secret-manager");
+const { ParameterStoreService } = require("./services/parameter-store");
+const { ConfigService } = require("./services/config");
 
 class Server {
   constructor(config) {
@@ -64,24 +72,30 @@ class Server {
   }
 
   async initializeServices() {
-    // Ordem de inicialização importante
     const serviceOrder = [
-      { name: "sts", class: STSService, depends: [] },
-      { name: "lambda", class: LambdaService, depends: [] },
-      { name: "dynamodb", class: DynamoDBService, depends: [] },
-      { name: "s3", class: S3Service, depends: [] },
-      { name: "sqs", class: SQSService, depends: ["lambda"] },
-      { name: "sns", class: SNSService, depends: [] },
-      { name: "eventbridge", class: EventBridgeService, depends: [] },
-      { name: "cognito", class: CognitoService, depends: [] },
-      { name: "ecs", class: ECSService, depends: [] },
-      { name: "apigateway", class: APIGatewayService, depends: ["lambda"] },
+      { name: "sts",            class: STSService,            depends: [] },
+      { name: "lambda",         class: LambdaService,         depends: [] },
+      { name: "dynamodb",       class: DynamoDBService,       depends: [] },
+      { name: "s3",             class: S3Service,             depends: [] },
+      { name: "sqs",            class: SQSService,            depends: ["lambda"] },
+      { name: "sns",            class: SNSService,            depends: [] },
+      { name: "eventbridge",    class: EventBridgeService,    depends: [] },
+      { name: "cognito",        class: CognitoService,        depends: [] },
+      { name: "ecs",            class: ECSService,            depends: [] },
+      { name: "apigateway",     class: APIGatewayService,     depends: ["lambda"] },
+      { name: "kms",            class: KMSService,            depends: [] },
+      { name: "cloudwatch",     class: CloudWatchService,     depends: [] },
+      { name: "cloudtrail",     class: CloudTrailService,     depends: [] },
+      { name: "cloudformation", class: CloudFormationService, depends: [] },
+      { name: "xray",           class: XRayService,           depends: [] },
+      { name: "secret-manager", class: SecretManagerService,  depends: [] },
+      { name: "parameter-store",class: ParameterStoreService, depends: [] },
+      { name: "config",         class: ConfigService,         depends: [] },
     ];
 
     for (const serviceDef of serviceOrder) {
       if (this.config.services[serviceDef.name]) {
         try {
-          // Resolve dependências
           const dependencies = {};
           for (const dep of serviceDef.depends) {
             dependencies[dep] = this.servicesMap.get(dep);
@@ -96,29 +110,17 @@ class Server {
           logger.success(`✅ ${serviceDef.name.toUpperCase()} Service inicializado`);
         } catch (error) {
           logger.error(`❌ Erro ao inicializar ${serviceDef.name}:`, error);
-          if (serviceDef.name === "lambda") {
-            throw error; // Lambda é essencial
-          }
+          if (serviceDef.name === "lambda") throw error;
         }
       }
     }
 
-    /*
-    // Cognito Service (opcional)
-    if (this.config.services.cognito) {
-      const cognitoService = new CognitoService(this.config);
-      await cognitoService.initialize();
-      this.services.push(cognitoService);
-      this.servicesMap.set("cognito", cognitoService);
-      logger.success("✅ Cognito Service inicializado");
+    // Injeta dependências cross-service nos serviços que suportam
+    for (const service of this.services) {
+      if (typeof service.injectDependencies === "function") {
+        service.injectDependencies(this);
+      }
     }
-    if (this.config.services.apigateway) {
-      const apigatewayService = new APIGatewayService(this.config);
-      await apigatewayService.initialize();
-      this.services.push(apigatewayService);
-      this.servicesMap.set("apigateway", apigatewayService);
-      logger.success("✅ API Gateway Service inicializado");
-    }*/
   }
 
   async startServices() {

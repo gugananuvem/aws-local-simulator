@@ -9,14 +9,15 @@ const logger = require('../../utils/logger');
 const LocalStore = require('../../utils/local-store');
 const path = require('path');
 const { URLPattern } = require('urlpattern-polyfill');
+const { CloudTrailAudit } = require('../../utils/cloudtrail-audit');
 
 class APIGatewaySimulator {
   constructor(config) {
     this.config = config;
     this.dataDir = path.join(process.env.AWS_LOCAL_SIMULATOR_DATA_DIR, 'apigateway');
     this.store = new LocalStore(this.dataDir);
-    this.apis = new Map();           // REST/HTTP APIs
-    this.websocketApis = new Map();  // WebSocket APIs
+    this.apis = new Map();
+    this.websocketApis = new Map();
     this.deployments = new Map();
     this.stages = new Map();
     this.resources = new Map();
@@ -26,6 +27,7 @@ class APIGatewaySimulator {
     this.usagePlans = new Map();
     this.apiKeys = new Map();
     this.domainNames = new Map();
+    this.audit = new CloudTrailAudit('execute-api.amazonaws.com');
   }
 
   async initialize() {
@@ -734,7 +736,15 @@ class APIGatewaySimulator {
       response.headers = { ...response.headers, ...integrationResponse.responseParameters };
       response.body = this.applyResponseTemplate(integrationResponse, response.body);
     }
-    
+
+    this.audit.record({
+      eventName: 'Invoke',
+      readOnly: method === 'GET' || method === 'HEAD',
+      isDataEvent: true,
+      resources: [{ ARN: `arn:aws:execute-api:local:000000000000:${apiId}/${stageName}/${method}${path}`, type: 'AWS::APIGateway::Stage' }],
+      requestParameters: { apiId, stageName, method, path },
+    });
+
     return response;
   }
 

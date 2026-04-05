@@ -19,6 +19,26 @@ class APIGatewayServer {
   setupMiddlewares() {
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+    // Parse bodies with AWS content types (e.g. application/x-amz-json-1.1)
+    this.app.use((req, res, next) => {
+      const ct = req.headers['content-type'] || ''; 
+      if ((req.body && JSON.stringify(req.body) == "{}") && ct.includes('application/x-amz-json')) {
+        let data = "";
+        req.on("data", (chunk) => {
+          data += chunk;
+        });
+        req.on("end", () => {
+          try {
+            req.body = JSON.parse(data);
+          } catch (error) {
+            req.body = {};
+          }
+          next();
+        });
+      } else {
+        next();
+      }      
+    });
     this.app.use(cors());
     
     if (logger.currentLogLevel === 'verboso') {

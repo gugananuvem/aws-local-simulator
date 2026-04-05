@@ -6,6 +6,7 @@ const LocalStore = require("../../utils/local-store");
 const logger = require("../../utils/logger");
 const crypto = require("crypto");
 const path = require("path");
+const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
 
 class DynamoDBSimulator {
   constructor(config) {
@@ -19,6 +20,7 @@ class DynamoDBSimulator {
     this.dataDir = path.join(dataDir, "dynamodb");
     this.store = new LocalStore(this.dataDir);
     this.tables = new Map();
+    this.audit = new CloudTrailAudit("dynamodb.amazonaws.com");
   }
   async initialize() {
     logger.debug("Inicializando DynamoDB Simulator...");
@@ -74,10 +76,13 @@ class DynamoDBSimulator {
     this.tables.set(TableName, table);
     this.persistTables();
 
-    // Inicializa arquivo de dados
-    this.store.write(TableName, []);
+    // Inicializa arquivo de dados apenas se não existir (preserva dados entre reinicializações)
+    if (!this.store.exists(TableName)) {
+      this.store.write(TableName, []);
+    }
 
     logger.debug(`✅ Tabela criada: ${TableName}`);
+    this.audit.record({ eventName: "CreateTable", readOnly: false, resources: [{ ARN: `arn:aws:dynamodb:local:000000000000:table/${TableName}`, type: "AWS::DynamoDB::Table" }], requestParameters: { tableName: TableName } });
 
     return {
       TableDescription: {
@@ -101,34 +106,39 @@ class DynamoDBSimulator {
 
     logger.verboso(`DynamoDB Action: ${action}`, params);
 
-    switch (action) {
-      case "CreateTable":
-        return this.createTable(params);
-      case "DescribeTable":
-        return this.describeTable(params.TableName);
-      case "ListTables":
-        return this.listTables(params);
-      case "DeleteTable":
-        return this.deleteTable(params);
-      case "PutItem":
-        return this.putItem(params);
-      case "GetItem":
-        return this.getItem(params);
-      case "UpdateItem":
-        return this.updateItem(params);
-      case "DeleteItem":
-        return this.deleteItem(params);
-      case "BatchWriteItem":
-        return this.batchWriteItem(params);
-      case "BatchGetItem":
-        return this.batchGetItem(params);
-      case "Query":
-        return this.query(params);
-      case "Scan":
-        return this.scan(params);
-      default:
-        throw new Error(`Unsupported action: ${action}`);
+    const readActions = new Set(["GetItem", "BatchGetItem", "Query", "Scan", "DescribeTable", "ListTables"]);
+    const dataActions = new Set(["PutItem", "GetItem", "UpdateItem", "DeleteItem", "BatchWriteItem", "BatchGetItem", "Query", "Scan"]);
+
+    const result = (() => {
+      switch (action) {
+        case "CreateTable":    return this.createTable(params);
+        case "DescribeTable":  return this.describeTable(params.TableName);
+        case "ListTables":     return this.listTables(params);
+        case "DeleteTable":    return this.deleteTable(params);
+        case "PutItem":        return this.putItem(params);
+        case "GetItem":        return this.getItem(params);
+        case "UpdateItem":     return this.updateItem(params);
+        case "DeleteItem":     return this.deleteItem(params);
+        case "BatchWriteItem": return this.batchWriteItem(params);
+        case "BatchGetItem":   return this.batchGetItem(params);
+        case "Query":          return this.query(params);
+        case "Scan":           return this.scan(params);
+        default: throw new Error(`Unsupported action: ${action}`);
+      }
+    })();
+
+    const tableName = params.TableName;
+    if (tableName) {
+      this.audit.record({
+        eventName: action,
+        readOnly: readActions.has(action),
+        isDataEvent: dataActions.has(action),
+        resources: [{ ARN: `arn:aws:dynamodb:local:000000000000:table/${tableName}`, type: "AWS::DynamoDB::Table" }],
+        requestParameters: { tableName },
+      });
     }
+
+    return result;
   }
 
   describeTable(tableName) {

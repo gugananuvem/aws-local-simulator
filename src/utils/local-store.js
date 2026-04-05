@@ -63,6 +63,16 @@ class LocalStore {
       .filter(f => f.endsWith('.json'))
       .map(f => f.replace('.json', ''));
   }
+
+  // Aliases async para compatibilidade com simuladores que usam store.load/store.save
+  async load(entity) {
+    const data = this.read(entity);
+    return Array.isArray(data) && data.length === 0 ? null : data;
+  }
+
+  async save(entity, data) {
+    this.write(entity, data);
+  }
 }
 
 module.exports = LocalStore;

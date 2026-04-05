@@ -13,13 +13,21 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 | DynamoDB | ✅ | 8000 | Banco de dados NoSQL |
 | S3 | ✅ | 4566 | Armazenamento de objetos |
 | SQS | ✅ | 9324 | Filas de mensagens |
-| Lambda | ✅ | 3001 | Funções serverless (invocação por nome) |
+| Lambda | ✅ | 3001 | Funções serverless |
 | Cognito | ✅ | 9229 | Autenticação e autorização |
 | API Gateway | ✅ | 4567 | APIs REST e HTTP |
-| STS | ✅ | 9326 | Credenciais temporárias (AssumeRole, GetCallerIdentity) |
+| STS | ✅ | 9326 | Credenciais temporárias |
+| SNS | ✅ | 9911 | Notificações pub/sub |
+| EventBridge | ✅ | 4010 | Barramento de eventos |
+| KMS | ✅ | 4000 | Gerenciamento de chaves |
+| Secrets Manager | ✅ | 4001 | Gerenciamento de segredos |
+| Parameter Store | ✅ | 4002 | Armazenamento de parâmetros |
+| CloudWatch | ✅ | 4011 | Logs, métricas e alarmes |
+| CloudTrail | ✅ | 4012 | Auditoria de API calls |
+| AWS Config | ✅ | 4013 | Conformidade e configuração |
+| CloudFormation | ✅ | 4580 | Infraestrutura como código |
+| X-Ray | ✅ | 4015 | Rastreamento distribuído |
 | ECS/Fargate | 🚧 | 8080 | Orquestração de containers (em desenvolvimento) |
-| SNS | 🚧 | 9911 | Notificações (em desenvolvimento) |
-| EventBridge | 🚧 | 4010 | Barramento de eventos (em desenvolvimento) |
 
 ## 📦 Instalação
 
@@ -40,7 +48,17 @@ npm install --save-dev aws-local-simulator
     "lambda": true,
     "cognito": true,
     "apigateway": true,
-    "sts": true
+    "sts": true,
+    "sns": true,
+    "eventbridge": true,
+    "kms": true,
+    "secret-manager": true,
+    "parameter-store": true,
+    "cloudwatch": true,
+    "cloudtrail": true,
+    "cloudformation": true,
+    "xray": true,
+    "config": true
   },
   "lambdas": [
     {
@@ -111,6 +129,16 @@ await dynamoDB.send(new PutCommand({
 | AWS_LOCAL_SIMULATOR_COGNITO | Habilita Cognito | false |
 | AWS_LOCAL_SIMULATOR_APIGATEWAY | Habilita API Gateway | false |
 | AWS_LOCAL_SIMULATOR_STS | Habilita STS | true |
+| AWS_LOCAL_SIMULATOR_SNS | Habilita SNS | false |
+| AWS_LOCAL_SIMULATOR_EVENTBRIDGE | Habilita EventBridge | false |
+| AWS_LOCAL_SIMULATOR_KMS | Habilita KMS | false |
+| AWS_LOCAL_SIMULATOR_SECRET_MANAGER | Habilita Secrets Manager | false |
+| AWS_LOCAL_SIMULATOR_PARAMETER_STORE | Habilita Parameter Store | false |
+| AWS_LOCAL_SIMULATOR_CLOUDWATCH | Habilita CloudWatch | false |
+| AWS_LOCAL_SIMULATOR_CLOUDTRAIL | Habilita CloudTrail | false |
+| AWS_LOCAL_SIMULATOR_CLOUDFORMATION | Habilita CloudFormation | false |
+| AWS_LOCAL_SIMULATOR_XRAY | Habilita X-Ray | false |
+| AWS_LOCAL_SIMULATOR_CONFIG | Habilita AWS Config | false |
 | AWS_LOCAL_SIMULATOR_ECS | Habilita ECS/Fargate | false |
 | AWS_LOCAL_SIMULATOR_DYNAMODB_PORT | Porta DynamoDB | 8000 |
 | AWS_LOCAL_SIMULATOR_S3_PORT | Porta S3 | 4566 |
@@ -119,6 +147,16 @@ await dynamoDB.send(new PutCommand({
 | AWS_LOCAL_SIMULATOR_COGNITO_PORT | Porta Cognito | 9229 |
 | AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT | Porta API Gateway | 4567 |
 | AWS_LOCAL_SIMULATOR_STS_PORT | Porta STS | 9326 |
+| AWS_LOCAL_SIMULATOR_SNS_PORT | Porta SNS | 9911 |
+| AWS_LOCAL_SIMULATOR_EVENTBRIDGE_PORT | Porta EventBridge | 4010 |
+| AWS_LOCAL_SIMULATOR_KMS_PORT | Porta KMS | 4000 |
+| AWS_LOCAL_SIMULATOR_SECRET_MANAGER_PORT | Porta Secrets Manager | 4001 |
+| AWS_LOCAL_SIMULATOR_PARAMETER_STORE_PORT | Porta Parameter Store | 4002 |
+| AWS_LOCAL_SIMULATOR_CLOUDWATCH_PORT | Porta CloudWatch | 4011 |
+| AWS_LOCAL_SIMULATOR_CLOUDTRAIL_PORT | Porta CloudTrail | 4012 |
+| AWS_LOCAL_SIMULATOR_CONFIG_PORT | Porta AWS Config | 4013 |
+| AWS_LOCAL_SIMULATOR_XRAY_PORT | Porta X-Ray | 4015 |
+| AWS_LOCAL_SIMULATOR_CLOUDFORMATION_PORT | Porta CloudFormation | 4580 |
 | AWS_LOCAL_SIMULATOR_ECS_PORT | Porta ECS | 8080 |
 | AWS_LOCAL_SIMULATOR_DATA | Diretório de dados | ./aws-local-simulator-data |
 | AWS_LOCAL_SIMULATOR_LOG | Nível de log | info |
@@ -153,6 +191,16 @@ npx aws-local-simulator status
 | Cognito | http://localhost:9229 | http://localhost:9229/__admin/userpools |
 | API Gateway | http://localhost:4567 | http://localhost:4567/__admin/apis |
 | STS | http://localhost:9326 | — |
+| SNS | http://localhost:9911 | http://localhost:9911/__admin/health |
+| EventBridge | http://localhost:4010 | — |
+| KMS | http://localhost:4000 | — |
+| Secrets Manager | http://localhost:4001 | — |
+| Parameter Store | http://localhost:4002 | — |
+| CloudWatch | http://localhost:4011 | — |
+| CloudTrail | http://localhost:4012 | — |
+| AWS Config | http://localhost:4013 | — |
+| X-Ray | http://localhost:4015 | — |
+| CloudFormation | http://localhost:4580 | http://localhost:4580/__admin/stacks |
 | ECS | http://localhost:8080 | http://localhost:8080/__admin/clusters |
 
 ## 🧪 Testando com AWS CLI
@@ -167,7 +215,7 @@ aws s3 ls --endpoint-url http://localhost:4566
 # SQS
 aws sqs list-queues --endpoint-url http://localhost:9324
 
-# Lambda — invocar por nome (não por path HTTP)
+# Lambda
 aws lambda invoke \
   --function-name my-function \
   --payload '{"key":"value"}' \
@@ -184,6 +232,40 @@ aws sts assume-role \
   --role-session-name "my-session" \
   --endpoint-url http://localhost:9326
 
+# SNS
+aws sns list-topics --endpoint-url http://localhost:9911
+
+# EventBridge
+aws events list-event-buses --endpoint-url http://localhost:4010
+
+# KMS
+aws kms list-keys --endpoint-url http://localhost:4000
+
+# Secrets Manager
+aws secretsmanager list-secrets --endpoint-url http://localhost:4001
+
+# Parameter Store
+aws ssm describe-parameters --endpoint-url http://localhost:4002
+
+# CloudWatch
+aws cloudwatch list-metrics --endpoint-url http://localhost:4011
+aws logs describe-log-groups --endpoint-url http://localhost:4011
+
+# CloudTrail
+aws cloudtrail describe-trails --endpoint-url http://localhost:4012
+
+# CloudFormation
+aws cloudformation list-stacks --endpoint-url http://localhost:4580
+
+# X-Ray
+aws xray get-trace-summaries \
+  --start-time $(date -d '1 hour ago' +%s) \
+  --end-time $(date +%s) \
+  --endpoint-url http://localhost:4015
+
+# AWS Config
+aws configservice describe-configuration-recorders --endpoint-url http://localhost:4013
+
 # API Gateway
 aws apigateway get-rest-apis --endpoint-url http://localhost:4567
 ```
@@ -196,14 +278,58 @@ Lambdas são registradas por **nome** e invocadas via API de invocação (igual 
 {
   "lambdas": [
     {
-      "name": "my-function",
-      "handler": "./src/handlers/my-function.js",
+      "name": "my-user-function",
+      "handler": "./src/handlers/my-user-function.js",
       "env": {
         "TABLE_NAME": "users-table",
         "BUCKET_NAME": "my-bucket"
       }
     }
   ]
+}
+```
+
+## ⚙️ Configuração API GATEWAY
+
+O valor do **lambdaName** deve igual ao nome Lambda que está registrada com o valor **name**. Ex: "my-user-function".
+
+```json
+{
+  "apigateway": {
+    "apis": [
+      {
+        "name": "Users API",
+        "description": "API para gerenciamento de usuários",
+        "endpoints": [
+          {
+            "path": "/user",
+            "method": "GET",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda"
+          },
+          {
+            "path": "/user",
+            "method": "POST",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda"
+          },
+          {
+            "path": "/user/{id}",
+            "method": "GET",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda"
+          },
+          {
+            "path": "/user/{id}",
+            "method": "DELETE",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda"
+          }
+        ]
+      }
+    ]
+  },
+
 }
 ```
 
@@ -229,13 +355,21 @@ Os dados são persistidos em:
 ├── sqs/
 ├── cognito/
 ├── apigateway/
-└── ecs/
+├── ecs/
+├── kms/
+├── secret-manager/
+├── parameter-store/
+├── cloudwatch/
+├── cloudtrail/
+├── cloudformation/
+├── xray/
+└── config/
 ```
 
 ## 🐛 Debug
 
 ```bash
-AWS_LOCAL_SIMULATOR_LOG=verboso npx aws-local-simulator start
+AWS_LOCAL_SIMULATOR_LOG=verbose npx aws-local-simulator start
 ```
 
 ## 🤝 Contribuindo
@@ -252,6 +386,6 @@ MIT © Luiz Gustavo Ribeiro
 
 ## ⚠️ Limitações
 
-- SNS e EventBridge em desenvolvimento
+- ECS/Fargate em desenvolvimento
 - WebSocket APIs em desenvolvimento
 - Para uso em desenvolvimento e testes apenas
