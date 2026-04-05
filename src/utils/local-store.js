@@ -19,6 +19,10 @@ class LocalStore {
   }
 
   getFilePath(entity) {
+    // Suporta subpaths como 'parameter-store/parameters'
+    const parts = entity.split('/');
+    const dir = parts.length > 1 ? path.join(this.dataDir, ...parts.slice(0, -1)) : this.dataDir;
+    if (!fs.existsSync(dir)) mkdirp.sync(dir);
     return path.join(this.dataDir, `${entity}.json`);
   }
 
@@ -35,10 +39,12 @@ class LocalStore {
     }
   }
 
-  write(entity, data) {
+  write(entity, data, _data2) {
+    // Suporta chamada com 3 args: write(entity, null, data) usado por alguns simuladores
+    const payload = (data === null || data === undefined) ? _data2 : data;
     const filePath = this.getFilePath(entity);
     try {
-      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
     } catch (error) {
       console.error(`Erro ao escrever ${entity}:`, error);
       throw error;

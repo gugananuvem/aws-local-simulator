@@ -17,8 +17,8 @@ class S3Server {
   }
 
   setupMiddlewares() {
-    this.app.use(express.json({ limit: '100mb' }));
-    this.app.use(express.raw({ type: 'application/octet-stream', limit: '100mb' }));
+    // Captura raw body como Buffer para qualquer content-type
+    this.app.use(express.raw({ type: () => true, limit: '100mb' }));
     this.app.use(express.text({ limit: '100mb' }));
     
     // Logging de requisições
@@ -35,8 +35,10 @@ class S3Server {
   }
 
   async initialize() {
-    this.simulator = new S3Simulator(this.config);
-    await this.simulator.initialize();
+    if (!this.simulator) {
+      this.simulator = new S3Simulator(this.config);
+      await this.simulator.initialize();
+    }
     this.setupRoutes();
   }
 
@@ -80,15 +82,20 @@ class S3Server {
     
     // Upload object
     this.app.put('/:bucket/*', (req, res) => {
-      const bucket = req.params.bucket;
-      const key = req.params[0];
-      const result = this.simulator.putObject(bucket, key, req.body, req.headers);
-      
-      if (result.error) {
-        res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
-      } else {
-        res.set('ETag', `"${result.etag}"`);
-        res.status(200).send();
+      try {
+        const bucket = req.params.bucket;
+        const key = req.params[0];
+        const result = this.simulator.putObject(bucket, key, req.body, req.headers);
+        
+        if (result.error) {
+          res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        } else {
+          res.set('ETag', `"${result.etag}"`);
+          res.status(200).send();
+        }
+      } catch (err) {
+        logger.error('S3 putObject error:', err);
+        res.status(500).send(this.simulator.generateErrorResponse('InternalError', err.message));
       }
     });
     

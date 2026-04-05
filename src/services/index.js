@@ -20,6 +20,7 @@ const { XRayService } = require('./xray');
 const { SecretManagerService } = require('./secret-manager');
 const { ParameterStoreService } = require('./parameter-store');
 const { ConfigService } = require('./config');
+const { AthenaService } = require('./athena');
 
 module.exports = {
   DynamoDBService,
@@ -40,4 +41,5 @@ module.exports = {
   SecretManagerService,
   ParameterStoreService,
   ConfigService,
+  AthenaService,
 };

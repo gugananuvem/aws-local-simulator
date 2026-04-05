@@ -16,7 +16,8 @@
     "cloudtrail": true,
     "cloudformation": true,
     "xray": false,
-    "config": true
+    "config": true,
+    "athena": true
   },
   "sts": {
     "roles": [
@@ -116,7 +117,7 @@
   "lambdas": [
     {
       "name": "users-api",
-      "handler": "./handlers/users.js",
+      "handler": "./handlers/usersX.js",
       "runtime": "nodejs18.x",
       "env": {
         "TABLE_NAME": "users-table",

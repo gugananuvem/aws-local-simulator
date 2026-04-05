@@ -29,6 +29,7 @@ module.exports = {
     cognito: 9229,
     apigateway: 4567,
     sts: 9326,
+    athena: 4599,
   },
   apigateway: {
     defaultCors: {

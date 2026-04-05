@@ -51,8 +51,10 @@ class SQSServer {
   }
 
   async initialize() {
-    this.simulator = new SQSSimulator(this.config, this.lambdaService);
-    await this.simulator.initialize();
+    if (!this.simulator) {
+      this.simulator = new SQSSimulator(this.config, this.lambdaService);
+      await this.simulator.initialize();
+    }
     this.setupRoutes();
   }
 

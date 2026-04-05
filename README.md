@@ -26,6 +26,7 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 | CloudTrail | ✅ | 4012 | Auditoria de API calls |
 | AWS Config | ✅ | 4013 | Conformidade e configuração |
 | CloudFormation | ✅ | 4580 | Infraestrutura como código |
+| Athena | ✅ | 4599 | Consultas SQL em dados no S3 |
 | X-Ray | ✅ | 4015 | Rastreamento distribuído |
 | ECS/Fargate | 🚧 | 8080 | Orquestração de containers (em desenvolvimento) |
 
@@ -58,7 +59,8 @@ npm install --save-dev aws-local-simulator
     "cloudtrail": true,
     "cloudformation": true,
     "xray": true,
-    "config": true
+    "config": true,
+    "athena": true
   },
   "lambdas": [
     {
@@ -137,6 +139,7 @@ await dynamoDB.send(new PutCommand({
 | AWS_LOCAL_SIMULATOR_CLOUDWATCH | Habilita CloudWatch | false |
 | AWS_LOCAL_SIMULATOR_CLOUDTRAIL | Habilita CloudTrail | false |
 | AWS_LOCAL_SIMULATOR_CLOUDFORMATION | Habilita CloudFormation | false |
+| AWS_LOCAL_SIMULATOR_ATHENA | Habilita Athena | false |
 | AWS_LOCAL_SIMULATOR_XRAY | Habilita X-Ray | false |
 | AWS_LOCAL_SIMULATOR_CONFIG | Habilita AWS Config | false |
 | AWS_LOCAL_SIMULATOR_ECS | Habilita ECS/Fargate | false |
@@ -157,6 +160,7 @@ await dynamoDB.send(new PutCommand({
 | AWS_LOCAL_SIMULATOR_CONFIG_PORT | Porta AWS Config | 4013 |
 | AWS_LOCAL_SIMULATOR_XRAY_PORT | Porta X-Ray | 4015 |
 | AWS_LOCAL_SIMULATOR_CLOUDFORMATION_PORT | Porta CloudFormation | 4580 |
+| AWS_LOCAL_SIMULATOR_ATHENA_PORT | Porta Athena | 4599 |
 | AWS_LOCAL_SIMULATOR_ECS_PORT | Porta ECS | 8080 |
 | AWS_LOCAL_SIMULATOR_DATA | Diretório de dados | ./aws-local-simulator-data |
 | AWS_LOCAL_SIMULATOR_LOG | Nível de log | info |
@@ -201,6 +205,7 @@ npx aws-local-simulator status
 | AWS Config | http://localhost:4013 | — |
 | X-Ray | http://localhost:4015 | — |
 | CloudFormation | http://localhost:4580 | http://localhost:4580/__admin/stacks |
+| Athena | http://localhost:4599 | http://localhost:4599/__admin/health |
 | ECS | http://localhost:8080 | http://localhost:8080/__admin/clusters |
 
 ## 🧪 Testando com AWS CLI
@@ -244,8 +249,39 @@ aws kms list-keys --endpoint-url http://localhost:4000
 # Secrets Manager
 aws secretsmanager list-secrets --endpoint-url http://localhost:4001
 
+# Criar secret
+aws secretsmanager create-secret \
+  --name "local/app/db-credentials" \
+  --description "Credenciais do banco" \
+  --secret-string '{"username":"admin","password":"secret123"}' \
+  --endpoint-url http://localhost:4001
+
+# Ler secret
+aws secretsmanager get-secret-value \
+  --secret-id "local/app/db-credentials" \
+  --endpoint-url http://localhost:4001
+
 # Parameter Store
 aws ssm describe-parameters --endpoint-url http://localhost:4002
+
+# Criar parâmetro String
+aws ssm put-parameter \
+  --name "/local/app/config" \
+  --value '{"timeout":30,"maxRetries":3}' \
+  --type String \
+  --endpoint-url http://localhost:4002
+
+# Criar parâmetro SecureString
+aws ssm put-parameter \
+  --name "/local/app/api-key" \
+  --value "my-secret-api-key" \
+  --type SecureString \
+  --endpoint-url http://localhost:4002
+
+# Ler parâmetro
+aws ssm get-parameter \
+  --name "/local/app/config" \
+  --endpoint-url http://localhost:4002
 
 # CloudWatch
 aws cloudwatch list-metrics --endpoint-url http://localhost:4011
@@ -268,6 +304,59 @@ aws configservice describe-configuration-recorders --endpoint-url http://localho
 
 # API Gateway
 aws apigateway get-rest-apis --endpoint-url http://localhost:4567
+
+# Cloudformation
+aws cloudformation create-stack \
+  --stack-name test-stack \
+  --template-body file://templates/test-stack.yaml \
+  --parameters \
+    ParameterKey=Environment,ParameterValue=local \
+    ParameterKey=BucketName,ParameterValue=meu-bucket \
+    ParameterKey=QueueName,ParameterValue=minha-fila \
+    ParameterKey=TableName,ParameterValue=minha-tabela \
+  --endpoint-url http://localhost:4580
+
+# Ver Cloudformation resultado 
+aws cloudformation describe-stacks \
+  --stack-name test-stack \
+  --endpoint-url http://localhost:4580  
+
+# Athena
+# Criar workgroup
+aws athena create-work-group \
+  --name my-workgroup \
+  --configuration ResultConfiguration={OutputLocation=s3://meu-bucket/athena-results/} \
+  --endpoint-url http://localhost:4599
+
+# Listar workgroups
+aws athena list-work-groups --endpoint-url http://localhost:4599
+
+# Executar query
+aws athena start-query-execution \
+  --query-string "SELECT * FROM my_table LIMIT 10" \
+  --query-execution-context Database=default \
+  --result-configuration OutputLocation=s3://meu-bucket/athena-results/ \
+  --endpoint-url http://localhost:4599
+
+# Verificar status da query
+aws athena get-query-execution \
+  --query-execution-id <id-retornado> \
+  --endpoint-url http://localhost:4599
+
+# Buscar resultados
+aws athena get-query-results \
+  --query-execution-id <id-retornado> \
+  --endpoint-url http://localhost:4599
+
+# Criar named query
+aws athena create-named-query \
+  --name "my-saved-query" \
+  --database default \
+  --query-string "SELECT id, value FROM my_table WHERE status = 'active'" \
+  --endpoint-url http://localhost:4599
+
+# Listar named queries
+aws athena list-named-queries --endpoint-url http://localhost:4599
 ```
 
 ## ⚙️ Configuração de Lambdas
@@ -362,6 +451,7 @@ Os dados são persistidos em:
 ├── cloudwatch/
 ├── cloudtrail/
 ├── cloudformation/
+├── athena/
 ├── xray/
 └── config/
 ```

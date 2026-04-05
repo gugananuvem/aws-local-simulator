@@ -33,6 +33,11 @@ class LambdaService {
     logger.debug('Lambda Service inicializado');
   }
 
+  injectDependencies(server) {
+    const ct = server.getService('cloudtrail');
+    if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
+  }
+
   async start() {
     if (this.isRunning) return;
     await this.server.start();

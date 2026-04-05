@@ -18,6 +18,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { CloudTrailAudit } = require('../../utils/cloudtrail-audit');
 
 /**
  * SNS Simulator completo
@@ -68,6 +69,8 @@ class SNSSimulator {
 
     this.region    = 'us-east-1';
     this.accountId = '123456789012';
+
+    this.audit = new CloudTrailAudit('sns.amazonaws.com');
   }
 
   // ─────────────────────────────────────────────
@@ -223,6 +226,12 @@ class SNSSimulator {
     await this._save();
 
     this.logger.info('SNS', `Created topic: ${Name}${isFifo ? ' (FIFO)' : ''}`);
+    this.audit.record({
+      eventName: 'CreateTopic',
+      readOnly: false,
+      resources: [{ ARN: topicArn, type: 'AWS::SNS::Topic' }],
+      requestParameters: { name: Name },
+    });
     return { TopicArn: topicArn };
   }
 
@@ -262,6 +271,12 @@ class SNSSimulator {
     await this._save();
 
     this.logger.info('SNS', `Deleted topic: ${TopicArn} (removed ${removedSubs} subscriptions)`);
+    this.audit.record({
+      eventName: 'DeleteTopic',
+      readOnly: false,
+      resources: [{ ARN: TopicArn, type: 'AWS::SNS::Topic' }],
+      requestParameters: { topicArn: TopicArn },
+    });
   }
 
   /**
@@ -675,6 +690,12 @@ class SNSSimulator {
     this._logPublish(arn, messageId, Message, null, MessageAttributes);
 
     this.logger.debug('SNS', `Publishing messageId=${messageId} to ${arn} (${topic.Name})`);
+    this.audit.record({
+      eventName: 'Publish',
+      readOnly: false,
+      resources: [{ ARN: arn, type: 'AWS::SNS::Topic' }],
+      requestParameters: { topicArn: arn },
+    });
 
     // Coletar subscriptions confirmadas do tópico
     const topicSubs = Array.from(this.subscriptions.values())

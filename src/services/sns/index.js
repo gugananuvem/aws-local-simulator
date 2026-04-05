@@ -39,6 +39,8 @@ class SNSService {
     if (lambda) this.simulator.setLambdaService(lambda);
     const sqs = server.getService('sqs');
     if (sqs) this.simulator.setSqsService(sqs);
+    const ct = server.getService('cloudtrail');
+    if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
   }
 
   async start() {

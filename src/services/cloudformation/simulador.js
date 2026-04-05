@@ -15,6 +15,8 @@
  */
 
 const { randomUUID } = require('crypto');
+const yaml = require('js-yaml');
+const { CloudTrailAudit } = require('../../utils/cloudtrail-audit');
 
 // ─── Erros tipados ───────────────────────────────────────────────────────────
 
@@ -91,9 +93,30 @@ function parseTemplate(template) {
   try {
     return JSON.parse(template);
   } catch (_) {
-    // Tenta YAML simples (apenas chave: valor de nível básico)
-    // Para simulação local, aceita como string não processada
-    return { _raw: template };
+    try {
+      // Schema customizado que trata tags AWS como !Ref, !Sub, !If, etc.
+      const awsSchema = yaml.DEFAULT_SCHEMA.extend([
+        new yaml.Type('!Ref',       { kind: 'scalar',   construct: d => ({ Ref: d }) }),
+        new yaml.Type('!Sub',       { kind: 'scalar',   construct: d => ({ 'Fn::Sub': d }) }),
+        new yaml.Type('!Sub',       { kind: 'sequence', construct: d => ({ 'Fn::Sub': d }) }),
+        new yaml.Type('!If',        { kind: 'sequence', construct: d => ({ 'Fn::If': d }) }),
+        new yaml.Type('!Equals',    { kind: 'sequence', construct: d => ({ 'Fn::Equals': d }) }),
+        new yaml.Type('!Not',       { kind: 'sequence', construct: d => ({ 'Fn::Not': d }) }),
+        new yaml.Type('!And',       { kind: 'sequence', construct: d => ({ 'Fn::And': d }) }),
+        new yaml.Type('!Or',        { kind: 'sequence', construct: d => ({ 'Fn::Or': d }) }),
+        new yaml.Type('!Select',    { kind: 'sequence', construct: d => ({ 'Fn::Select': d }) }),
+        new yaml.Type('!Split',     { kind: 'sequence', construct: d => ({ 'Fn::Split': d }) }),
+        new yaml.Type('!Join',      { kind: 'sequence', construct: d => ({ 'Fn::Join': d }) }),
+        new yaml.Type('!GetAtt',    { kind: 'scalar',   construct: d => ({ 'Fn::GetAtt': d.split('.') }) }),
+        new yaml.Type('!FindInMap', { kind: 'sequence', construct: d => ({ 'Fn::FindInMap': d }) }),
+        new yaml.Type('!Base64',    { kind: 'scalar',   construct: d => ({ 'Fn::Base64': d }) }),
+        new yaml.Type('!Cidr',      { kind: 'sequence', construct: d => ({ 'Fn::Cidr': d }) }),
+        new yaml.Type('!ImportValue',{ kind: 'scalar',  construct: d => ({ 'Fn::ImportValue': d }) }),
+      ]);
+      return yaml.load(template, { schema: awsSchema });
+    } catch (yamlErr) {
+      throw Errors.InvalidTemplate(`Could not parse template as JSON or YAML: ${yamlErr.message}`);
+    }
   }
 }
 
@@ -184,6 +207,17 @@ class CloudFormationSimulator {
 
     /** @type {Map<string, Object>} changeSetArn → changeSet */
     this.changeSets = new Map();
+
+    this.audit = new CloudTrailAudit('cloudformation.amazonaws.com');
+
+    // Simuladores injetados via injectDependencies
+    this.s3Simulator = null;
+    this.sqsSimulator = null;
+    this.dynamoSimulator = null;
+    this.kmsSimulator = null;
+    this.secretsSimulator = null;
+    this.parameterStoreSimulator = null;
+    this.athenaSimulator = null;
   }
 
   // ─── Persistência ──────────────────────────────────────────────
@@ -277,7 +311,161 @@ class CloudFormationSimulator {
     this.logger.info(`[CloudFormation] Created stack: ${StackName} (${resources.length} resources)`);
     await this.save();
 
+    // Provisiona os recursos nos simuladores injetados
+    await this._provisionResources(StackName, template, resolvedParams);
+
+    this.audit.record({
+      eventName: 'CreateStack',
+      readOnly: false,
+      resources: [{ ARN: arn, type: 'AWS::CloudFormation::Stack' }],
+      requestParameters: { stackName: StackName }
+    });
+
     return { StackId: arn };
+  }
+
+  /**
+   * Provisiona recursos do template nos simuladores locais
+   */
+  async _provisionResources(stackName, template, resolvedParams) {
+    const resources = template?.Resources || {};
+
+    // Helper para resolver !Ref de parâmetros
+    const resolveRef = (value) => {
+      if (!value) return value;
+      if (typeof value === 'object' && value.Ref) {
+        const param = resolvedParams.find(p => p.ParameterKey === value.Ref);
+        return param ? param.ParameterValue : value.Ref;
+      }
+      if (typeof value === 'object' && value['Fn::Sub']) {
+        return value['Fn::Sub'].replace(/\$\{([^}]+)\}/g, (_, key) => {
+          const param = resolvedParams.find(p => p.ParameterKey === key);
+          return param ? param.ParameterValue : key;
+        });
+      }
+      return value;
+    };
+
+    const stackResourceList = this.stackResources.get(stackName) || [];
+
+    for (const [logicalId, resource] of Object.entries(resources)) {
+      try {
+        const props = resource.Properties || {};
+        let physicalId = null;
+
+        switch (resource.Type) {
+
+          case 'AWS::S3::Bucket': {
+            if (!this.s3Simulator) break;
+            const bucketName = resolveRef(props.BucketName) || `${stackName}-${logicalId}`.toLowerCase();
+            this.s3Simulator.createBucket(bucketName);
+            physicalId = bucketName;
+            this.logger.info(`[CloudFormation] Provisionado S3 bucket: ${bucketName}`);
+            break;
+          }
+
+          case 'AWS::SQS::Queue': {
+            if (!this.sqsSimulator) break;
+            const queueName = resolveRef(props.QueueName) || `${stackName}-${logicalId}`;
+            this.sqsSimulator.createQueue(queueName);
+            physicalId = queueName;
+            this.logger.info(`[CloudFormation] Provisionada SQS queue: ${queueName}`);
+            break;
+          }
+
+          case 'AWS::DynamoDB::Table': {
+            if (!this.dynamoSimulator) break;
+            const tableName = resolveRef(props.TableName) || `${stackName}-${logicalId}`;
+            const attrDefs = (props.AttributeDefinitions || []).map(a => ({
+              AttributeName: resolveRef(a.AttributeName),
+              AttributeType: a.AttributeType,
+            }));
+            const keySchema = (props.KeySchema || []).map(k => ({
+              AttributeName: resolveRef(k.AttributeName),
+              KeyType: k.KeyType,
+            }));
+            await this.dynamoSimulator.createTable({
+              TableName: tableName,
+              AttributeDefinitions: attrDefs,
+              KeySchema: keySchema,
+              BillingMode: props.BillingMode || 'PAY_PER_REQUEST',
+              Tags: props.Tags || [],
+            });
+            physicalId = tableName;
+            this.logger.info(`[CloudFormation] Provisionada DynamoDB table: ${tableName}`);
+            break;
+          }
+
+          case 'AWS::Athena::WorkGroup': {
+            if (!this.athenaSimulator) break;
+            const wgName = resolveRef(props.Name) || `${stackName}-${logicalId}`;
+            await this.athenaSimulator.createWorkGroup({
+              Name: wgName,
+              Description: resolveRef(props.Description) || '',
+              Configuration: props.WorkGroupConfiguration || {},
+            });
+            physicalId = wgName;
+            this.logger.info(`[CloudFormation] Provisionado Athena WorkGroup: ${wgName}`);
+            break;
+          }
+
+          case 'AWS::KMS::Key': {
+            if (!this.kmsSimulator) break;
+            const result = await this.kmsSimulator.createKey({
+              Description: resolveRef(props.Description) || `${stackName}-${logicalId}`,
+              KeyUsage: props.KeyUsage || 'ENCRYPT_DECRYPT',
+              KeySpec: props.KeySpec || 'SYMMETRIC_DEFAULT',
+              Tags: props.Tags || [],
+            });
+            physicalId = result.KeyMetadata.KeyId;
+            this.logger.info(`[CloudFormation] Provisionada KMS key: ${physicalId}`);
+            break;
+          }
+
+          case 'AWS::SecretsManager::Secret': {
+            if (!this.secretsSimulator) break;
+            const secretName = resolveRef(props.Name) || `${stackName}-${logicalId}`;
+            await this.secretsSimulator.createSecret({
+              Name: secretName,
+              Description: resolveRef(props.Description) || '',
+              SecretString: resolveRef(props.SecretString) || '{}',
+              Tags: props.Tags || [],
+            });
+            physicalId = secretName;
+            this.logger.info(`[CloudFormation] Provisionado Secret: ${secretName}`);
+            break;
+          }
+
+          case 'AWS::SSM::Parameter': {
+            if (!this.parameterStoreSimulator) break;
+            const paramName = resolveRef(props.Name) || `/${stackName}/${logicalId}`;
+            await this.parameterStoreSimulator.putParameter({
+              Name: paramName,
+              Value: resolveRef(props.Value) || '',
+              Type: props.Type || 'String',
+              Description: resolveRef(props.Description) || '',
+              Tags: props.Tags || [],
+              Overwrite: true,
+            });
+            physicalId = paramName;
+            this.logger.info(`[CloudFormation] Provisionado SSM Parameter: ${paramName}`);
+            break;
+          }
+
+          default:
+            this.logger.debug(`[CloudFormation] Tipo não provisionado localmente: ${resource.Type} (${logicalId})`);
+        }
+
+        // Atualiza o PhysicalResourceId com o nome real do recurso
+        if (physicalId) {
+          const entry = stackResourceList.find(r => r.LogicalResourceId === logicalId);
+          if (entry) entry.PhysicalResourceId = physicalId;
+        }
+
+      } catch (err) {
+        this.logger.warn(`[CloudFormation] Erro ao provisionar ${logicalId} (${resource.Type}): ${err.message}`);
+      }
+    }
   }
 
   /**
@@ -342,6 +530,9 @@ class CloudFormationSimulator {
       );
     }
 
+    // Captura recursos antes de remover do map
+    const resources = this.stackResources.get(StackName) || [];
+
     this.stacks.delete(StackName);
     this.stackResources.delete(StackName);
 
@@ -350,10 +541,76 @@ class CloudFormationSimulator {
       if (cs.StackName === StackName) this.changeSets.delete(key);
     }
 
+    // Deprovisiona os recursos nos simuladores
+    await this._deprovisionResources(resources);
+
     this.logger.info(`[CloudFormation] Deleted stack: ${StackName}`);
     await this.save();
 
     return {};
+  }
+
+  async _deprovisionResources(resources) {
+    for (const resource of resources) {
+      const { ResourceType, PhysicalResourceId } = resource;
+      try {
+        switch (ResourceType) {
+          case 'AWS::S3::Bucket':
+            if (this.s3Simulator && PhysicalResourceId) {
+              this.s3Simulator.deleteBucket(PhysicalResourceId);
+              this.logger.info(`[CloudFormation] Removido S3 bucket: ${PhysicalResourceId}`);
+            }
+            break;
+
+          case 'AWS::SQS::Queue':
+            if (this.sqsSimulator && PhysicalResourceId) {
+              this.sqsSimulator.deleteQueue(PhysicalResourceId);
+              this.logger.info(`[CloudFormation] Removida SQS queue: ${PhysicalResourceId}`);
+            }
+            break;
+
+          case 'AWS::DynamoDB::Table':
+            if (this.dynamoSimulator && PhysicalResourceId) {
+              await this.dynamoSimulator.deleteTable({ TableName: PhysicalResourceId });
+              this.logger.info(`[CloudFormation] Removida DynamoDB table: ${PhysicalResourceId}`);
+            }
+            break;
+
+          case 'AWS::KMS::Key':
+            if (this.kmsSimulator && PhysicalResourceId) {
+              await this.kmsSimulator.scheduleKeyDeletion({ KeyId: PhysicalResourceId, PendingWindowInDays: 7 });
+              this.logger.info(`[CloudFormation] Agendada exclusão KMS key: ${PhysicalResourceId}`);
+            }
+            break;
+
+          case 'AWS::SecretsManager::Secret':
+            if (this.secretsSimulator && PhysicalResourceId) {
+              await this.secretsSimulator.deleteSecret({ SecretId: PhysicalResourceId, ForceDeleteWithoutRecovery: true });
+              this.logger.info(`[CloudFormation] Removido Secret: ${PhysicalResourceId}`);
+            }
+            break;
+
+          case 'AWS::SSM::Parameter':
+            if (this.parameterStoreSimulator && PhysicalResourceId) {
+              await this.parameterStoreSimulator.deleteParameter({ Name: PhysicalResourceId });
+              this.logger.info(`[CloudFormation] Removido SSM Parameter: ${PhysicalResourceId}`);
+            }
+            break;
+
+          case 'AWS::Athena::WorkGroup':
+            if (this.athenaSimulator && PhysicalResourceId) {
+              await this.athenaSimulator.deleteWorkGroup({ WorkGroup: PhysicalResourceId, RecursiveDeleteOption: true });
+              this.logger.info(`[CloudFormation] Removido Athena WorkGroup: ${PhysicalResourceId}`);
+            }
+            break;
+
+          default:
+            this.logger.debug(`[CloudFormation] Tipo não desprovisionado: ${ResourceType}`);
+        }
+      } catch (err) {
+        this.logger.warn(`[CloudFormation] Erro ao remover ${ResourceType} (${PhysicalResourceId}): ${err.message}`);
+      }
+    }
   }
 
   /**

@@ -21,16 +21,14 @@ class SQSService {
     const logger = require('../../utils/logger');
     logger.debug(`Inicializando SQS Service na porta ${this.port}...`);
     
-    // Cria o simulador
     this.simulator = new SQSSimulator(this.config, this.lambdaService);
-    
-    // Cria o servidor HTTP
+    await this.simulator.initialize();
+
     this.server = new SQSServer(this.port, this.config, this.lambdaService);
     this.server.simulator = this.simulator;
     
     await this.server.initialize();
     
-    // Configura filas associadas a Lambdas
     await this.setupQueueTriggers();
     
     logger.debug('SQS Service inicializado');

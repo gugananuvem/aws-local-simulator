@@ -2,18 +2,20 @@
  * Lambda Simulator - Simula execução de funções Lambda
  */
 
-const HandlerLoader = require('./handler-loader');
-const logger = require('../../utils/logger');
+const HandlerLoader = require("./handler-loader");
+const logger = require("../../utils/logger");
+const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
 
 class LambdaSimulator {
   constructor(config) {
     this.config = config;
     this.lambdas = new Map(); // functionName -> { handler, env, config }
     this.environment = { ...process.env };
+    this.audit = new CloudTrailAudit("lambda.amazonaws.com");
   }
 
   async initialize() {
-    logger.debug('Inicializando Lambda Simulator...');
+    logger.debug("Inicializando Lambda Simulator...");
 
     if (this.config.lambdas && this.config.lambdas.length > 0) {
       for (const lambdaConfig of this.config.lambdas) {
@@ -26,7 +28,7 @@ class LambdaSimulator {
 
   async registerLambda(lambdaConfig) {
     try {
-      const { name, handler: handlerPath, env = {}, type = 'auto' } = lambdaConfig;
+      const { name, handler: handlerPath, env = {}, type = "auto" } = lambdaConfig;
 
       if (!name) {
         logger.warn(`Lambda sem nome ignorada: ${JSON.stringify(lambdaConfig)}`);
@@ -34,25 +36,29 @@ class LambdaSimulator {
       }
 
       const handler = await HandlerLoader.load(handlerPath, type);
-
-      this.lambdas.set(name, {
-        name,
-        handler,
-        handlerPath,
-        handlerName: handler.name || 'anonymous',
-        env,
-        type,
-        registeredAt: new Date().toISOString()
-      });
-
+      if (handler != undefined) {
+        this.lambdas.set(name, {
+          name,
+          handler,
+          handlerPath,
+          handlerName: handler.name || "anonymous",
+          env,
+          type,
+          registeredAt: new Date().toISOString(),
+        });
+      }
       logger.debug(`✅ Lambda registrada: ${name} -> ${handlerPath}`);
-    } catch (error) {
-      logger.error(`❌ Erro ao registrar Lambda ${lambdaConfig.name}:`, error);
-      throw error;
+    } catch (error) {     
+      if (error.message.indexOf("Handler não encontrado") == -1){
+        logger.error(`Erro ao registrar Lambda ${lambdaConfig.name}:`, error);
+        throw error;
+      }else{
+        logger.error(`Erro ao registrar Lambda ${lambdaConfig.name}:`);
+      }
     }
   }
 
-  async invoke(functionName, event, invocationType = 'RequestResponse') {
+  async invoke(functionName, event, invocationType = "RequestResponse") {
     const lambda = this.lambdas.get(functionName);
 
     if (!lambda) {
@@ -62,14 +68,18 @@ class LambdaSimulator {
     this.applyEnvironment(lambda.env);
     logger.debug(`🎯 Invocando Lambda: ${functionName}`);
 
-    if (invocationType === 'Event') {
-      this.executeHandler(lambda.handler, event).catch(err =>
-        logger.error(`❌ Async Lambda error (${functionName}):`, err)
-      );
+    if (invocationType === "Event") {
+      this.executeHandler(lambda.handler, event).catch((err) => logger.error(`❌ Async Lambda error (${functionName}):`, err));
       return { StatusCode: 202 };
     }
 
     const result = await this.executeHandler(lambda.handler, event);
+    this.audit.record({
+      eventName: "Invoke",
+      readOnly: false,
+      resources: [{ ARN: `arn:aws:lambda:local:000000000000:function:${functionName}`, type: "AWS::Lambda::Function" }],
+      requestParameters: { functionName, invocationType },
+    });
     return { StatusCode: result.statusCode || 200, Payload: result };
   }
 
@@ -79,10 +89,10 @@ class LambdaSimulator {
       const result = await handler(event, context);
       return result;
     } catch (error) {
-      logger.error('❌ Erro no handler:', error);
+      logger.error("❌ Erro no handler:", error);
       return {
         statusCode: 500,
-        body: JSON.stringify({ error: 'Internal Server Error', message: error.message })
+        body: JSON.stringify({ error: "Internal Server Error", message: error.message }),
       };
     }
   }
@@ -90,16 +100,16 @@ class LambdaSimulator {
   createContext() {
     return {
       awsRequestId: Math.random().toString(36).substring(7),
-      functionName: 'local-lambda',
-      functionVersion: '$LATEST',
-      invokedFunctionArn: 'arn:aws:lambda:local:000000000000:function:local-lambda',
-      memoryLimitInMB: '1024',
-      logGroupName: '/aws/lambda/local-lambda',
-      logStreamName: 'local-stream',
+      functionName: "local-lambda",
+      functionVersion: "$LATEST",
+      invokedFunctionArn: "arn:aws:lambda:local:000000000000:function:local-lambda",
+      memoryLimitInMB: "1024",
+      logGroupName: "/aws/lambda/local-lambda",
+      logStreamName: "local-stream",
       getRemainingTimeInMillis: () => 30000,
       callbackWaitsForEmptyEventLoop: true,
       identity: null,
-      clientContext: null
+      clientContext: null,
     };
   }
 
@@ -120,13 +130,13 @@ class LambdaSimulator {
   }
 
   listLambdas() {
-    return Array.from(this.lambdas.values()).map(l => ({
+    return Array.from(this.lambdas.values()).map((l) => ({
       name: l.name,
       handlerName: l.handlerName,
       handlerPath: l.handlerPath,
       type: l.type,
       env: l.env,
-      registeredAt: l.registeredAt
+      registeredAt: l.registeredAt,
     }));
   }
 
@@ -139,13 +149,13 @@ class LambdaSimulator {
   }
 
   async reloadLambdas() {
-    logger.info('🔄 Recarregando Lambdas...');
+    logger.info("🔄 Recarregando Lambdas...");
 
     for (const [name, lambda] of this.lambdas.entries()) {
       try {
         const newHandler = await HandlerLoader.reload(lambda.handlerPath, lambda.type);
         lambda.handler = newHandler;
-        lambda.handlerName = newHandler.name || 'anonymous';
+        lambda.handlerName = newHandler.name || "anonymous";
         logger.debug(`✅ Lambda recarregada: ${name}`);
       } catch (error) {
         logger.error(`❌ Erro ao recarregar Lambda ${name}:`, error);
@@ -158,14 +168,14 @@ class LambdaSimulator {
   getStats() {
     return {
       totalLambdas: this.lambdas.size,
-      lambdas: this.listLambdas().map(l => ({ name: l.name, handler: l.handlerName }))
+      lambdas: this.listLambdas().map((l) => ({ name: l.name, handler: l.handlerName })),
     };
   }
 
   async reset() {
     await this.reloadLambdas();
     this.environment = { ...process.env };
-    logger.debug('Lambda: Estado resetado');
+    logger.debug("Lambda: Estado resetado");
   }
 }
 

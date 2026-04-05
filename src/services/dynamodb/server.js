@@ -35,8 +35,10 @@ class DynamoDBServer {
   }
 
   async initialize() {
-    this.simulator = new DynamoDBSimulator(this.config);
-    await this.simulator.initialize();
+    if (!this.simulator) {
+      this.simulator = new DynamoDBSimulator(this.config);
+      await this.simulator.initialize();
+    }
     this.setupRoutes();
   }
 

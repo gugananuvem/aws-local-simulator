@@ -32,6 +32,32 @@ class CloudFormationService {
     this.logger.debug('CloudFormation Service inicializado');
   }
 
+  injectDependencies(server) {
+    const ct = server.getService('cloudtrail');
+    if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
+
+    const s3 = server.getService('s3');
+    if (s3?.simulator) this.simulator.s3Simulator = s3.simulator;
+
+    const sqs = server.getService('sqs');
+    if (sqs?.simulator) this.simulator.sqsSimulator = sqs.simulator;
+
+    const dynamo = server.getService('dynamodb');
+    if (dynamo?.simulator) this.simulator.dynamoSimulator = dynamo.simulator;
+
+    const kms = server.getService('kms');
+    if (kms?.simulator) this.simulator.kmsSimulator = kms.simulator;
+
+    const secrets = server.getService('secret-manager');
+    if (secrets?.simulator) this.simulator.secretsSimulator = secrets.simulator;
+
+    const params = server.getService('parameter-store');
+    if (params?.simulator) this.simulator.parameterStoreSimulator = params.simulator;
+
+    const athena = server.getService('athena');
+    if (athena?.simulator) this.simulator.athenaSimulator = athena.simulator;
+  }
+
   async start() {
     if (this.isRunning) return;
     const app = createCloudFormationServer(this.simulator, this.config, this.logger);

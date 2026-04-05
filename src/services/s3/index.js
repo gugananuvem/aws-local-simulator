@@ -21,6 +21,8 @@ class S3Service {
     logger.debug(`Inicializando S3 Service na porta ${this.port}...`);
     
     this.simulator = new S3Simulator(this.config);
+    await this.simulator.initialize();
+
     this.server = new S3Server(this.port, this.config);
     this.server.simulator = this.simulator;
     

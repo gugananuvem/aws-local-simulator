@@ -21,10 +21,9 @@ class DynamoDBService {
     const logger = require('../../utils/logger');
     logger.debug(`Inicializando DynamoDB Service na porta ${this.port}...`);
     
-    // Cria o simulador
     this.simulator = new DynamoDBSimulator(this.config);
-    
-    // Cria o servidor HTTP
+    await this.simulator.initialize();
+
     this.server = new DynamoDBServer(this.port, this.config);
     this.server.simulator = this.simulator;
     

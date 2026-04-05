@@ -25,7 +25,8 @@ function toXml(tag, value, indent = '') {
   if (value === null || value === undefined) return '';
 
   if (Array.isArray(value)) {
-    return value.map(v => toXml(tag, v, indent)).join('');
+    if (value.length === 0) return `${indent}<${tag}/>`;
+    return `${indent}<${tag}>${value.map(v => toXml('member', v, indent + '  ')).join('')}</${tag}>`;
   }
 
   if (typeof value === 'object') {
@@ -296,7 +297,10 @@ async function dispatch(action, body, simulator, res, logger) {
 
     case 'DescribeStacks': {
       const result = simulator.describeStacks({ StackName: body.StackName });
-      res.type('application/xml').send(wrapResponse('DescribeStacks', result));
+      // Envolve Stacks no formato member esperado pelo AWS CLI
+      res.type('application/xml').send(wrapResponse('DescribeStacks', {
+        Stacks: result.Stacks
+      }));
       return;
     }
 

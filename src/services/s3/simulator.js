@@ -376,19 +376,6 @@ class S3Simulator {
   persistBucket(bucketName) {
     const bucket = this.buckets.get(bucketName);
     if (!bucket) return;
-    // Persiste apenas metadados — sem content
-    const objectsObj = {};
-    for (const [key, obj] of bucket.objects.entries()) {
-      objectsObj[key] = {
-        key: obj.key,
-        size: obj.size,
-        etag: obj.etag,
-        contentType: obj.contentType,
-        metadata: obj.metadata,
-        lastModified: obj.lastModified,
-      };
-    }
-    this.store.write(bucketName, objectsObj);
     this.persistBuckets();
   }
 

@@ -26,6 +26,7 @@ const { XRayService } = require("./services/xray");
 const { SecretManagerService } = require("./services/secret-manager");
 const { ParameterStoreService } = require("./services/parameter-store");
 const { ConfigService } = require("./services/config");
+const { AthenaService } = require("./services/athena");
 
 class Server {
   constructor(config) {
@@ -91,6 +92,7 @@ class Server {
       { name: "secret-manager", class: SecretManagerService,  depends: [] },
       { name: "parameter-store",class: ParameterStoreService, depends: [] },
       { name: "config",         class: ConfigService,         depends: [] },
+      { name: "athena",         class: AthenaService,         depends: [] },
     ];
 
     for (const serviceDef of serviceOrder) {

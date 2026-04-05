@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template de teste - S3, SQS, DynamoDB, KMS, Secrets Manager, Parameter Store
+
+Parameters:
+  Environment:
+    Type: String
+    Default: local
+
+  BucketName:
+    Type: String
+    Default: test-cfn-bucket
+
+  QueueName:
+    Type: String
+    Default: test-cfn-queue
+
+  TableName:
+    Type: String
+    Default: test-cfn-table
+
+Resources:
+
+  # ── KMS Key ────────────────────────────────────────────────────
+  AppKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Chave KMS para criptografia da aplicacao
+      KeyUsage: ENCRYPT_DECRYPT
+      KeySpec: SYMMETRIC_DEFAULT
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── S3 Bucket ──────────────────────────────────────────────────
+  TestBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── SQS Queue ──────────────────────────────────────────────────
+  TestQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref QueueName
+      VisibilityTimeout: 30
+      MessageRetentionPeriod: 86400
+
+  # ── DynamoDB Table ─────────────────────────────────────────────
+  TestTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: createdAt
+          KeyType: RANGE
+
+  # ── Athena WorkGroup ───────────────────────────────────────────
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub '${Environment}-workgroup'
+      Description: WorkGroup Athena para consultas no bucket de dados
+      State: ENABLED
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub 's3://${BucketName}/athena-results/'
+        EnforceWorkGroupConfiguration: false
+        PublishCloudWatchMetricsEnabled: false
+
+  # ── Secrets Manager ────────────────────────────────────────────
+  DbCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${Environment}/app/db-credentials'
+      Description: Credenciais do banco de dados
+      SecretString: '{"username":"admin","password":"changeme123"}'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  ApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${Environment}/app/api-key'
+      Description: Chave de API externa
+      SecretString: '{"apiKey":"my-secret-api-key-value"}'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── Parameter Store ────────────────────────────────────────────
+  AppConfigParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${Environment}/app/config'
+      Type: String
+      Value: '{"maxConnections":10,"timeout":30}'
+      Description: Configuracao geral da aplicacao
+
+  AppRegionParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${Environment}/app/region'
+      Type: String
+      Value: us-east-1
+      Description: Regiao da aplicacao
+
+  AppFeatureFlagsParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${Environment}/app/feature-flags'
+      Type: String
+      Value: '{"newDashboard":true,"betaApi":false}'
+      Description: Feature flags da aplicacao
+
+Outputs:
+
+  BucketName:
+    Value: !Ref TestBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+
+  QueueUrl:
+    Value: !Ref TestQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-QueueUrl'
+
+  TableName:
+    Value: !Ref TestTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TableName'
+
+  KmsKeyId:
+    Value: !Ref AppKmsKey
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyId'
+
+  AthenaWorkGroupName:
+    Value: !Ref AthenaWorkGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AthenaWorkGroup'
