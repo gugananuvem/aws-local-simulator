@@ -25,11 +25,13 @@ class S3Simulator {
   }
 
   loadBuckets() {
+
+    /*this.read()
     if (this.config.s3?.buckets) {
       for (const bucketName of this.config.s3.buckets) {
         this.createBucket(bucketName);
       }
-    }
+    }*/
 
     const savedBuckets = this.store.read("__buckets__");
     if (savedBuckets && typeof savedBuckets === "object" && !Array.isArray(savedBuckets)) {

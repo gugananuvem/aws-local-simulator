@@ -81,7 +81,7 @@ class Server {
       { name: "sqs",            class: SQSService,            depends: ["lambda"] },
       { name: "sns",            class: SNSService,            depends: [] },
       { name: "eventbridge",    class: EventBridgeService,    depends: [] },
-      { name: "cognito",        class: CognitoService,        depends: [] },
+      { name: "cognito",        class: CognitoService,        depends: ["lambda"] },
       { name: "ecs",            class: ECSService,            depends: [] },
       { name: "apigateway",     class: APIGatewayService,     depends: ["lambda"] },
       { name: "kms",            class: KMSService,            depends: [] },

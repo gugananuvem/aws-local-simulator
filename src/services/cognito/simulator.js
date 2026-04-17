@@ -3,18 +3,18 @@
  * Simula User Pools, Identity Pools, Autenticação, Tokens JWT
  */
 
-const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid');
-const logger = require('../../utils/logger');
-const LocalStore = require('../../utils/local-store');
-const path = require('path');
-const { CloudTrailAudit } = require('../../utils/cloudtrail-audit');
+const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
+const { v4: uuidv4 } = require("uuid");
+const logger = require("../../utils/logger");
+const LocalStore = require("../../utils/local-store");
+const path = require("path");
+const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
 
 class CognitoSimulator {
   constructor(config) {
     this.config = config;
-    this.dataDir = path.join(process.env.AWS_LOCAL_SIMULATOR_DATA_DIR, 'cognito');
+    this.dataDir = path.join(process.env.AWS_LOCAL_SIMULATOR_DATA_DIR, "cognito");
     this.store = new LocalStore(this.dataDir);
     this.userPools = new Map();
     this.identityPools = new Map();
@@ -22,31 +22,77 @@ class CognitoSimulator {
     this.sessions = new Map();
     this.refreshTokens = new Map();
     this.accessTokens = new Map();
-    this.jwtSecret = crypto.randomBytes(64).toString('hex');
-    this.audit = new CloudTrailAudit('cognito-idp.amazonaws.com');
+    this.jwtSecret = crypto.randomBytes(64).toString("hex");
+    this.audit = new CloudTrailAudit("cognito-idp.amazonaws.com");
+    this.lambdaSimulator = null;
+    this.customAuthSessions = new Map();
+  }
+
+  setLambdaSimulator(lambdaSimulator) {
+    this.lambdaSimulator = lambdaSimulator;
+  }
+
+  _warnUnregisteredTriggers(pool) {
+    const triggers = pool.LambdaTriggers || {};
+    for (const [triggerName, fnName] of Object.entries(triggers)) {
+      if (fnName && !this.lambdaSimulator?.getLambda(fnName)) {
+        logger.warn(`⚠️ Cognito pool "${pool.Name}": trigger "${triggerName}" references Lambda "${fnName}" which is not registered`);
+      }
+    }
+  }
+
+  _buildTriggerEvent(triggerSource, userPool, user, clientId, requestFields) {
+    return {
+      version: "1",
+      triggerSource,
+      region: "us-east-1",
+      userPoolId: userPool.Id,
+      userName: user.Username,
+      callerContext: {
+        awsSdkVersion: "aws-sdk-unknown-unknown",
+        clientId,
+      },
+      request: { ...requestFields },
+      response: {},
+    };
+  }
+
+  async _invokeTrigger(userPool, triggerName, event) {
+    const fnName = userPool.LambdaTriggers?.[triggerName];
+    if (!fnName) {
+      return null;
+    }
+
+    if (!this.lambdaSimulator || !this.lambdaSimulator.getLambda(fnName)) {
+      logger.warn(`⚠️ Cognito trigger "${triggerName}": Lambda "${fnName}" is not available, skipping`);
+      return null;
+    }
+
+    const result = await this.lambdaSimulator.invoke(fnName, event, "RequestResponse");
+    return result.Payload;
   }
 
   async initialize() {
-    logger.debug('Inicializando Cognito Simulator...');
+    logger.debug("Inicializando Cognito Simulator...");
     this.loadUserPools();
     this.loadIdentityPools();
     this.loadUsers();
     this.loadSessions();
-    
+
     logger.debug(`✅ Cognito Simulator inicializado com ${this.userPools.size} user pools, ${this.identityPools.size} identity pools, ${this.users.size} usuários`);
   }
 
   // ============ User Pool Operations ============
 
   createUserPool(params) {
-    const { PoolName, Policies, LambdaConfig, AutoVerifiedAttributes, AliasAttributes, UsernameAttributes, MfaConfiguration } = params;
-    
-    const poolId = `local_${PoolName}_${Date.now()}`;
+    const { PoolName, Policies, LambdaConfig, AutoVerifiedAttributes, AliasAttributes, UsernameAttributes, MfaConfiguration, UserPoolId } = params;
+
+    const poolId = UserPoolId ? UserPoolId : `local_${PoolName}_${Date.now()}`;
     const userPool = {
       Id: poolId,
       Name: PoolName,
       Arn: `arn:aws:cognito:local:000000000000:userpool/${poolId}`,
-      Status: 'ACTIVE',
+      Status: "ACTIVE",
       CreationDate: new Date().toISOString(),
       LastModifiedDate: new Date().toISOString(),
       Policies: Policies || {
@@ -55,28 +101,28 @@ class CognitoSimulator {
           RequireUppercase: true,
           RequireLowercase: true,
           RequireNumbers: true,
-          RequireSymbols: false
-        }
+          RequireSymbols: false,
+        },
       },
       LambdaConfig: LambdaConfig || {},
-      AutoVerifiedAttributes: AutoVerifiedAttributes || ['email'],
+      AutoVerifiedAttributes: AutoVerifiedAttributes || ["email"],
       AliasAttributes: AliasAttributes || [],
-      UsernameAttributes: UsernameAttributes || ['email'],
-      MfaConfiguration: MfaConfiguration || 'OFF',
+      UsernameAttributes: UsernameAttributes || ["email"],
+      MfaConfiguration: MfaConfiguration || "OFF",
       EstimatedNumberOfUsers: 0,
       Users: [],
       Clients: new Map(),
       Groups: new Map(),
       IdentityProviders: new Map(),
-      ResourceServers: new Map()
+      ResourceServers: new Map(),
     };
-    
+
     this.userPools.set(poolId, userPool);
     this.persistUserPools();
-    
+
     logger.debug(`✅ User Pool criado: ${PoolName} (${poolId})`);
-    this.audit.record({ eventName: 'CreateUserPool', readOnly: false, resources: [{ ARN: userPool.Arn, type: 'AWS::Cognito::UserPool' }], requestParameters: { poolName: PoolName } });
-    
+    this.audit.record({ eventName: "CreateUserPool", readOnly: false, resources: [{ ARN: userPool.Arn, type: "AWS::Cognito::UserPool" }], requestParameters: { poolName: PoolName } });
+
     return {
       UserPool: {
         Id: userPool.Id,
@@ -86,44 +132,44 @@ class CognitoSimulator {
         CreationDate: userPool.CreationDate,
         LastModifiedDate: userPool.LastModifiedDate,
         MfaConfiguration: userPool.MfaConfiguration,
-        EstimatedNumberOfUsers: 0
-      }
+        EstimatedNumberOfUsers: 0,
+      },
     };
   }
 
   listUserPools(params = {}) {
     const { MaxResults = 60, NextToken } = params;
     let userPools = Array.from(this.userPools.values());
-    
+
     if (NextToken) {
       const startIndex = parseInt(NextToken);
       userPools = userPools.slice(startIndex);
     }
-    
+
     const results = userPools.slice(0, MaxResults);
     const nextToken = results.length === MaxResults ? String(MaxResults) : null;
-    
+
     return {
-      UserPools: results.map(pool => ({
+      UserPools: results.map((pool) => ({
         Id: pool.Id,
         Name: pool.Name,
         Arn: pool.Arn,
         Status: pool.Status,
         CreationDate: pool.CreationDate,
-        LastModifiedDate: pool.LastModifiedDate
+        LastModifiedDate: pool.LastModifiedDate,
       })),
-      NextToken: nextToken
+      NextToken: nextToken,
     };
   }
 
   describeUserPool(params) {
     const { UserPoolId } = params;
     const userPool = this.userPools.get(UserPoolId);
-    
+
     if (!userPool) {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
-    
+
     return {
       UserPool: {
         Id: userPool.Id,
@@ -138,8 +184,8 @@ class CognitoSimulator {
         AliasAttributes: userPool.AliasAttributes,
         UsernameAttributes: userPool.UsernameAttributes,
         MfaConfiguration: userPool.MfaConfiguration,
-        EstimatedNumberOfUsers: userPool.Users.length
-      }
+        EstimatedNumberOfUsers: userPool.Users.length,
+      },
     };
   }
 
@@ -151,7 +197,7 @@ class CognitoSimulator {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
 
-    let users = Array.from(this.users.values()).filter(u => u.UserPoolId === UserPoolId);
+    let users = Array.from(this.users.values()).filter((u) => u.UserPoolId === UserPoolId);
 
     if (PaginationToken) {
       const startIndex = parseInt(PaginationToken);
@@ -162,15 +208,15 @@ class CognitoSimulator {
     const nextToken = results.length === Limit && users.length > Limit ? String(Limit) : null;
 
     return {
-      Users: results.map(u => ({
+      Users: results.map((u) => ({
         Username: u.Username,
         UserStatus: u.UserStatus,
         Enabled: u.Enabled,
         UserCreateDate: u.CreatedDate,
         UserLastModifiedDate: u.LastModifiedDate,
-        Attributes: this.formatUserAttributes(u.Attributes)
+        Attributes: this.formatUserAttributes(u.Attributes),
       })),
-      PaginationToken: nextToken
+      PaginationToken: nextToken,
     };
   }
 
@@ -184,12 +230,12 @@ class CognitoSimulator {
     const results = clients.slice(0, MaxResults);
 
     return {
-      UserPoolClients: results.map(c => ({
+      UserPoolClients: results.map((c) => ({
         ClientId: c.ClientId,
         ClientName: c.ClientName,
-        UserPoolId: c.UserPoolId
+        UserPoolId: c.UserPoolId,
       })),
-      NextToken: results.length === MaxResults && clients.length > MaxResults ? String(MaxResults) : null
+      NextToken: results.length === MaxResults && clients.length > MaxResults ? String(MaxResults) : null,
     };
   }
 
@@ -215,7 +261,7 @@ class CognitoSimulator {
     const { ClientId, Username } = params;
     const userPool = this.findUserPoolByClientId(ClientId);
     if (!userPool) throw new Error(`Client ${ClientId} not found`);
-    return { CodeDeliveryDetails: { Destination: 'test@example.com', DeliveryMedium: 'EMAIL', AttributeName: 'email' } };
+    return { CodeDeliveryDetails: { Destination: "test@example.com", DeliveryMedium: "EMAIL", AttributeName: "email" } };
   }
 
   confirmForgotPassword(params = {}) {
@@ -223,7 +269,7 @@ class CognitoSimulator {
     const user = this.findUserByUsername(Username, ClientId);
     if (!user) throw new Error(`User not found: ${Username}`);
     user.Password = this.hashPassword(Password);
-    user.UserStatus = 'CONFIRMED';
+    user.UserStatus = "CONFIRMED";
     this.persistUsers();
     return {};
   }
@@ -231,16 +277,103 @@ class CognitoSimulator {
   changePassword(params = {}) {
     const { AccessToken, PreviousPassword, ProposedPassword } = params;
     const session = this.accessTokens.get(AccessToken);
-    if (!session) throw new Error('Invalid access token');
+    if (!session) throw new Error("Invalid access token");
     const user = this.users.get(session.UserId);
-    if (!user) throw new Error('User not found');
-    if (!this.verifyPassword(PreviousPassword, user.Password)) throw new Error('Incorrect previous password');
+    if (!user) throw new Error("User not found");
+    if (!this.verifyPassword(PreviousPassword, user.Password)) throw new Error("Incorrect previous password");
     user.Password = this.hashPassword(ProposedPassword);
     this.persistUsers();
     return {};
   }
 
-  respondToAuthChallenge(params = {}) {
+  async respondToAuthChallenge(params = {}) {
+    const { ChallengeName } = params;
+
+    if (ChallengeName === "CUSTOM_CHALLENGE") {
+      const session = this.customAuthSessions.get(params.Session);
+      if (!session) {
+        throw new Error("Invalid session token");
+      }
+
+      const user = this.users.get(session.userId);
+      const userPool = this.userPools.get(session.userPoolId);
+
+      // Invoke VerifyAuthChallengeResponse
+      const verifyEvent = this._buildTriggerEvent("VerifyAuthChallengeResponse_Authentication", userPool, user, session.clientId, {
+        challengeAnswer: params.ChallengeResponses?.ANSWER,
+        privateChallengeParameters: session.privateChallengeParameters,
+      });
+      const verifyResponse = await this._invokeTrigger(userPool, "VerifyAuthChallengeResponse", verifyEvent);
+
+      // Append challenge result to session
+      session.session.push({
+        challengeName: "CUSTOM_CHALLENGE",
+        challengeResult: verifyResponse?.response?.answerCorrect === true,
+        challengeMetadata: "",
+      });
+
+      // Invoke DefineAuthChallenge again with updated session
+      const defineEvent = this._buildTriggerEvent("DefineAuthChallenge_Authentication", userPool, user, session.clientId, {
+        session: session.session,
+      });
+      const defineResponse = await this._invokeTrigger(userPool, "DefineAuthChallenge", defineEvent);
+
+      if (defineResponse?.response?.issueTokens === true) {
+        // Generate tokens and clean up session
+        const accessToken = this.generateAccessToken(user, userPool, session.clientId);
+        const idToken = this.generateIdToken(user, userPool, session.clientId);
+        const refreshToken = this.generateRefreshToken(user, userPool, session.clientId);
+
+        const sessionId = uuidv4();
+        const authSession = {
+          Id: sessionId,
+          UserId: user.UserId,
+          UserPoolId: userPool.Id,
+          ClientId: session.clientId,
+          AccessToken: accessToken,
+          IdToken: idToken,
+          RefreshToken: refreshToken,
+          CreatedAt: new Date().toISOString(),
+          ExpiresAt: new Date(Date.now() + 3600000).toISOString(),
+        };
+
+        this.sessions.set(sessionId, authSession);
+        this.accessTokens.set(accessToken, authSession);
+        this.refreshTokens.set(refreshToken, authSession);
+        this.persistSessions();
+
+        this.customAuthSessions.delete(params.Session);
+
+        return {
+          AuthenticationResult: {
+            AccessToken: accessToken,
+            IdToken: idToken,
+            RefreshToken: refreshToken,
+            TokenType: "Bearer",
+            ExpiresIn: 3600,
+          },
+          ChallengeName: null,
+        };
+      }
+
+      // Issue next challenge
+      const createEvent = this._buildTriggerEvent("CreateAuthChallenge_Authentication", userPool, user, session.clientId, {
+        challengeName: "CUSTOM_CHALLENGE",
+        session: session.session,
+      });
+      const createResponse = await this._invokeTrigger(userPool, "CreateAuthChallenge", createEvent);
+
+      // Update stored private challenge parameters for next round
+      session.privateChallengeParameters = createResponse?.response?.privateChallengeParameters || {};
+
+      return {
+        ChallengeName: "CUSTOM_CHALLENGE",
+        ChallengeParameters: createResponse?.response?.publicChallengeParameters || {},
+        Session: params.Session,
+        AuthenticationResult: null,
+      };
+    }
+
     return { AuthenticationResult: null, ChallengeName: null };
   }
 
@@ -272,24 +405,24 @@ class CognitoSimulator {
   getUser(params = {}) {
     const { AccessToken } = params;
     const session = this.accessTokens.get(AccessToken);
-    if (!session) throw new Error('Invalid access token');
+    if (!session) throw new Error("Invalid access token");
     // Check session is still active
-    if (!this.sessions.has(session.Id)) throw new Error('Token has been revoked');
+    if (!this.sessions.has(session.Id)) throw new Error("Token has been revoked");
     const user = this.users.get(session.UserId);
-    if (!user) throw new Error('User not found');
+    if (!user) throw new Error("User not found");
     return {
       Username: user.Username,
       UserAttributes: this.formatUserAttributes(user.Attributes),
-      UserStatus: user.UserStatus
+      UserStatus: user.UserStatus,
     };
   }
 
   updateUserAttributes(params = {}) {
     const { AccessToken, UserAttributes } = params;
     const session = this.accessTokens.get(AccessToken);
-    if (!session) throw new Error('Invalid access token');
+    if (!session) throw new Error("Invalid access token");
     const user = this.users.get(session.UserId);
-    if (!user) throw new Error('User not found');
+    if (!user) throw new Error("User not found");
     const updates = this.normalizeUserAttributes(UserAttributes || []);
     Object.assign(user.Attributes, updates);
     this.persistUsers();
@@ -299,7 +432,7 @@ class CognitoSimulator {
   deleteUser(params = {}) {
     const { AccessToken } = params;
     const session = this.accessTokens.get(AccessToken);
-    if (!session) throw new Error('Invalid access token');
+    if (!session) throw new Error("Invalid access token");
     this.users.delete(session.UserId);
     this.persistUsers();
     return {};
@@ -327,7 +460,7 @@ class CognitoSimulator {
     const { UserPoolId, Username } = params;
     const user = this.findUserByUsername(Username, null, UserPoolId);
     if (!user) throw new Error(`User not found: ${Username}`);
-    user.UserStatus = 'RESET_REQUIRED';
+    user.UserStatus = "RESET_REQUIRED";
     this.persistUsers();
     return {};
   }
@@ -354,14 +487,14 @@ class CognitoSimulator {
 
   deleteUserPool(params) {
     const { UserPoolId } = params;
-    
+
     if (!this.userPools.has(UserPoolId)) {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
-    
+
     this.userPools.delete(UserPoolId);
     this.persistUserPools();
-    
+
     return {};
   }
 
@@ -369,15 +502,15 @@ class CognitoSimulator {
 
   createUserPoolClient(params) {
     const { UserPoolId, ClientName, GenerateSecret, RefreshTokenValidity, AccessTokenValidity, IdTokenValidity, AllowedOAuthFlows, AllowedOAuthScopes, CallbackURLs, LogoutURLs } = params;
-    
+
     const userPool = this.userPools.get(UserPoolId);
     if (!userPool) {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
-    
-    const clientId = crypto.randomBytes(20).toString('hex');
-    const clientSecret = GenerateSecret ? crypto.randomBytes(32).toString('hex') : null;
-    
+
+    const clientId = crypto.randomBytes(20).toString("hex");
+    const clientSecret = GenerateSecret ? crypto.randomBytes(32).toString("hex") : null;
+
     const client = {
       ClientId: clientId,
       ClientName: ClientName,
@@ -386,19 +519,19 @@ class CognitoSimulator {
       RefreshTokenValidity: RefreshTokenValidity || 30,
       AccessTokenValidity: AccessTokenValidity || 1,
       IdTokenValidity: IdTokenValidity || 1,
-      AllowedOAuthFlows: AllowedOAuthFlows || ['code'],
-      AllowedOAuthScopes: AllowedOAuthScopes || ['openid', 'email', 'profile'],
+      AllowedOAuthFlows: AllowedOAuthFlows || ["code"],
+      AllowedOAuthScopes: AllowedOAuthScopes || ["openid", "email", "profile"],
       CallbackURLs: CallbackURLs || [],
       LogoutURLs: LogoutURLs || [],
       CreatedDate: new Date().toISOString(),
-      LastModifiedDate: new Date().toISOString()
+      LastModifiedDate: new Date().toISOString(),
     };
-    
+
     userPool.Clients.set(clientId, client);
     this.persistUserPools();
-    
+
     logger.debug(`✅ User Pool Client criado: ${ClientName} (${clientId})`);
-    
+
     return {
       UserPoolClient: {
         ClientId: client.ClientId,
@@ -412,31 +545,29 @@ class CognitoSimulator {
         AllowedOAuthScopes: client.AllowedOAuthScopes,
         CallbackURLs: client.CallbackURLs,
         LogoutURLs: client.LogoutURLs,
-        CreationDate: client.CreatedDate
-      }
+        CreationDate: client.CreatedDate,
+      },
     };
   }
 
   // ============ User Operations ============
 
-  signUp(params = {}) {
+  async signUp(params = {}) {
     const { ClientId, Username, Password, UserAttributes, ValidationData } = params;
-    
+
     // Encontra o user pool pelo client id
     const userPool = this.findUserPoolByClientId(ClientId);
     if (!userPool) {
       throw new Error(`Client ${ClientId} not found`);
     }
-    
+
     // Verifica se usuário já existe
-    const existingUser = Array.from(this.users.values()).find(
-      u => u.Username === Username && u.UserPoolId === userPool.Id
-    );
-    
+    const existingUser = Array.from(this.users.values()).find((u) => u.Username === Username && u.UserPoolId === userPool.Id);
+
     if (existingUser) {
       throw new Error(`User already exists: ${Username}`);
     }
-    
+
     const userId = uuidv4();
     const user = {
       Username: Username,
@@ -444,74 +575,167 @@ class CognitoSimulator {
       UserId: userId,
       Attributes: this.normalizeUserAttributes(UserAttributes || []),
       Enabled: true,
-      UserStatus: 'CONFIRMED', // Por padrão, confirma imediatamente (para teste)
+      UserStatus: "CONFIRMED", // Por padrão, confirma imediatamente (para teste)
       CreatedDate: new Date().toISOString(),
       LastModifiedDate: new Date().toISOString(),
       Password: this.hashPassword(Password),
       MfaOptions: [],
       PreferredMfaSetting: null,
-      UserMFASettingList: []
+      UserMFASettingList: [],
     };
-    
+
+    // Invoke PreSignUp trigger before persisting the user
+    const event = this._buildTriggerEvent("PreSignUp_SignUp", userPool, user, ClientId, {
+      userAttributes: this.normalizeUserAttributes(UserAttributes || []),
+      validationData: ValidationData || {},
+      clientMetadata: {},
+    });
+    const triggerResponse = await this._invokeTrigger(userPool, "PreSignUp", event);
+
+    if (triggerResponse !== null) {
+      if (triggerResponse.response?.autoConfirmUser === true) {
+        user.UserStatus = "CONFIRMED";
+      }
+      if (triggerResponse.response?.autoVerifyEmail === true) {
+        user.Attributes.email_verified = "true";
+      }
+    }
+
     this.users.set(userId, user);
     userPool.Users.push(userId);
     userPool.EstimatedNumberOfUsers++;
     this.persistUsers();
     this.persistUserPools();
-    
+
     logger.debug(`✅ Usuário criado: ${Username} (${userId})`);
-    
+
     return {
-      UserConfirmed: true,
+      UserConfirmed: user.UserStatus === "CONFIRMED",
       UserSub: userId,
-      CodeDeliveryDetails: null
+      CodeDeliveryDetails: null,
     };
   }
 
-  confirmSignUp(params) {
+  async confirmSignUp(params) {
     const { ClientId, Username, ConfirmationCode } = params;
-    
+
+    const userPool = this.findUserPoolByClientId(ClientId);
+    if (!userPool) {
+      throw new Error(`Client ${ClientId} not found`);
+    }
+
     const user = this.findUserByUsername(Username, ClientId);
     if (!user) {
       throw new Error(`User not found: ${Username}`);
     }
-    
-    user.UserStatus = 'CONFIRMED';
+
+    user.UserStatus = "CONFIRMED";
     user.LastModifiedDate = new Date().toISOString();
     this.persistUsers();
-    
+
+    const event = this._buildTriggerEvent("PostConfirmation_ConfirmSignUp", userPool, user, ClientId, {
+      userAttributes: this.formatUserAttributes(user.Attributes),
+    });
+    try {
+      await this._invokeTrigger(userPool, "PostConfirmation", event);
+    } catch (err) {
+      logger.error(`PostConfirmation trigger error (ignored): ${err.message}`);
+    }
+
     return {};
   }
 
-  initiateAuth(params) {
+  async initiateAuth(params) {
     const { AuthFlow, ClientId, AuthParameters } = params;
     const userPool = this.findUserPoolByClientId(ClientId);
-    
+
     if (!userPool) {
       throw new Error(`Client ${ClientId} not found`);
     }
-    
+
+    // CUSTOM_AUTH flow — no password check, challenge-based
+    if (AuthFlow === "CUSTOM_AUTH") {
+      const username = AuthParameters.USERNAME;
+      const user = this.findUserByUsername(username, ClientId);
+      if (!user) {
+        throw new Error(`User not found: ${username}`);
+      }
+
+      const defineEvent = this._buildTriggerEvent("DefineAuthChallenge_Authentication", userPool, user, ClientId, {
+        session: [],
+      });
+      const defineResponse = await this._invokeTrigger(userPool, "DefineAuthChallenge", defineEvent);
+
+      if (defineResponse?.response?.challengeName === "CUSTOM_CHALLENGE") {
+        const createEvent = this._buildTriggerEvent("CreateAuthChallenge_Authentication", userPool, user, ClientId, {
+          challengeName: "CUSTOM_CHALLENGE",
+          session: [],
+        });
+        const createResponse = await this._invokeTrigger(userPool, "CreateAuthChallenge", createEvent);
+
+        const sessionToken = uuidv4();
+        this.customAuthSessions.set(sessionToken, {
+          sessionToken,
+          userId: user.UserId,
+          userPoolId: userPool.Id,
+          clientId: ClientId,
+          session: [],
+          privateChallengeParameters: createResponse?.response?.privateChallengeParameters || {},
+        });
+
+        return {
+          ChallengeName: "CUSTOM_CHALLENGE",
+          ChallengeParameters: createResponse?.response?.publicChallengeParameters || {},
+          Session: sessionToken,
+          AuthenticationResult: null,
+        };
+      }
+
+      // DefineAuthChallenge did not return CUSTOM_CHALLENGE — nothing to do
+      return {
+        ChallengeName: null,
+        ChallengeParameters: {},
+        Session: null,
+        AuthenticationResult: null,
+      };
+    }
+
     const username = AuthParameters.USERNAME;
     const password = AuthParameters.PASSWORD;
-    
+
     const user = this.findUserByUsername(username, ClientId);
     if (!user) {
       throw new Error(`User not found: ${username}`);
     }
-    
-    if (user.UserStatus !== 'CONFIRMED') {
+
+    if (user.UserStatus !== "CONFIRMED") {
       throw new Error(`User not confirmed: ${username}`);
     }
-    
+
+    // PreAuthentication trigger — fires before password validation
+    const preAuthEvent = this._buildTriggerEvent("PreAuthentication_Authentication", userPool, user, ClientId, {
+      userAttributes: this.formatUserAttributes(user.Attributes),
+      validationData: {},
+    });
+    await this._invokeTrigger(userPool, "PreAuthentication", preAuthEvent);
+
     if (!this.verifyPassword(password, user.Password)) {
-      throw new Error('Incorrect username or password');
+      throw new Error("Incorrect username or password");
     }
-    
+
+    // PreTokenGeneration trigger — fires before token generation
+    const preTokenEvent = this._buildTriggerEvent("TokenGeneration_Authentication", userPool, user, ClientId, {
+      userAttributes: this.formatUserAttributes(user.Attributes),
+      groupConfiguration: {},
+    });
+    const preTokenResponse = await this._invokeTrigger(userPool, "PreTokenGeneration", preTokenEvent);
+    const claimsOverride = preTokenResponse?.response?.claimsOverrideDetails || null;
+
     // Gera tokens JWT
     const accessToken = this.generateAccessToken(user, userPool, ClientId);
-    const idToken = this.generateIdToken(user, userPool, ClientId);
+    const idToken = this.generateIdToken(user, userPool, ClientId, claimsOverride);
     const refreshToken = this.generateRefreshToken(user, userPool, ClientId);
-    
+
     const sessionId = uuidv4();
     const session = {
       Id: sessionId,
@@ -522,69 +746,85 @@ class CognitoSimulator {
       IdToken: idToken,
       RefreshToken: refreshToken,
       CreatedAt: new Date().toISOString(),
-      ExpiresAt: new Date(Date.now() + 3600000).toISOString() // 1 hora
+      ExpiresAt: new Date(Date.now() + 3600000).toISOString(), // 1 hora
     };
-    
+
     this.sessions.set(sessionId, session);
     this.accessTokens.set(accessToken, session);
     this.refreshTokens.set(refreshToken, session);
     this.persistSessions();
-    
+
+    // PostAuthentication trigger — fires after successful auth, before returning tokens
+    const postAuthEvent = this._buildTriggerEvent("PostAuthentication_Authentication", userPool, user, ClientId, {
+      userAttributes: this.formatUserAttributes(user.Attributes),
+      newDeviceUsed: false,
+    });
+    try {
+      await this._invokeTrigger(userPool, "PostAuthentication", postAuthEvent);
+    } catch (err) {
+      logger.error(`PostAuthentication trigger error (ignored): ${err.message}`);
+    }
+
     logger.debug(`🔐 Usuário autenticado: ${username}`);
-    this.audit.record({ eventName: 'InitiateAuth', readOnly: false, resources: [{ ARN: userPool.Arn, type: 'AWS::Cognito::UserPool' }], requestParameters: { clientId: ClientId, authFlow: AuthFlow } });
-    
+    this.audit.record({
+      eventName: "InitiateAuth",
+      readOnly: false,
+      resources: [{ ARN: userPool.Arn, type: "AWS::Cognito::UserPool" }],
+      requestParameters: { clientId: ClientId, authFlow: AuthFlow },
+    });
+
     return {
       AuthenticationResult: {
         AccessToken: accessToken,
         IdToken: idToken,
         RefreshToken: refreshToken,
-        TokenType: 'Bearer',
-        ExpiresIn: 3600
+        TokenType: "Bearer",
+        ExpiresIn: 3600,
       },
       ChallengeName: null,
-      Session: null
+      Session: null,
     };
   }
 
   getToken(params) {
     const { AuthFlow, ClientId, AuthParameters } = params;
-    
-    if (AuthFlow === 'REFRESH_TOKEN_AUTH') {
+
+    if (AuthFlow === "REFRESH_TOKEN_AUTH") {
       const refreshToken = AuthParameters.REFRESH_TOKEN;
       const session = this.refreshTokens.get(refreshToken);
-      
+
       if (!session) {
-        throw new Error('Invalid refresh token');
+        throw new Error("Invalid refresh token");
       }
-      
+
       const user = this.users.get(session.UserId);
       const userPool = this.userPools.get(session.UserPoolId);
-      
+
       if (!user || !userPool) {
-        throw new Error('Invalid session');
+        throw new Error("Invalid session");
       }
-      
+
       // Gera novos tokens
       const newAccessToken = this.generateAccessToken(user, userPool, session.ClientId);
       const newIdToken = this.generateIdToken(user, userPool, session.ClientId);
-      
+
       session.AccessToken = newAccessToken;
       session.IdToken = newIdToken;
       session.ExpiresAt = new Date(Date.now() + 3600000).toISOString();
-      
+
       this.accessTokens.set(newAccessToken, session);
       this.persistSessions();
-      
+
       return {
         AuthenticationResult: {
           AccessToken: newAccessToken,
           IdToken: newIdToken,
-          TokenType: 'Bearer',
-          ExpiresIn: 3600
-        }
+          TokenType: "Bearer",
+          ExpiresIn: 3600,
+        },
       };
     }
-    
+
     throw new Error(`Unsupported AuthFlow: ${AuthFlow}`);
   }
 
@@ -593,64 +833,76 @@ class CognitoSimulator {
   generateAccessToken(user, userPool, clientId) {
     const payload = {
       sub: user.UserId,
-      token_use: 'access',
+      token_use: "access",
       client_id: clientId,
       username: user.Username,
-      scope: 'aws.cognito.signin.user.admin',
+      scope: "aws.cognito.signin.user.admin",
       iss: `https://cognito-idp.local/${userPool.Id}`,
       exp: Math.floor(Date.now() / 1000) + 3600,
-      iat: Math.floor(Date.now() / 1000)
+      iat: Math.floor(Date.now() / 1000),
     };
-    
-    return jwt.sign(payload, this.jwtSecret, { algorithm: 'HS256' });
+
+    return jwt.sign(payload, this.jwtSecret, { algorithm: "HS256" });
   }
 
-  generateIdToken(user, userPool, clientId) {
+  generateIdToken(user, userPool, clientId, claimsOverride = null) {
     const payload = {
       sub: user.UserId,
-      token_use: 'id',
+      token_use: "id",
       client_id: clientId,
       email: user.Attributes.email,
       email_verified: user.Attributes.email_verified || true,
       username: user.Username,
       iss: `https://cognito-idp.local/${userPool.Id}`,
       exp: Math.floor(Date.now() / 1000) + 3600,
-      iat: Math.floor(Date.now() / 1000)
+      iat: Math.floor(Date.now() / 1000),
     };
-    
+
     // Adiciona outros atributos do usuário
     for (const [key, value] of Object.entries(user.Attributes)) {
-      if (key !== 'email' && key !== 'email_verified') {
+      if (key !== "email" && key !== "email_verified") {
         payload[key] = value;
       }
     }
-    
-    return jwt.sign(payload, this.jwtSecret, { algorithm: 'HS256' });
+
+    // Apply PreTokenGeneration claims override
+    if (claimsOverride !== null) {
+      if (claimsOverride.claimsToAddOrOverride) {
+        Object.assign(payload, claimsOverride.claimsToAddOrOverride);
+      }
+      if (Array.isArray(claimsOverride.claimsToSuppress)) {
+        for (const key of claimsOverride.claimsToSuppress) {
+          delete payload[key];
+        }
+      }
+    }
+
+    return jwt.sign(payload, this.jwtSecret, { algorithm: "HS256" });
   }
 
   generateRefreshToken(user, userPool, clientId) {
     const payload = {
       sub: user.UserId,
-      token_use: 'refresh',
+      token_use: "refresh",
       client_id: clientId,
       username: user.Username,
       iss: `https://cognito-idp.local/${userPool.Id}`,
       exp: Math.floor(Date.now() / 1000) + 2592000, // 30 dias
-      iat: Math.floor(Date.now() / 1000)
+      iat: Math.floor(Date.now() / 1000),
     };
-    
-    return jwt.sign(payload, this.jwtSecret, { algorithm: 'HS256' });
+
+    return jwt.sign(payload, this.jwtSecret, { algorithm: "HS256" });
   }
 
   verifyAccessToken(token) {
     try {
       const decoded = jwt.verify(token, this.jwtSecret);
       const session = this.accessTokens.get(token);
-      
+
       if (!session || session.ExpiresAt < new Date().toISOString()) {
         return null;
       }
-      
+
       return decoded;
     } catch (error) {
       return null;
@@ -662,16 +914,16 @@ class CognitoSimulator {
   adminGetUser(params) {
     const { UserPoolId, Username } = params;
     const userPool = this.userPools.get(UserPoolId);
-    
+
     if (!userPool) {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
-    
+
     const user = this.findUserByUsername(Username, null, UserPoolId);
     if (!user) {
       throw new Error(`User not found: ${Username}`);
     }
-    
+
     return {
       Username: user.Username,
       UserAttributes: this.formatUserAttributes(user.Attributes),
@@ -681,18 +933,18 @@ class CognitoSimulator {
       UserStatus: user.UserStatus,
       MFAOptions: user.MfaOptions,
       PreferredMfaSetting: user.PreferredMfaSetting,
-      UserMFASettingList: user.UserMFASettingList
+      UserMFASettingList: user.UserMFASettingList,
     };
   }
 
   adminCreateUser(params) {
     const { UserPoolId, Username, UserAttributes, TemporaryPassword, DesiredDeliveryMediums } = params;
     const userPool = this.userPools.get(UserPoolId);
-    
+
     if (!userPool) {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
-    
+
     const userId = uuidv4();
     const user = {
       Username: Username,
@@ -700,23 +952,23 @@ class CognitoSimulator {
       UserId: userId,
       Attributes: this.normalizeUserAttributes(UserAttributes || []),
       Enabled: true,
-      UserStatus: 'FORCE_CHANGE_PASSWORD',
+      UserStatus: "FORCE_CHANGE_PASSWORD",
       CreatedDate: new Date().toISOString(),
       LastModifiedDate: new Date().toISOString(),
-      Password: this.hashPassword(TemporaryPassword || 'Temp123!'),
+      Password: this.hashPassword(TemporaryPassword || "Temp123!"),
       MfaOptions: [],
       PreferredMfaSetting: null,
-      UserMFASettingList: []
+      UserMFASettingList: [],
     };
-    
+
     this.users.set(userId, user);
     userPool.Users.push(userId);
     userPool.EstimatedNumberOfUsers++;
     this.persistUsers();
     this.persistUserPools();
-    
+
     logger.debug(`👤 Usuário administrador criado: ${Username}`);
-    
+
     return {
       User: {
         Username: user.Username,
@@ -724,37 +976,37 @@ class CognitoSimulator {
         UserCreateDate: user.CreatedDate,
         UserLastModifiedDate: user.LastModifiedDate,
         Enabled: user.Enabled,
-        UserStatus: user.UserStatus
-      }
+        UserStatus: user.UserStatus,
+      },
     };
   }
 
   adminSetUserPassword(params) {
     const { UserPoolId, Username, Password, Permanent } = params;
     const user = this.findUserByUsername(Username, null, UserPoolId);
-    
+
     if (!user) {
       throw new Error(`User not found: ${Username}`);
     }
-    
+
     user.Password = this.hashPassword(Password);
     if (Permanent) {
-      user.UserStatus = 'CONFIRMED';
+      user.UserStatus = "CONFIRMED";
     }
     user.LastModifiedDate = new Date().toISOString();
     this.persistUsers();
-    
+
     return {};
   }
 
   adminDeleteUser(params) {
     const { UserPoolId, Username } = params;
     const user = this.findUserByUsername(Username, null, UserPoolId);
-    
+
     if (!user) {
       throw new Error(`User not found: ${Username}`);
     }
-    
+
     const userPool = this.userPools.get(UserPoolId);
     if (userPool) {
       const index = userPool.Users.indexOf(user.UserId);
@@ -763,11 +1015,11 @@ class CognitoSimulator {
         userPool.EstimatedNumberOfUsers--;
       }
     }
-    
+
     this.users.delete(user.UserId);
     this.persistUsers();
     this.persistUserPools();
-    
+
     return {};
   }
 
@@ -784,20 +1036,20 @@ class CognitoSimulator {
 
   findUserByUsername(username, clientId = null, userPoolId = null) {
     let targetUserPoolId = userPoolId;
-    
+
     if (clientId && !targetUserPoolId) {
       const userPool = this.findUserPoolByClientId(clientId);
       if (userPool) {
         targetUserPoolId = userPool.Id;
       }
     }
-    
+
     for (const user of this.users.values()) {
       if (user.Username === username && user.UserPoolId === targetUserPoolId) {
         return user;
       }
     }
-    
+
     return null;
   }
 
@@ -815,7 +1067,7 @@ class CognitoSimulator {
 
   hashPassword(password) {
     // Simulação de hash (não usar em produção real)
-    return crypto.createHash('sha256').update(password).digest('hex');
+    return crypto.createHash("sha256").update(password).digest("hex");
   }
 
   verifyPassword(password, hash) {
@@ -826,7 +1078,7 @@ class CognitoSimulator {
 
   createIdentityPool(params) {
     const { IdentityPoolName, AllowUnauthenticatedIdentities, SupportedLoginProviders, CognitoIdentityProviders } = params;
-    
+
     const identityPoolId = `local:${IdentityPoolName}_${Date.now()}`;
     const identityPool = {
       IdentityPoolId: identityPoolId,
@@ -834,31 +1086,31 @@ class CognitoSimulator {
       AllowUnauthenticatedIdentities: AllowUnauthenticatedIdentities || false,
       SupportedLoginProviders: SupportedLoginProviders || {},
       CognitoIdentityProviders: CognitoIdentityProviders || [],
-      Identities: new Map()
+      Identities: new Map(),
     };
-    
+
     this.identityPools.set(identityPoolId, identityPool);
     this.persistIdentityPools();
-    
+
     logger.debug(`✅ Identity Pool criado: ${IdentityPoolName} (${identityPoolId})`);
-    
+
     return {
       IdentityPoolId: identityPoolId,
       IdentityPoolName: identityPoolName,
-      AllowUnauthenticatedIdentities: identityPool.AllowUnauthenticatedIdentities
+      AllowUnauthenticatedIdentities: identityPool.AllowUnauthenticatedIdentities,
     };
   }
 
   getId(params) {
     const { IdentityPoolId, Logins } = params;
     const identityPool = this.identityPools.get(IdentityPoolId);
-    
+
     if (!identityPool) {
       throw new Error(`Identity pool ${IdentityPoolId} not found`);
     }
-    
+
     let identityId = null;
-    
+
     if (Logins) {
       // Procura identidade existente com os logins fornecidos
       for (const [id, identity] of identityPool.Identities) {
@@ -868,47 +1120,47 @@ class CognitoSimulator {
         }
       }
     }
-    
+
     if (!identityId) {
       identityId = uuidv4();
       identityPool.Identities.set(identityId, {
         IdentityId: identityId,
         Logins: Logins || {},
         CreationDate: new Date().toISOString(),
-        LastModifiedDate: new Date().toISOString()
+        LastModifiedDate: new Date().toISOString(),
       });
       this.persistIdentityPools();
     }
-    
+
     return {
-      IdentityId: identityId
+      IdentityId: identityId,
     };
   }
 
   getCredentialsForIdentity(params) {
     const { IdentityId, Logins } = params;
     const identityPool = this.findIdentityPoolByIdentityId(IdentityId);
-    
+
     if (!identityPool) {
       throw new Error(`Identity ${IdentityId} not found`);
     }
-    
+
     const identity = identityPool.Identities.get(IdentityId);
     if (!identity) {
       throw new Error(`Identity ${IdentityId} not found in pool`);
     }
-    
+
     // Gera credenciais temporárias (simuladas)
     const credentials = {
-      AccessKeyId: `AKIA${crypto.randomBytes(16).toString('hex').toUpperCase()}`,
-      SecretKey: crypto.randomBytes(32).toString('hex'),
-      SessionToken: crypto.randomBytes(64).toString('base64'),
-      Expiration: new Date(Date.now() + 3600000).toISOString()
+      AccessKeyId: `AKIA${crypto.randomBytes(16).toString("hex").toUpperCase()}`,
+      SecretKey: crypto.randomBytes(32).toString("hex"),
+      SessionToken: crypto.randomBytes(64).toString("base64"),
+      Expiration: new Date(Date.now() + 3600000).toISOString(),
     };
-    
+
     return {
       Credentials: credentials,
-      IdentityId: IdentityId
+      IdentityId: IdentityId,
     };
   }
 
@@ -924,15 +1176,15 @@ class CognitoSimulator {
   matchesLogins(existingLogins, newLogins) {
     const existingKeys = Object.keys(existingLogins);
     const newKeys = Object.keys(newLogins);
-    
+
     if (existingKeys.length !== newKeys.length) return false;
-    
+
     for (const key of existingKeys) {
       if (existingLogins[key] !== newLogins[key]) {
         return false;
       }
     }
-    
+
     return true;
   }
 
@@ -940,7 +1192,7 @@ class CognitoSimulator {
 
   loadUserPools() {
     // Load persisted pools first
-    const saved = this.store.read('__userpools__');
+    const saved = this.store.read("__userpools__");
     if (saved) {
       for (const [id, data] of Object.entries(saved)) {
         data.Clients = new Map(Object.entries(data.Clients || {}));
@@ -958,19 +1210,23 @@ class CognitoSimulator {
 
       for (let i = 0; i < this.config.cognito.userPools.length; i++) {
         const poolConfig = this.config.cognito.userPools[i];
-        const existing = Array.from(this.userPools.values()).find(p => p.Name === poolConfig.PoolName);
+        const existing = Array.from(this.userPools.values()).find((p) => p.Name === poolConfig.PoolName);
 
         if (!existing) {
           const result = this.createUserPool(poolConfig);
           const poolId = result.UserPool.Id;
           logger.debug(`✅ User Pool criado a partir da config: ${poolConfig.PoolName} (${poolId})`);
 
+          // Copy LambdaTriggers from config onto the pool object
+          const pool = this.userPools.get(poolId);
+          pool.LambdaTriggers = poolConfig.LambdaTriggers || {};
+
           // Auto-create a default client if not specified
           if (!poolConfig.ClientId) {
             const clientResult = this.createUserPoolClient({
               UserPoolId: poolId,
               ClientName: `${poolConfig.PoolName}-client`,
-              GenerateSecret: false
+              GenerateSecret: false,
             });
             const clientId = clientResult.UserPoolClient.ClientId;
             this.config.cognito.userPools[i].ClientId = clientId;
@@ -978,13 +1234,18 @@ class CognitoSimulator {
             configChanged = true;
             logger.debug(`✅ Client criado automaticamente: ${clientId}`);
           }
-        } else if (!poolConfig.ClientId) {
-          // Pool exists but no clientId in config — write it back
-          const firstClient = existing.Clients.size > 0 ? existing.Clients.values().next().value : null;
-          if (firstClient) {
-            this.config.cognito.userPools[i].ClientId = firstClient.ClientId;
-            this.config.cognito.userPools[i].UserPoolId = existing.Id;
-            configChanged = true;
+        } else {
+          // Pool already exists — apply LambdaTriggers from config
+          existing.LambdaTriggers = poolConfig.LambdaTriggers || {};
+
+          if (!poolConfig.ClientId) {
+            // Pool exists but no clientId in config — write it back
+            const firstClient = existing.Clients.size > 0 ? existing.Clients.values().next().value : null;
+            if (firstClient) {
+              this.config.cognito.userPools[i].ClientId = firstClient.ClientId;
+              this.config.cognito.userPools[i].UserPoolId = existing.Id;
+              configChanged = true;
+            }
           }
         }
       }
@@ -992,14 +1253,14 @@ class CognitoSimulator {
       // Write clientId back to aws-local-simulator.json
       if (configChanged && configPath) {
         try {
-          const fs = require('fs');
-          const fileContent = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          const fs = require("fs");
+          const fileContent = JSON.parse(fs.readFileSync(configPath, "utf8"));
           fileContent.cognito = fileContent.cognito || {};
-          fileContent.cognito.userPools = this.config.cognito.userPools.map(p => ({
+          fileContent.cognito.userPools = this.config.cognito.userPools.map((p) => ({
             PoolName: p.PoolName,
             AutoVerifiedAttributes: p.AutoVerifiedAttributes,
             UserPoolId: p.UserPoolId,
-            ClientId: p.ClientId
+            ClientId: p.ClientId,
           }));
           fs.writeFileSync(configPath, JSON.stringify(fileContent, null, 2));
           logger.info(`✅ ClientId gravado em: ${configPath}`);
@@ -1011,7 +1272,7 @@ class CognitoSimulator {
   }
 
   loadIdentityPools() {
-    const saved = this.store.read('__identitypools__');
+    const saved = this.store.read("__identitypools__");
     if (saved) {
       for (const [id, data] of Object.entries(saved)) {
         data.Identities = new Map(Object.entries(data.Identities || {}));
@@ -1021,7 +1282,7 @@ class CognitoSimulator {
   }
 
   loadUsers() {
-    const saved = this.store.read('__users__');
+    const saved = this.store.read("__users__");
     if (saved) {
       for (const [id, user] of Object.entries(saved)) {
         this.users.set(id, user);
@@ -1030,7 +1291,7 @@ class CognitoSimulator {
   }
 
   loadSessions() {
-    const saved = this.store.read('__sessions__');
+    const saved = this.store.read("__sessions__");
     if (saved) {
       for (const [id, session] of Object.entries(saved)) {
         this.sessions.set(id, session);
@@ -1048,10 +1309,10 @@ class CognitoSimulator {
         Clients: Object.fromEntries(pool.Clients),
         Groups: Object.fromEntries(pool.Groups),
         IdentityProviders: Object.fromEntries(pool.IdentityProviders),
-        ResourceServers: Object.fromEntries(pool.ResourceServers)
+        ResourceServers: Object.fromEntries(pool.ResourceServers),
       };
     }
-    this.store.write('__userpools__', poolsObj);
+    this.store.write("__userpools__", poolsObj);
   }
 
   persistIdentityPools() {
@@ -1059,10 +1320,10 @@ class CognitoSimulator {
     for (const [id, pool] of this.identityPools.entries()) {
       poolsObj[id] = {
         ...pool,
-        Identities: Object.fromEntries(pool.Identities)
+        Identities: Object.fromEntries(pool.Identities),
       };
     }
-    this.store.write('__identitypools__', poolsObj);
+    this.store.write("__identitypools__", poolsObj);
   }
 
   persistUsers() {
@@ -1070,7 +1331,7 @@ class CognitoSimulator {
     for (const [id, user] of this.users.entries()) {
       usersObj[id] = user;
     }
-    this.store.write('__users__', usersObj);
+    this.store.write("__users__", usersObj);
   }
 
   persistSessions() {
@@ -1078,7 +1339,7 @@ class CognitoSimulator {
     for (const [id, session] of this.sessions.entries()) {
       sessionsObj[id] = session;
     }
-    this.store.write('__sessions__', sessionsObj);
+    this.store.write("__sessions__", sessionsObj);
   }
 
   async reset() {
@@ -1088,13 +1349,13 @@ class CognitoSimulator {
     this.sessions.clear();
     this.accessTokens.clear();
     this.refreshTokens.clear();
-    
+
     this.persistUserPools();
     this.persistIdentityPools();
     this.persistUsers();
     this.persistSessions();
-    
-    logger.debug('Cognito: Todos os dados resetados');
+
+    logger.debug("Cognito: Todos os dados resetados");
   }
 
   // ============ Stats ============

@@ -57,8 +57,8 @@ class CognitoServer {
       });
     });
 
-    // User Pool operations
-    this.app.post('/', async (req, res) => {
+    // User Pool operations — aceita POST / e POST /:userPoolId (compatibilidade com SDK)
+    const cognitoHandler = async (req, res) => {
       const target = req.headers['x-amz-target'];
       logger.info(`Cognito incoming: target=${target} body=${JSON.stringify(req.body)}`);
       if (!target) {
@@ -75,7 +75,10 @@ class CognitoServer {
           message: error.message
         });
       }
-    });
+    };
+
+    this.app.post('/', cognitoHandler);
+    this.app.post('/:userPoolId', cognitoHandler);
 
     // Admin endpoints
     this.setupAdminRoutes();

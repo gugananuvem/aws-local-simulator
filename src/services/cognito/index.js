@@ -34,6 +34,15 @@ class CognitoService {
   injectDependencies(server) {
     const ct = server.getService('cloudtrail');
     if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
+
+    const lambda = server.getService('lambda');
+    if (lambda?.simulator) {
+      this.simulator.setLambdaSimulator(lambda.simulator);
+      // Warn about unregistered triggers now that Lambda is fully initialized
+      for (const pool of this.simulator.userPools.values()) {
+        this.simulator._warnUnregisteredTriggers(pool);
+      }
+    }
   }
 
   async start() {
