@@ -19,6 +19,14 @@
     "config": true,
     "athena": true
   },
+  "global": {
+    "timeout": 30,
+    "memorySize": 128,
+    "env": {
+      "REGION": "us-east-1",
+      "STAGE": "local"
+    }
+  },
   "sts": {
     "roles": [
       {
@@ -120,11 +128,8 @@
       "handler": "./handlers/usersX.js",
       "runtime": "nodejs18.x",
       "env": {
-        "TABLE_NAME": "users-table",
-        "REGION": "us-east-1"
-      },
-      "timeout": 30,
-      "memorySize": 128
+        "TABLE_NAME": "users-table"
+      }
     }
   ]
 }

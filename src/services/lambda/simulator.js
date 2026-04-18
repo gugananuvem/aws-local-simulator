@@ -17,6 +17,12 @@ class LambdaSimulator {
   async initialize() {
     logger.debug("Inicializando Lambda Simulator...");
 
+    // Build global lambda defaults from config.global
+    const globalDefaults = this.config.global || {};
+    this.globalEnv = globalDefaults.env || {};
+    this.globalTimeout = globalDefaults.timeout || null;
+    this.globalMemorySize = globalDefaults.memorySize || null;
+
     if (this.config.lambdas && this.config.lambdas.length > 0) {
       for (const lambdaConfig of this.config.lambdas) {
         await this.registerLambda(lambdaConfig);
@@ -28,12 +34,21 @@ class LambdaSimulator {
 
   async registerLambda(lambdaConfig) {
     try {
-      const { name, handler: handlerPath, env = {}, type = "auto" } = lambdaConfig;
+      const { name, handler: handlerPath, type = "auto" } = lambdaConfig;
 
       if (!name) {
         logger.warn(`Lambda sem nome ignorada: ${JSON.stringify(lambdaConfig)}`);
         return;
       }
+
+      // Merge: global env as base, lambda-specific env overrides
+      const env = {
+        ...(this.globalEnv || {}),
+        ...(lambdaConfig.env || {}),
+      };
+
+      const timeout = lambdaConfig.timeout ?? this.globalTimeout ?? 30;
+      const memorySize = lambdaConfig.memorySize ?? this.globalMemorySize ?? 128;
 
       const handler = await HandlerLoader.load(handlerPath, type);
       if (handler != undefined) {
@@ -43,6 +58,8 @@ class LambdaSimulator {
           handlerPath,
           handlerName: handler.name || "anonymous",
           env,
+          timeout,
+          memorySize,
           type,
           registeredAt: new Date().toISOString(),
         });
