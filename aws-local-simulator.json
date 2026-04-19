@@ -73,7 +73,17 @@
     ]
   },
   "s3": {
-    "buckets": ["my-demo-bucket", "uploads-bucket"]
+    "buckets": [
+      { "name": "my-demo-bucket", "region": "us-east-1" },
+      {
+        "name": "uploads-bucket",
+        "region": "us-east-1",
+        "websiteConfiguration": {
+          "IndexDocument": { "Suffix": "index.html" },
+          "ErrorDocument": { "Key": "error.html" }
+        }
+      }
+    ]
   },
   "sqs": {
     "queues": ["my-queue", "dead-letter-queue"]

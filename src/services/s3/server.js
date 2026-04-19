@@ -43,6 +43,13 @@ class S3Server {
   }
 
   setupRoutes() {
+    // Admin endpoints devem vir antes das rotas S3 para evitar conflito com /:bucket
+    this.setupAdminRoutes();
+
+    // Website static serving: GET /website/{bucket}/[path]
+    this.app.get('/website/:bucket', (req, res) => this._serveWebsite(req, res, ''));
+    this.app.get('/website/:bucket/*', (req, res) => this._serveWebsite(req, res, req.params[0]));
+
     // Listar buckets
     this.app.get('/', (req, res) => {
       const buckets = this.simulator.listBuckets();
@@ -52,6 +59,15 @@ class S3Server {
     
     // Criar bucket
     this.app.put('/:bucket', (req, res) => {
+      if (req.query.website !== undefined) {
+        let config = {};
+        try { config = JSON.parse(req.body?.toString() || '{}'); } catch (_) {}
+        const result = this.simulator.putWebsiteConfig(req.params.bucket, config);
+        if (result.error) {
+          return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
+        return res.status(200).send();
+      }
       const result = this.simulator.createBucket(req.params.bucket);
       if (result.error) {
         res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
@@ -62,6 +78,13 @@ class S3Server {
     
     // Deletar bucket
     this.app.delete('/:bucket', (req, res) => {
+      if (req.query.website !== undefined) {
+        const result = this.simulator.deleteWebsiteConfig(req.params.bucket);
+        if (result.error) {
+          return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
+        return res.status(204).send();
+      }
       const result = this.simulator.deleteBucket(req.params.bucket);
       if (result.error) {
         res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
@@ -153,8 +176,15 @@ class S3Server {
       }
     });
     
-    // List objects
+    // Website config
     this.app.get('/:bucket', (req, res) => {
+      if (req.query.website !== undefined) {
+        const result = this.simulator.getWebsiteConfig(req.params.bucket);
+        if (result.error) {
+          return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
+        return res.set('Content-Type', 'application/xml').send(this._generateWebsiteConfigXml(result.websiteConfiguration));
+      }
       const bucket = req.params.bucket;
       const prefix = req.query.prefix || '';
       const delimiter = req.query.delimiter;
@@ -176,7 +206,7 @@ class S3Server {
     });
     
     // Admin endpoints
-    this.setupAdminRoutes();
+    // (já registrados no início de setupRoutes)
   }
 
   setupAdminRoutes() {
@@ -211,6 +241,58 @@ class S3Server {
     this.app.get('/__admin/stats', (req, res) => {
       res.json(this.simulator.getStats());
     });
+  }
+
+  _serveWebsite(req, res, keyPath) {
+    const bucketName = req.params.bucket;
+    const bucket = this.simulator.getBucket(bucketName);
+
+    if (!bucket) {
+      return res.status(404).send('<html><body><h1>404 - Bucket not found</h1></body></html>');
+    }
+
+    if (!bucket.website) {
+      return res.status(403).send('<html><body><h1>403 - This bucket does not have static website hosting enabled</h1></body></html>');
+    }
+
+    const websiteConfig = bucket.websiteConfiguration || {};
+    const indexDoc = websiteConfig.IndexDocument?.Suffix || 'index.html';
+    const errorDoc = websiteConfig.ErrorDocument?.Key   || 'error.html';
+
+    // Resolve a chave: path vazio ou terminando em '/' serve o indexDocument
+    let key = keyPath || '';
+    if (!key || key.endsWith('/')) {
+      key = key + indexDoc;
+    }
+
+    let result = this.simulator.getObject(bucketName, key, req.headers);
+
+    // Se não encontrou e não tem extensão, tenta com indexDoc dentro do path
+    if (result.error && !key.includes('.')) {
+      result = this.simulator.getObject(bucketName, key + '/' + indexDoc, req.headers);
+    }
+
+    if (result.error) {
+      const errorResult = this.simulator.getObject(bucketName, errorDoc, req.headers);
+      if (!errorResult.error) {
+        res.status(404).set('Content-Type', errorResult.contentType || 'text/html');
+        return res.send(errorResult.content);
+      }
+      return res.status(404).send('<html><body><h1>404 - Not Found</h1></body></html>');
+    }
+
+    res.set('Content-Type', result.contentType || 'text/html');
+    res.set('ETag', `"${result.etag}"`);
+    res.set('Last-Modified', result.lastModified);
+    res.send(result.content);
+  }
+
+  _generateWebsiteConfigXml(config) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<WebsiteConfiguration>
+  <IndexDocument><Suffix>${config.IndexDocument?.Suffix || 'index.html'}</Suffix></IndexDocument>
+  <ErrorDocument><Key>${config.ErrorDocument?.Key || 'error.html'}</Key></ErrorDocument>
+</WebsiteConfiguration>`;
   }
 
   start() {

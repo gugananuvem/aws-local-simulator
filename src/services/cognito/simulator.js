@@ -57,6 +57,15 @@ class CognitoSimulator {
     };
   }
 
+  // Returns userAttributes in the flat key/value format that real Cognito sends to triggers
+  _triggerUserAttributes(user) {
+    return {
+      sub: user.UserId,
+      "cognito:user_status": user.UserStatus,
+      ...user.Attributes,
+    };
+  }
+
   async _invokeTrigger(userPool, triggerName, event) {
     const fnName = userPool.LambdaTriggers?.[triggerName];
     if (!fnName) {
@@ -288,6 +297,68 @@ class CognitoSimulator {
 
   async respondToAuthChallenge(params = {}) {
     const { ChallengeName } = params;
+
+    // NEW_PASSWORD_REQUIRED — user was created by admin and must set a permanent password
+    if (ChallengeName === "NEW_PASSWORD_REQUIRED") {
+      const session = this.customAuthSessions.get(params.Session);
+      if (!session || session.challenge !== "NEW_PASSWORD_REQUIRED") {
+        throw new Error("Invalid session token");
+      }
+
+      const newPassword = params.ChallengeResponses?.NEW_PASSWORD;
+      if (!newPassword) throw new Error("NEW_PASSWORD is required");
+
+      const user = this.users.get(session.userId);
+      const userPool = this.userPools.get(session.userPoolId);
+      if (!user || !userPool) throw new Error("Invalid session");
+
+      user.Password = this.hashPassword(newPassword);
+      user.UserStatus = "CONFIRMED";
+      user.LastModifiedDate = new Date().toISOString();
+      this.persistUsers();
+      this.customAuthSessions.delete(params.Session);
+
+      logger.debug(`🔑 Senha alterada e usuário confirmado: ${user.Username}`);
+
+      const preTokenEvent = this._buildTriggerEvent("TokenGeneration_Authentication", userPool, user, session.clientId, {
+        userAttributes: this._triggerUserAttributes(user),
+        groupConfiguration: {},
+      });
+      const preTokenResponse = await this._invokeTrigger(userPool, "PreTokenGeneration", preTokenEvent);
+      const claimsOverride = preTokenResponse?.response?.claimsOverrideDetails || null;
+
+      const accessToken = this.generateAccessToken(user, userPool, session.clientId);
+      const idToken = this.generateIdToken(user, userPool, session.clientId, claimsOverride);
+      const refreshToken = this.generateRefreshToken(user, userPool, session.clientId);
+
+      const sessionId = uuidv4();
+      const authSession = {
+        Id: sessionId,
+        UserId: user.UserId,
+        UserPoolId: userPool.Id,
+        ClientId: session.clientId,
+        AccessToken: accessToken,
+        IdToken: idToken,
+        RefreshToken: refreshToken,
+        CreatedAt: new Date().toISOString(),
+        ExpiresAt: new Date(Date.now() + 3600000).toISOString(),
+      };
+      this.sessions.set(sessionId, authSession);
+      this.accessTokens.set(accessToken, authSession);
+      this.refreshTokens.set(refreshToken, authSession);
+      this.persistSessions();
+
+      return {
+        AuthenticationResult: {
+          AccessToken: accessToken,
+          IdToken: idToken,
+          RefreshToken: refreshToken,
+          TokenType: "Bearer",
+          ExpiresIn: 3600,
+        },
+        ChallengeName: null,
+      };
+    }
 
     if (ChallengeName === "CUSTOM_CHALLENGE") {
       const session = this.customAuthSessions.get(params.Session);
@@ -634,7 +705,7 @@ class CognitoSimulator {
     this.persistUsers();
 
     const event = this._buildTriggerEvent("PostConfirmation_ConfirmSignUp", userPool, user, ClientId, {
-      userAttributes: this.formatUserAttributes(user.Attributes),
+      userAttributes: this._triggerUserAttributes(user),
     });
     try {
       await this._invokeTrigger(userPool, "PostConfirmation", event);
@@ -708,13 +779,38 @@ class CognitoSimulator {
       throw new Error(`User not found: ${username}`);
     }
 
+    // FORCE_CHANGE_PASSWORD — validate temp password then return NEW_PASSWORD_REQUIRED challenge
+    if (user.UserStatus === "FORCE_CHANGE_PASSWORD") {
+      if (!this.verifyPassword(password, user.Password)) {
+        throw new Error("Incorrect username or password");
+      }
+      const sessionToken = uuidv4();
+      this.customAuthSessions.set(sessionToken, {
+        sessionToken,
+        userId: user.UserId,
+        userPoolId: userPool.Id,
+        clientId: ClientId,
+        challenge: "NEW_PASSWORD_REQUIRED",
+      });
+      return {
+        ChallengeName: "NEW_PASSWORD_REQUIRED",
+        ChallengeParameters: {
+          USER_ID_FOR_SRP: user.Username,
+          requiredAttributes: "[]",
+          userAttributes: JSON.stringify(this._triggerUserAttributes(user)),
+        },
+        Session: sessionToken,
+        AuthenticationResult: null,
+      };
+    }
+
     if (user.UserStatus !== "CONFIRMED") {
       throw new Error(`User not confirmed: ${username}`);
     }
 
     // PreAuthentication trigger — fires before password validation
     const preAuthEvent = this._buildTriggerEvent("PreAuthentication_Authentication", userPool, user, ClientId, {
-      userAttributes: this.formatUserAttributes(user.Attributes),
+      userAttributes: this._triggerUserAttributes(user),
       validationData: {},
     });
     await this._invokeTrigger(userPool, "PreAuthentication", preAuthEvent);
@@ -725,7 +821,7 @@ class CognitoSimulator {
 
     // PreTokenGeneration trigger — fires before token generation
     const preTokenEvent = this._buildTriggerEvent("TokenGeneration_Authentication", userPool, user, ClientId, {
-      userAttributes: this.formatUserAttributes(user.Attributes),
+      userAttributes: this._triggerUserAttributes(user),
       groupConfiguration: {},
     });
     const preTokenResponse = await this._invokeTrigger(userPool, "PreTokenGeneration", preTokenEvent);
@@ -756,7 +852,7 @@ class CognitoSimulator {
 
     // PostAuthentication trigger — fires after successful auth, before returning tokens
     const postAuthEvent = this._buildTriggerEvent("PostAuthentication_Authentication", userPool, user, ClientId, {
-      userAttributes: this.formatUserAttributes(user.Attributes),
+      userAttributes: this._triggerUserAttributes(user),
       newDeviceUsed: false,
     });
     try {
@@ -945,6 +1041,8 @@ class CognitoSimulator {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
 
+    const tempPassword = TemporaryPassword || this._generateTemporaryPassword();
+
     const userId = uuidv4();
     const user = {
       Username: Username,
@@ -955,7 +1053,7 @@ class CognitoSimulator {
       UserStatus: "FORCE_CHANGE_PASSWORD",
       CreatedDate: new Date().toISOString(),
       LastModifiedDate: new Date().toISOString(),
-      Password: this.hashPassword(TemporaryPassword || "Temp123!"),
+      Password: this.hashPassword(tempPassword),
       MfaOptions: [],
       PreferredMfaSetting: null,
       UserMFASettingList: [],
@@ -967,7 +1065,7 @@ class CognitoSimulator {
     this.persistUsers();
     this.persistUserPools();
 
-    logger.debug(`👤 Usuário administrador criado: ${Username}`);
+    logger.info(`👤 Usuário criado: ${Username} | Senha temporária: ${tempPassword}`);
 
     return {
       User: {
@@ -977,8 +1075,21 @@ class CognitoSimulator {
         UserLastModifiedDate: user.LastModifiedDate,
         Enabled: user.Enabled,
         UserStatus: user.UserStatus,
+        TemporaryPassword: tempPassword,
       },
     };
+  }
+
+  _generateTemporaryPassword() {
+    const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const lower = "abcdefghijklmnopqrstuvwxyz";
+    const digits = "0123456789";
+    const special = "!@#$%^&*";
+    const all = upper + lower + digits + special;
+    const rand = (set) => set[Math.floor(Math.random() * set.length)];
+    const password = [rand(upper), rand(lower), rand(digits), rand(special)];
+    for (let i = 4; i < 10; i++) password.push(rand(all));
+    return password.sort(() => Math.random() - 0.5).join("");
   }
 
   adminSetUserPassword(params) {

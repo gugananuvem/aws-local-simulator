@@ -81,7 +81,9 @@ npm install --save-dev aws-local-simulator
     ]
   },
   "s3": {
-    "buckets": ["my-bucket"]
+    "buckets": [
+      { "name": "my-bucket", "region": "us-east-1" }
+    ]
   },
   "sqs": {
     "queues": ["my-queue", "dead-letter-queue"]
@@ -190,6 +192,7 @@ npx aws-local-simulator status
 |---------|----------|-------|
 | DynamoDB | http://localhost:8000 | http://localhost:8000/__admin/tables |
 | S3 | http://localhost:4566 | http://localhost:4566/__admin/buckets |
+| S3 Website | http://localhost:4566/website/{bucket}/ | — |
 | SQS | http://localhost:9324 | http://localhost:9324/__admin/queues |
 | Lambda | http://localhost:3001 | http://localhost:3001/__admin/functions |
 | Cognito | http://localhost:9229 | http://localhost:9229/__admin/userpools |
@@ -357,6 +360,76 @@ aws athena create-named-query \
 
 # Listar named queries
 aws athena list-named-queries --endpoint-url http://localhost:4599
+```
+
+## ⚙️ Configuração S3
+
+### Buckets simples
+
+```json
+{
+  "s3": {
+    "buckets": [
+      "my-bucket"
+    ]
+  }
+}
+```
+
+### Buckets com região e website estático
+
+```json
+{
+  "s3": {
+    "buckets": [
+      { "name": "my-bucket", "region": "us-east-1" },
+      {
+        "name": "my-site-bucket",
+        "region": "us-east-1",
+        "websiteConfiguration": {
+          "IndexDocument": { "Suffix": "index.html" },
+          "ErrorDocument": { "Key": "error.html" }
+        }
+      }
+    ]
+  }
+}
+```
+
+Quando `websiteConfiguration` está presente, o bucket serve arquivos estáticos.
+
+### URL do website estático
+
+```
+http://localhost:4566/website/{bucket-name}/
+http://localhost:4566/website/{bucket-name}/caminho/pagina.html
+```
+
+Exemplos:
+```
+http://localhost:4566/website/my-site-bucket/           → serve index.html
+http://localhost:4566/website/my-site-bucket/about.html → serve about.html
+http://localhost:4566/website/my-site-bucket/app/       → serve app/index.html
+```
+
+### Gerenciar website config via AWS CLI
+
+```bash
+# Habilitar website em um bucket existente
+aws s3api put-bucket-website \
+  --bucket my-site-bucket \
+  --website-configuration '{"IndexDocument":{"Suffix":"index.html"},"ErrorDocument":{"Key":"error.html"}}' \
+  --endpoint-url http://localhost:4566
+
+# Ver configuração de website
+aws s3api get-bucket-website \
+  --bucket my-site-bucket \
+  --endpoint-url http://localhost:4566
+
+# Remover website
+aws s3api delete-bucket-website \
+  --bucket my-site-bucket \
+  --endpoint-url http://localhost:4566
 ```
 
 ## ⚙️ Configuração de Lambdas

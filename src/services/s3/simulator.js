@@ -25,14 +25,6 @@ class S3Simulator {
   }
 
   loadBuckets() {
-
-    /*this.read()
-    if (this.config.s3?.buckets) {
-      for (const bucketName of this.config.s3.buckets) {
-        this.createBucket(bucketName);
-      }
-    }*/
-
     const savedBuckets = this.store.read("__buckets__");
     if (savedBuckets && typeof savedBuckets === "object" && !Array.isArray(savedBuckets)) {
       for (const [name, data] of Object.entries(savedBuckets)) {
@@ -50,11 +42,28 @@ class S3Simulator {
           }
           this.buckets.set(name, {
             name,
+            region: data.region || "us-east-1",
+            website: !!(data.websiteConfiguration),
+            websiteConfiguration: data.websiteConfiguration || null,
             creationDate: new Date(data.creationDate),
             objects,
             objectCount: data.objectCount || 0,
             totalSize: data.totalSize || 0,
           });
+        }
+      }
+    }
+
+    // Cria buckets definidos na config que ainda não existem
+    if (this.config.s3?.buckets) {
+      for (const bucketDef of this.config.s3.buckets) {
+        // suporta string simples ou objeto { name, region, websiteConfiguration }
+        const bucketName     = typeof bucketDef === "string" ? bucketDef : bucketDef.name;
+        const region         = typeof bucketDef === "object" ? (bucketDef.region || "us-east-1") : "us-east-1";
+        const websiteConfig  = typeof bucketDef === "object" ? (bucketDef.websiteConfiguration || null) : null;
+
+        if (!this.buckets.has(bucketName)) {
+          this.createBucket(bucketName, { region, websiteConfiguration: websiteConfig });
         }
       }
     }
@@ -93,7 +102,7 @@ class S3Simulator {
 
   // ─── Buckets ──────────────────────────────────────────────────────────────
 
-  createBucket(bucketName) {
+  createBucket(bucketName, options = {}) {
     if (!this.isValidBucketName(bucketName)) {
       return { error: { code: "InvalidBucketName", message: "Bucket name is invalid" }, status: 400 };
     }
@@ -102,8 +111,18 @@ class S3Simulator {
       return { error: { code: "BucketAlreadyExists", message: "Bucket already exists" }, status: 409 };
     }
 
+    const { region = "us-east-1", websiteConfiguration = null } = options;
+
     const bucket = {
       name: bucketName,
+      region,
+      website: !!websiteConfiguration,
+      websiteConfiguration: websiteConfiguration
+        ? {
+            IndexDocument: { Suffix: websiteConfiguration.IndexDocument?.Suffix || "index.html" },
+            ErrorDocument: { Key: websiteConfiguration.ErrorDocument?.Key || "error.html" },
+          }
+        : null,
       creationDate: new Date(),
       objects: new Map(),
       objectCount: 0,
@@ -112,7 +131,7 @@ class S3Simulator {
 
     this.buckets.set(bucketName, bucket);
     this.persistBuckets();
-    logger.debug(`✅ Bucket S3 criado: ${bucketName}`);
+    logger.debug(`✅ Bucket S3 criado: ${bucketName} (region: ${region}${websiteConfiguration ? ", website: enabled" : ""})`);
     this.audit.record({ eventName: "CreateBucket", readOnly: false, resources: [{ ARN: `arn:aws:s3:::${bucketName}`, type: "AWS::S3::Bucket" }], requestParameters: { bucketName } });
     return { bucket };
   }
@@ -143,6 +162,8 @@ class S3Simulator {
   getBucketsInfo() {
     return Array.from(this.buckets.values()).map((bucket) => ({
       name: bucket.name,
+      region: bucket.region,
+      website: bucket.website,
       creationDate: bucket.creationDate,
       objectCount: bucket.objectCount,
       totalSize: bucket.totalSize,
@@ -156,6 +177,9 @@ class S3Simulator {
     }
     return {
       name: bucket.name,
+      region: bucket.region,
+      website: bucket.website,
+      websiteConfiguration: bucket.websiteConfiguration,
       creationDate: bucket.creationDate,
       objectCount: bucket.objectCount,
       totalSize: bucket.totalSize,
@@ -373,6 +397,46 @@ class S3Simulator {
     }));
   }
 
+  // ─── Website Config ───────────────────────────────────────────────────────
+
+  getWebsiteConfig(bucketName) {
+    const bucket = this.buckets.get(bucketName);
+    if (!bucket) {
+      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
+    }
+    if (!bucket.websiteConfiguration) {
+      return { error: { code: "NoSuchWebsiteConfiguration", message: "The specified bucket does not have a website configuration" }, status: 404 };
+    }
+    return { websiteConfiguration: bucket.websiteConfiguration };
+  }
+
+  putWebsiteConfig(bucketName, config) {
+    const bucket = this.buckets.get(bucketName);
+    if (!bucket) {
+      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
+    }
+    bucket.website = true;
+    bucket.websiteConfiguration = {
+      IndexDocument: { Suffix: config.IndexDocument?.Suffix || "index.html" },
+      ErrorDocument: { Key: config.ErrorDocument?.Key || "error.html" },
+    };
+    this.persistBuckets();
+    logger.debug(`🌐 Website config atualizada: ${bucketName}`);
+    return { success: true };
+  }
+
+  deleteWebsiteConfig(bucketName) {
+    const bucket = this.buckets.get(bucketName);
+    if (!bucket) {
+      return { error: { code: "NoSuchBucket", message: "Bucket does not exist" }, status: 404 };
+    }
+    bucket.website = false;
+    bucket.websiteConfiguration = null;
+    this.persistBuckets();
+    logger.debug(`🗑️ Website config removida: ${bucketName}`);
+    return { success: true };
+  }
+
   // ─── Persistência ─────────────────────────────────────────────────────────
 
   persistBucket(bucketName) {
@@ -397,6 +461,9 @@ class S3Simulator {
       }
       bucketsObj[name] = {
         creationDate: bucket.creationDate.toISOString(),
+        region: bucket.region || "us-east-1",
+        website: bucket.website || false,
+        websiteConfiguration: bucket.websiteConfiguration || null,
         objects: objectsObj,
         objectCount: bucket.objectCount,
         totalSize: bucket.totalSize,
