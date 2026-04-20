@@ -278,13 +278,27 @@ class DynamoDBSimulator {
       throw new Error(`Table ${TableName} does not exist`);
     }
 
-    // Busca o item atual
+    // Busca o item atual (upsert: cria se não existir, como o DynamoDB real)
     const items = this.store.read(TableName);
     const itemKey = this.getItemKeyFromKeys(Key, table);
     const index = items.findIndex((item) => this.getItemKey(item, table) === itemKey);
 
+    // Se não existe, cria um novo item com as chaves fornecidas
     if (index === -1) {
-      throw new Error(`Item not found in ${TableName}`);
+      const newItem = this.normalizeItem(Key, table);
+      newItem._createdAt = new Date().toISOString();
+      newItem._updatedAt = new Date().toISOString();
+      if (UpdateExpression) {
+        this.processUpdateExpression(newItem, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues, table);
+      }
+      items.push(newItem);
+      this.store.write(TableName, items);
+      logger.verboso(`UpdateItem (upsert): ${TableName}/${itemKey}`);
+      const response = {};
+      if (ReturnValues === "ALL_NEW" || ReturnValues === "UPDATED_NEW") {
+        response.Attributes = this.marshallItem(newItem, table);
+      }
+      return response;
     }
 
     const currentItem = items[index];
@@ -585,19 +599,44 @@ class DynamoDBSimulator {
   }
 
   processUpdateExpression(item, expression, nameMap, valueMap, table) {
-    // Implementação simplificada - expandir conforme necessário
-    const setMatch = expression.match(/SET\s+([^]+?)(?=\s+(?:REMOVE|ADD|DELETE)|\s*$)/i);
-
+    // SET clause
+    const setMatch = expression.match(/SET\s+([^]+?)(?=\s+(?:REMOVE|ADD|DELETE)\s|\s*$)/i);
     if (setMatch) {
       const assignments = setMatch[1].split(",").map((a) => a.trim());
-
       for (const assignment of assignments) {
         const [path, valueExpr] = assignment.split("=").map((s) => s.trim());
-        const attributeName = path.replace(/#/g, "");
+        const attributeName = nameMap[path] || path.replace(/#/g, "");
         const rawValue = valueMap[valueExpr];
         const value = rawValue && typeof rawValue === 'object' ? Object.values(rawValue)[0] : rawValue;
-
         item[attributeName] = value;
+      }
+    }
+
+    // ADD clause — incrementa números ou adiciona a sets (upsert-friendly)
+    const addMatch = expression.match(/ADD\s+([^]+?)(?=\s+(?:SET|REMOVE|DELETE)\s|\s*$)/i);
+    if (addMatch) {
+      const assignments = addMatch[1].split(",").map((a) => a.trim());
+      for (const assignment of assignments) {
+        const parts = assignment.split(/\s+/);
+        const attributeName = nameMap[parts[0]] || parts[0].replace(/#/g, "");
+        const rawValue = valueMap[parts[1]];
+        const delta = rawValue && typeof rawValue === 'object' ? Object.values(rawValue)[0] : rawValue;
+        const current = item[attributeName];
+        if (current === undefined || current === null) {
+          item[attributeName] = typeof delta === 'number' ? delta : parseFloat(delta) || 0;
+        } else {
+          item[attributeName] = (parseFloat(current) || 0) + (parseFloat(delta) || 0);
+        }
+      }
+    }
+
+    // REMOVE clause
+    const removeMatch = expression.match(/REMOVE\s+([^]+?)(?=\s+(?:SET|ADD|DELETE)\s|\s*$)/i);
+    if (removeMatch) {
+      const attributes = removeMatch[1].split(",").map((a) => a.trim());
+      for (const attr of attributes) {
+        const attributeName = nameMap[attr] || attr.replace(/#/g, "");
+        delete item[attributeName];
       }
     }
   }
