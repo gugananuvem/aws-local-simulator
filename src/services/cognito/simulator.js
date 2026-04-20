@@ -680,6 +680,18 @@ class CognitoSimulator {
 
     logger.debug(`✅ Usuário criado: ${Username} (${userId})`);
 
+    // PostConfirmation — dispara se usuário foi auto-confirmado pelo PreSignUp
+    if (user.UserStatus === "CONFIRMED") {
+      const postConfirmEvent = this._buildTriggerEvent("PostConfirmation_ConfirmSignUp", userPool, user, ClientId, {
+        userAttributes: this._triggerUserAttributes(user),
+      });
+      try {
+        await this._invokeTrigger(userPool, "PostConfirmation", postConfirmEvent);
+      } catch (err) {
+        logger.error(`PostConfirmation trigger error (ignored): ${err.message}`);
+      }
+    }
+
     return {
       UserConfirmed: user.UserStatus === "CONFIRMED",
       UserSub: userId,
@@ -732,6 +744,14 @@ class CognitoSimulator {
         throw new Error(`User not found: ${username}`);
       }
 
+      // 1. PreAuthentication — dispara antes de qualquer challenge
+      const preAuthEvent = this._buildTriggerEvent("PreAuthentication_Authentication", userPool, user, ClientId, {
+        userAttributes: this._triggerUserAttributes(user),
+        validationData: AuthParameters.ValidationData || {},
+      });
+      await this._invokeTrigger(userPool, "PreAuthentication", preAuthEvent);
+
+      // 2. DefineAuthChallenge — define qual challenge usar
       const defineEvent = this._buildTriggerEvent("DefineAuthChallenge_Authentication", userPool, user, ClientId, {
         session: [],
       });
@@ -808,26 +828,27 @@ class CognitoSimulator {
       throw new Error(`User not confirmed: ${username}`);
     }
 
-    // PreAuthentication trigger — fires before password validation
+    // 1. PreAuthentication — dispara antes de validar senha
     const preAuthEvent = this._buildTriggerEvent("PreAuthentication_Authentication", userPool, user, ClientId, {
       userAttributes: this._triggerUserAttributes(user),
-      validationData: {},
+      validationData: AuthParameters.ValidationData || {},
     });
     await this._invokeTrigger(userPool, "PreAuthentication", preAuthEvent);
 
+    // 2. Valida senha
     if (!this.verifyPassword(password, user.Password)) {
       throw new Error("Incorrect username or password");
     }
 
-    // PreTokenGeneration trigger — fires before token generation
+    // 3. PreTokenGeneration — dispara antes de gerar tokens, pode sobrescrever claims
     const preTokenEvent = this._buildTriggerEvent("TokenGeneration_Authentication", userPool, user, ClientId, {
       userAttributes: this._triggerUserAttributes(user),
-      groupConfiguration: {},
+      groupConfiguration: { groupsToOverride: [], iamRolesToOverride: [], preferredRole: null },
     });
     const preTokenResponse = await this._invokeTrigger(userPool, "PreTokenGeneration", preTokenEvent);
     const claimsOverride = preTokenResponse?.response?.claimsOverrideDetails || null;
 
-    // Gera tokens JWT
+    // 4. Gera tokens com claims override se houver
     const accessToken = this.generateAccessToken(user, userPool, ClientId);
     const idToken = this.generateIdToken(user, userPool, ClientId, claimsOverride);
     const refreshToken = this.generateRefreshToken(user, userPool, ClientId);
@@ -842,7 +863,7 @@ class CognitoSimulator {
       IdToken: idToken,
       RefreshToken: refreshToken,
       CreatedAt: new Date().toISOString(),
-      ExpiresAt: new Date(Date.now() + 3600000).toISOString(), // 1 hora
+      ExpiresAt: new Date(Date.now() + 3600000).toISOString(),
     };
 
     this.sessions.set(sessionId, session);
@@ -850,7 +871,7 @@ class CognitoSimulator {
     this.refreshTokens.set(refreshToken, session);
     this.persistSessions();
 
-    // PostAuthentication trigger — fires after successful auth, before returning tokens
+    // 5. PostAuthentication — dispara após auth bem-sucedida (não bloqueia)
     const postAuthEvent = this._buildTriggerEvent("PostAuthentication_Authentication", userPool, user, ClientId, {
       userAttributes: this._triggerUserAttributes(user),
       newDeviceUsed: false,
@@ -1058,6 +1079,17 @@ class CognitoSimulator {
       PreferredMfaSetting: null,
       UserMFASettingList: [],
     };
+
+    // PreSignUp trigger — dispara antes de criar o usuário (admin context)
+    const preSignUpEvent = this._buildTriggerEvent("PreSignUp_AdminCreateUser", userPool, user, "ADMIN", {
+      userAttributes: this.normalizeUserAttributes(UserAttributes || []),
+      validationData: {},
+      clientMetadata: {},
+    });
+    // Fire and forget — AdminCreateUser PreSignUp errors are non-blocking in local sim
+    this._invokeTrigger(userPool, "PreSignUp", preSignUpEvent).catch((err) => {
+      logger.warn(`PreSignUp trigger error on AdminCreateUser (ignored): ${err.message}`);
+    });
 
     this.users.set(userId, user);
     userPool.Users.push(userId);
