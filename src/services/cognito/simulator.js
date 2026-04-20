@@ -1156,9 +1156,10 @@ class CognitoSimulator {
     }
 
     for (const user of this.users.values()) {
-      if (user.Username === username && user.UserPoolId === targetUserPoolId) {
-        return user;
-      }
+      if (user.UserPoolId !== targetUserPoolId) continue;
+      // Match by Username or by email attribute (when UsernameAttributes includes 'email')
+      if (user.Username === username) return user;
+      if (user.Attributes?.email === username) return user;
     }
 
     return null;
@@ -1357,6 +1358,25 @@ class CognitoSimulator {
               this.config.cognito.userPools[i].UserPoolId = existing.Id;
               configChanged = true;
             }
+          } else if (!existing.Clients.has(poolConfig.ClientId)) {
+            // ClientId is in config but not in the pool's Clients map — register it
+            existing.Clients.set(poolConfig.ClientId, {
+              ClientId: poolConfig.ClientId,
+              ClientName: `${poolConfig.PoolName}-client`,
+              ClientSecret: null,
+              UserPoolId: existing.Id,
+              RefreshTokenValidity: 30,
+              AccessTokenValidity: 1,
+              IdTokenValidity: 1,
+              AllowedOAuthFlows: ['code'],
+              AllowedOAuthScopes: ['openid', 'email', 'profile'],
+              CallbackURLs: [],
+              LogoutURLs: [],
+              CreatedDate: new Date().toISOString(),
+              LastModifiedDate: new Date().toISOString(),
+            });
+            this.persistUserPools();
+            logger.debug(`✅ ClientId ${poolConfig.ClientId} registrado no pool ${existing.Id}`);
           }
         }
       }

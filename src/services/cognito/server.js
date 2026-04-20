@@ -62,22 +62,29 @@ class CognitoServer {
     // User Pool operations — aceita POST / e POST /:userPoolId (compatibilidade com SDK)
     const cognitoHandler = async (req, res) => {
       const target = req.headers['x-amz-target'];
-      logger.info(`Cognito incoming: target=${target} body=${JSON.stringify(req.body)}`);
+      logger.info(`Cognito incoming: method=${req.method} path=${req.path} target=${target} body=${JSON.stringify(req.body)}`);
+
       if (!target) {
-        return res.status(400).json({ error: 'Missing X-Amz-Target header' });
+        return res.status(400).json({
+          __type: 'InvalidParameterException',
+          message: 'Missing X-Amz-Target header'
+        });
       }
 
       try {
         const result = await this.handleRequest(target, req.body || {});
         res.json(result);
       } catch (error) {
-        logger.error('Cognito Error:', error);
+        logger.error('Cognito Error:', error.message);
         res.status(400).json({
           __type: error.code || 'InternalServerError',
           message: error.message
         });
       }
     };
+
+    // OPTIONS preflight para CORS
+    this.app.options('*', (req, res) => res.sendStatus(204));
 
     this.app.post('/', cognitoHandler);
     this.app.post('/:userPoolId', cognitoHandler);
@@ -185,6 +192,16 @@ class CognitoServer {
         identityPools: this.simulator.getIdentityPoolsCount(),
         activeSessions: this.simulator.getActiveSessionsCount()
       });
+    });
+
+    // Confirma um usuário (útil para dev local)
+    this.app.post('/__admin/userpools/:poolId/users/:username/confirm', (req, res) => {
+      const user = this.simulator.findUserByUsername(req.params.username, null, req.params.poolId);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      user.UserStatus = 'CONFIRMED';
+      user.LastModifiedDate = new Date().toISOString();
+      this.simulator.persistUsers();
+      res.json({ message: `User ${req.params.username} confirmed` });
     });
 
     this.app.get('/__admin/userpools/:poolId/users', (req, res) => {
