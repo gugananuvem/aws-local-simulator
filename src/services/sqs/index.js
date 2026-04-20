@@ -40,17 +40,22 @@ class SQSService {
     const logger = require('../../utils/logger');
     
     for (const queueConfig of this.config.sqs.queues) {
-      if (queueConfig.lambdaPath && this.lambdaService) {
-        const handler = this.lambdaService.getHandler(queueConfig.lambdaPath);
-        if (handler) {
+      if (typeof queueConfig === 'object' && queueConfig.lambdaName && this.lambdaService) {
+        const lambdaSimulator = this.lambdaService.simulator;
+        const lambda = lambdaSimulator?.getLambda(queueConfig.lambdaName);
+
+        if (lambda) {
+          const lambdaName = queueConfig.lambdaName;
+          const handler = async (event) => lambdaSimulator.invoke(lambdaName, event);
+
           this.simulator.attachLambdaToQueue(
             queueConfig.name,
             handler,
             { batchSize: queueConfig.batchSize || 10 }
           );
-          logger.debug(`🔗 Fila ${queueConfig.name} -> Lambda ${queueConfig.lambdaPath}`);
+          logger.debug(`🔗 Fila ${queueConfig.name} -> Lambda ${lambdaName}`);
         } else {
-          logger.warn(`⚠️ Lambda não encontrada para fila ${queueConfig.name}: ${queueConfig.lambdaPath}`);
+          logger.warn(`⚠️ Lambda não encontrada para fila ${queueConfig.name}: ${queueConfig.lambdaName}`);
         }
       }
     }

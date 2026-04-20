@@ -83,7 +83,7 @@ class Server {
       { name: "eventbridge",    class: EventBridgeService,    depends: [] },
       { name: "cognito",        class: CognitoService,        depends: ["lambda"] },
       { name: "ecs",            class: ECSService,            depends: [] },
-      { name: "apigateway",     class: APIGatewayService,     depends: ["lambda"] },
+      { name: "apigateway",     class: APIGatewayService,     depends: ["lambda", "cognito"] },
       { name: "kms",            class: KMSService,            depends: [] },
       { name: "cloudwatch",     class: CloudWatchService,     depends: [] },
       { name: "cloudtrail",     class: CloudTrailService,     depends: [] },

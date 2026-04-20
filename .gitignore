@@ -52,3 +52,4 @@ obfuscator-config.js
 .vscode
 *.tgz
 aws-local-simulator.json
+tests/*

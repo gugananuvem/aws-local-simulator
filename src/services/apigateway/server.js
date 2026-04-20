@@ -64,8 +64,11 @@ class APIGatewayServer {
     // Register routes from aws-local-simulator.json config directly
     const apis = this.config.apigateway?.apis || [];
     for (const api of apis) {
+      // Build Cognito authorizer middleware for this API if configured
+      const cognitoAuthorizer = this._buildCognitoAuthorizer(api.authorizer);
+
       for (const endpoint of (api.endpoints || [])) {
-        const { path, method, lambdaName, integrationType } = endpoint;
+        const { path, method, lambdaName, integrationType, authorizerRequired } = endpoint;
         if (!path || !method) continue;
 
         const expressPath = path.replace(/\{([^}]+)\}/g, ':$1');
@@ -73,7 +76,7 @@ class APIGatewayServer {
 
         logger.debug(`📡 Registrando rota: ${method} ${path} -> ${lambdaName}`);
 
-        this.app[httpMethod](expressPath, async (req, res) => {
+        const handler = async (req, res) => {
           try {
             const lambdaService = this.lambdaService;
             if (!lambdaService) {
@@ -92,7 +95,8 @@ class APIGatewayServer {
                 path: req.path,
                 stage: 'local',
                 requestId: Math.random().toString(36).substring(7),
-                identity: { sourceIp: req.ip }
+                identity: { sourceIp: req.ip },
+                authorizer: req.cognitoAuthorizer || null
               }
             };
 
@@ -107,9 +111,68 @@ class APIGatewayServer {
             logger.error(`Lambda invoke error (${lambdaName}):`, err);
             res.status(500).json({ error: err.message });
           }
-        });
+        };
+
+        const middlewares = [];
+        if (authorizerRequired && cognitoAuthorizer) {
+          middlewares.push(cognitoAuthorizer);
+        }
+        middlewares.push(handler);
+
+        const ANY_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'];
+        if (httpMethod === 'any') {
+          for (const m of ANY_METHODS) {
+            this.app[m](expressPath, ...middlewares);
+          }
+        } else {
+          this.app[httpMethod](expressPath, ...middlewares);
+        }
       }
     }
+  }
+
+  _buildCognitoAuthorizer(authorizerConfig) {
+    if (!authorizerConfig) return null;
+    if (authorizerConfig.type !== 'COGNITO_USER_POOLS') return null;
+
+    const { userPoolId } = authorizerConfig;
+
+    return (req, res, next) => {
+      const authHeader = req.headers['authorization'] || req.headers['Authorization'];
+      if (!authHeader) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+
+      const cognitoSimulator = this.cognitoService?.simulator;
+      if (!cognitoSimulator) {
+        logger.warn('⚠️ Cognito authorizer configured but Cognito service is not available');
+        return res.status(500).json({ message: 'Authorizer unavailable' });
+      }
+
+      // Validate the token belongs to the configured user pool
+      const decoded = cognitoSimulator.verifyAccessToken(token);
+      if (!decoded) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      // If a specific userPoolId is required, verify it matches
+      if (userPoolId && decoded['cognito:username'] !== undefined) {
+        const session = cognitoSimulator.accessTokens.get(token);
+        if (session && userPoolId && session.UserPoolId !== userPoolId) {
+          return res.status(401).json({ message: 'Unauthorized' });
+        }
+      }
+
+      // Attach claims to request so Lambda receives them in requestContext.authorizer
+      req.cognitoAuthorizer = {
+        claims: decoded,
+        principalId: decoded.sub
+      };
+
+      next();
+    };
   }
 
   setupRoutes() {

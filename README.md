@@ -491,6 +491,50 @@ Lambdas são registradas por **nome** e invocadas via API de invocação (igual 
 }
 ```
 
+## ⚙️ Configuração SQS com Lambda Trigger
+
+Para disparar uma Lambda automaticamente quando uma mensagem chega na fila, use o formato de objeto na lista de filas com `lambdaName`:
+
+```json
+{
+  "lambdas": [
+    {
+      "name": "process-orders",
+      "handler": "./src/handlers/process-orders.js"
+    }
+  ],
+  "sqs": {
+    "queues": [
+      "simple-queue",
+      {
+        "name": "orders-queue",
+        "lambdaName": "process-orders",
+        "batchSize": 5
+      }
+    ]
+  }
+}
+```
+
+- Filas simples (string) são criadas sem trigger
+- Filas com objeto aceitam `lambdaName` (nome da Lambda registrada) e `batchSize` (padrão: 10)
+- Quando uma mensagem é enviada para `orders-queue`, a Lambda `process-orders` é invocada automaticamente com o evento no formato SQS padrão da AWS
+
+O handler recebe o evento no formato padrão AWS SQS:
+
+```javascript
+exports.handler = async (event) => {
+  for (const record of event.Records) {
+    const body = JSON.parse(record.body);
+    console.log('Mensagem recebida:', body);
+    // processar...
+  }
+
+  // Retornar batchItemFailures para reprocessar mensagens específicas
+  return { batchItemFailures: [] };
+};
+```
+
 ## ⚙️ Configuração API GATEWAY
 
 O valor do **lambdaName** deve igual ao nome Lambda que está registrada com o valor **name**. Ex: "my-user-function".
@@ -526,13 +570,164 @@ O valor do **lambdaName** deve igual ao nome Lambda que está registrada com o v
             "method": "DELETE",
             "lambdaName": "my-user-function",
             "integrationType": "lambda"
+          },
+          {
+            "path": "/user/{id}",
+            "method": "ANY",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda"
           }
         ]
       }
     ]
-  },
-
+  }
 }
+```
+
+### Método ANY
+
+Use `"method": "ANY"` para registrar um endpoint que aceita todos os verbos HTTP (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) — equivalente ao `ANY` do AWS API Gateway real.
+
+```json
+{
+  "path": "/webhook",
+  "method": "ANY",
+  "lambdaName": "my-webhook-handler",
+  "integrationType": "lambda"
+}
+```
+
+### API Key
+
+O API Gateway suporta validação de API Key via header `x-api-key`. Para proteger um endpoint, declare as `apiKeys` na configuração e use `"apiKeyRequired": true` no endpoint:
+
+```json
+{
+  "apigateway": {
+    "apiKeys": [
+      {
+        "name": "my-app-key",
+        "value": "minha-chave-secreta-123"
+      }
+    ],
+    "apis": [
+      {
+        "name": "Protected API",
+        "endpoints": [
+          {
+            "path": "/protected",
+            "method": "GET",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda",
+            "apiKeyRequired": true
+          },
+          {
+            "path": "/public",
+            "method": "GET",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Ao chamar um endpoint protegido, envie o header:
+
+```bash
+curl http://localhost:4567/protected \
+  -H "x-api-key: minha-chave-secreta-123"
+
+# Sem a key → 403 Forbidden
+curl http://localhost:4567/protected
+```
+
+> **Nota:** A validação de API Key só está ativa no fluxo de proxy (`/:apiId/:stageName/*`). Endpoints declarados diretamente no `aws-local-simulator.json` via `setupConfigRoutes` não aplicam a validação de API Key no momento.
+
+### Cognito Authorizer
+
+O API Gateway suporta autenticação via Cognito User Pools. Configure um `authorizer` na API e marque os endpoints protegidos com `"authorizerRequired": true`:
+
+```json
+{
+  "cognito": {
+    "userPools": [
+      {
+        "PoolName": "my-user-pool",
+        "UserPoolId": "us-east-XXXXX",
+        "ClientId": "XXXXXX",
+        "AutoVerifiedAttributes": ["email"]
+      }
+    ]
+  },
+  "apigateway": {
+    "apis": [
+      {
+        "name": "My API",
+        "authorizer": {
+          "type": "COGNITO_USER_POOLS",
+          "userPoolId": "us-east-XXXXX"
+        },
+        "endpoints": [
+          {
+            "path": "/profile",
+            "method": "GET",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda",
+            "authorizerRequired": true
+          },
+          {
+            "path": "/public",
+            "method": "GET",
+            "lambdaName": "my-user-function",
+            "integrationType": "lambda"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+O simulador valida o JWT do Cognito local no header `Authorization: Bearer <token>`. Se o token for inválido ou ausente, retorna `401 Unauthorized`.
+
+```bash
+# 1. Autenticar e obter o token
+TOKEN=$(curl -s -X POST http://localhost:9229/ \
+  -H "Content-Type: application/x-amz-json-1.1" \
+  -H "X-Amz-Target: AWSCognitoIdentityProviderService.InitiateAuth" \
+  -d '{
+    "AuthFlow": "USER_PASSWORD_AUTH",
+    "ClientId": "XXXXXX",
+    "AuthParameters": {
+      "USERNAME": "usuario@email.com",
+      "PASSWORD": "Senha@123"
+    }
+  }' | jq -r '.AuthenticationResult.IdToken')
+
+# 2. Chamar endpoint protegido com o token
+curl http://localhost:4567/profile \
+  -H "Authorization: Bearer $TOKEN"
+
+# Sem token → 401 Unauthorized
+curl http://localhost:4567/profile
+```
+
+O token decodificado fica disponível no Lambda em `event.requestContext.authorizer.claims`:
+
+```javascript
+exports.handler = async (event) => {
+  const claims = event.requestContext.authorizer?.claims;
+  const userId = claims?.sub;
+  const email = claims?.email;
+
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ userId, email })
+  };
+};
 ```
 
 O handler deve exportar uma função padrão:

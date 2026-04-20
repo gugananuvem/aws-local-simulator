@@ -15,6 +15,7 @@ class APIGatewayService {
     this.simulator = null;
     this.isRunning = false;
     this.lambdaService = dependencies.lambda || null;
+    this.cognitoService = dependencies.cognito || null;
   }
 
   async initialize() {
@@ -27,6 +28,7 @@ class APIGatewayService {
     this.server = new APIGatewayServer(this.port, this.config);
     this.server.simulator = this.simulator;
     this.server.lambdaService = this.lambdaService;
+    this.server.cognitoService = this.cognitoService;
     
     await this.server.initialize();
     
