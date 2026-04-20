@@ -233,6 +233,46 @@ aws lambda invoke \
 # Cognito
 aws cognito-idp list-user-pools --max-results 10 --endpoint-url http://localhost:9229
 
+# Cognito cadastrar um usuario pelo adminstrador
+aws cognito-idp admin-create-user \
+  --user-pool-id us-east-xxxx\
+  --username usuario@email.com \
+  --user-attributes \
+    Name=email,Value=usuario@email.com \
+    Name=email_verified,Value=false \
+    Name=name,Value="nome usuario" \
+    Name=custom:role,Value="user" \
+    temporary-password "Teste@123456" \
+  --message-action SUPPRESS \
+  --endpoint-url http://localhost:9229
+
+# Cognito excluir um usuario
+aws cognito-idp admin-delete-user \
+  --user-pool-id us-east-xxxx \
+  --username usuario@email.com
+  --endpoint-url http://localhost:9229
+
+# Cognito Registrar usuário
+aws cognito-idp sign-up \
+  --client-id $CLIENT_ID \
+  --username usuario@email.com \
+  --password "Teste@123456" \
+  --user-attributes Name=email,Value=usuario@email.com Name=name,Value="nome usuario"
+  --endpoint-url http://localhost:9229
+
+# 2. Confirmar usuário administrativamente
+aws cognito-idp admin-confirm-sign-up \
+  --user-pool-id us-east-xxxx \
+  --username usuario@email.com
+  --endpoint-url http://localhost:9229
+
+# O código chega no e-mail do usuário. Algo como: "Your confirmation code is 123456"
+aws cognito-idp confirm-sign-up \
+  --client-id 3n4b5urk1ft4fl3mg5e62d9ado \
+  --username usuario@email.com \
+  --confirmation-code 123456
+  --endpoint-url http://localhost:9229
+  
 # STS
 aws sts get-caller-identity --endpoint-url http://localhost:9326
 aws sts assume-role \

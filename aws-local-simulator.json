@@ -96,7 +96,8 @@
         "UserPoolId": "us-east-1_eKqARaG2Q",
         "ClientId": "fn2acoiuo7hj0fotrbrgaash5",
         "LambdaTriggers": {
-          "PreAuthentication": "pre-autentication-api"
+          "PreAuthentication": "pre-autentication-api",
+          "PostConfirmation": "post-autentication-api"
         }        
       }
     ]
@@ -139,6 +140,10 @@
     {
       "name": "pre-autentication-api",
       "handler": "./handlers/pre-autentication.js"
+    },
+    {
+      "name": "post-autentication-api",
+      "handler": "./handlers/post-autentication.js"
     }
   ]
 }

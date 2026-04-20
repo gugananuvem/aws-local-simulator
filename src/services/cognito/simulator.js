@@ -270,15 +270,54 @@ class CognitoSimulator {
     const { ClientId, Username } = params;
     const userPool = this.findUserPoolByClientId(ClientId);
     if (!userPool) throw new Error(`Client ${ClientId} not found`);
-    return { CodeDeliveryDetails: { Destination: "test@example.com", DeliveryMedium: "EMAIL", AttributeName: "email" } };
+
+    const user = this.findUserByUsername(Username, ClientId);
+    if (!user) throw new Error(`User not found: ${Username}`);
+
+    if (user.UserStatus !== "CONFIRMED") {
+      const err = new Error("Cannot reset password for the user as there is no registered/verified email or phone_number");
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    user.PasswordResetCode = resetCode;
+    this.persistUsers();
+
+    const userEmail = user.Attributes.email || Username;
+    logger.info(`📧 [COGNITO] Código de redefinição de senha para "${Username}": ${resetCode}`);
+
+    return {
+      CodeDeliveryDetails: {
+        Destination: userEmail,
+        DeliveryMedium: "EMAIL",
+        AttributeName: "email",
+      },
+    };
   }
 
   confirmForgotPassword(params = {}) {
     const { ClientId, Username, ConfirmationCode, Password } = params;
+    const userPool = this.findUserPoolByClientId(ClientId);
+    if (!userPool) throw new Error(`Client ${ClientId} not found`);
+
     const user = this.findUserByUsername(Username, ClientId);
     if (!user) throw new Error(`User not found: ${Username}`);
+
+    if (user.UserStatus !== "CONFIRMED") {
+      const err = new Error("Cannot reset password for the user as there is no registered/verified email or phone_number");
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    if (user.PasswordResetCode && user.PasswordResetCode !== ConfirmationCode) {
+      const err = new Error("Invalid verification code provided, please try again.");
+      err.code = "CodeMismatchException";
+      throw err;
+    }
+
     user.Password = this.hashPassword(Password);
-    user.UserStatus = "CONFIRMED";
+    delete user.PasswordResetCode;
     this.persistUsers();
     return {};
   }
@@ -312,6 +351,14 @@ class CognitoSimulator {
       const userPool = this.userPools.get(session.userPoolId);
       if (!user || !userPool) throw new Error("Invalid session");
 
+      // 1. PreAuthentication — dispara antes de processar a nova senha
+      const preAuthEvent = this._buildTriggerEvent("PreAuthentication_Authentication", userPool, user, session.clientId, {
+        userAttributes: this._triggerUserAttributes(user),
+        validationData: {},
+      });
+      await this._invokeTrigger(userPool, "PreAuthentication", preAuthEvent);
+
+      // 2. Aplica nova senha e confirma usuário
       user.Password = this.hashPassword(newPassword);
       user.UserStatus = "CONFIRMED";
       user.LastModifiedDate = new Date().toISOString();
@@ -320,13 +367,25 @@ class CognitoSimulator {
 
       logger.debug(`🔑 Senha alterada e usuário confirmado: ${user.Username}`);
 
+      // 3. PostConfirmation — dispara após confirmação do usuário (troca de senha forçada)
+      const postConfirmEvent = this._buildTriggerEvent("PostConfirmation_ConfirmSignUp", userPool, user, session.clientId, {
+        userAttributes: this._triggerUserAttributes(user),
+      });
+      try {
+        await this._invokeTrigger(userPool, "PostConfirmation", postConfirmEvent);
+      } catch (err) {
+        logger.error(`PostConfirmation trigger error (ignored): ${err.message}`);
+      }
+
+      // 4. PreTokenGeneration — antes de gerar tokens
       const preTokenEvent = this._buildTriggerEvent("TokenGeneration_Authentication", userPool, user, session.clientId, {
         userAttributes: this._triggerUserAttributes(user),
-        groupConfiguration: {},
+        groupConfiguration: { groupsToOverride: [], iamRolesToOverride: [], preferredRole: null },
       });
       const preTokenResponse = await this._invokeTrigger(userPool, "PreTokenGeneration", preTokenEvent);
       const claimsOverride = preTokenResponse?.response?.claimsOverrideDetails || null;
 
+      // 5. Gera tokens
       const accessToken = this.generateAccessToken(user, userPool, session.clientId);
       const idToken = this.generateIdToken(user, userPool, session.clientId, claimsOverride);
       const refreshToken = this.generateRefreshToken(user, userPool, session.clientId);
@@ -347,6 +406,17 @@ class CognitoSimulator {
       this.accessTokens.set(accessToken, authSession);
       this.refreshTokens.set(refreshToken, authSession);
       this.persistSessions();
+
+      // 6. PostAuthentication — após auth bem-sucedida (non-blocking)
+      const postAuthEvent = this._buildTriggerEvent("PostAuthentication_Authentication", userPool, user, session.clientId, {
+        userAttributes: this._triggerUserAttributes(user),
+        newDeviceUsed: false,
+      });
+      try {
+        await this._invokeTrigger(userPool, "PostAuthentication", postAuthEvent);
+      } catch (err) {
+        logger.error(`PostAuthentication trigger error (ignored): ${err.message}`);
+      }
 
       return {
         AuthenticationResult: {
@@ -390,9 +460,17 @@ class CognitoSimulator {
       const defineResponse = await this._invokeTrigger(userPool, "DefineAuthChallenge", defineEvent);
 
       if (defineResponse?.response?.issueTokens === true) {
-        // Generate tokens and clean up session
+        // 1. PreTokenGeneration antes de gerar tokens
+        const preTokenEvent = this._buildTriggerEvent("TokenGeneration_Authentication", userPool, user, session.clientId, {
+          userAttributes: this._triggerUserAttributes(user),
+          groupConfiguration: { groupsToOverride: [], iamRolesToOverride: [], preferredRole: null },
+        });
+        const preTokenResponse = await this._invokeTrigger(userPool, "PreTokenGeneration", preTokenEvent);
+        const claimsOverride = preTokenResponse?.response?.claimsOverrideDetails || null;
+
+        // 2. Gera tokens
         const accessToken = this.generateAccessToken(user, userPool, session.clientId);
-        const idToken = this.generateIdToken(user, userPool, session.clientId);
+        const idToken = this.generateIdToken(user, userPool, session.clientId, claimsOverride);
         const refreshToken = this.generateRefreshToken(user, userPool, session.clientId);
 
         const sessionId = uuidv4();
@@ -414,6 +492,17 @@ class CognitoSimulator {
         this.persistSessions();
 
         this.customAuthSessions.delete(params.Session);
+
+        // 3. PostAuthentication (non-blocking)
+        const postAuthEvent = this._buildTriggerEvent("PostAuthentication_Authentication", userPool, user, session.clientId, {
+          userAttributes: this._triggerUserAttributes(user),
+          newDeviceUsed: false,
+        });
+        try {
+          await this._invokeTrigger(userPool, "PostAuthentication", postAuthEvent);
+        } catch (err) {
+          logger.error(`PostAuthentication trigger error (ignored): ${err.message}`);
+        }
 
         return {
           AuthenticationResult: {
@@ -640,16 +729,19 @@ class CognitoSimulator {
     }
 
     const userId = uuidv4();
+    const confirmationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
     const user = {
       Username: Username,
       UserPoolId: userPool.Id,
       UserId: userId,
       Attributes: this.normalizeUserAttributes(UserAttributes || []),
       Enabled: true,
-      UserStatus: "CONFIRMED", // Por padrão, confirma imediatamente (para teste)
+      UserStatus: "UNCONFIRMED",
       CreatedDate: new Date().toISOString(),
       LastModifiedDate: new Date().toISOString(),
       Password: this.hashPassword(Password),
+      ConfirmationCode: confirmationCode,
       MfaOptions: [],
       PreferredMfaSetting: null,
       UserMFASettingList: [],
@@ -666,6 +758,7 @@ class CognitoSimulator {
     if (triggerResponse !== null) {
       if (triggerResponse.response?.autoConfirmUser === true) {
         user.UserStatus = "CONFIRMED";
+        delete user.ConfirmationCode;
       }
       if (triggerResponse.response?.autoVerifyEmail === true) {
         user.Attributes.email_verified = "true";
@@ -678,7 +771,13 @@ class CognitoSimulator {
     this.persistUsers();
     this.persistUserPools();
 
-    logger.debug(`✅ Usuário criado: ${Username} (${userId})`);
+    const userEmail = user.Attributes.email || Username;
+
+    if (user.UserStatus === "UNCONFIRMED") {
+      logger.info(`📧 [COGNITO] Código de confirmação para "${Username}": ${confirmationCode}`);
+    }
+
+    logger.debug(`✅ Usuário criado: ${Username} (${userId}) — status: ${user.UserStatus}`);
 
     // PostConfirmation — dispara se usuário foi auto-confirmado pelo PreSignUp
     if (user.UserStatus === "CONFIRMED") {
@@ -695,7 +794,9 @@ class CognitoSimulator {
     return {
       UserConfirmed: user.UserStatus === "CONFIRMED",
       UserSub: userId,
-      CodeDeliveryDetails: null,
+      CodeDeliveryDetails: user.UserStatus === "UNCONFIRMED"
+        ? { Destination: userEmail, DeliveryMedium: "EMAIL", AttributeName: "email" }
+        : null,
     };
   }
 
@@ -712,8 +813,13 @@ class CognitoSimulator {
       throw new Error(`User not found: ${Username}`);
     }
 
+    if (user.ConfirmationCode && user.ConfirmationCode !== ConfirmationCode) {
+      throw new Error("Invalid verification code provided, please try again.");
+    }
+
     user.UserStatus = "CONFIRMED";
     user.LastModifiedDate = new Date().toISOString();
+    delete user.ConfirmationCode;
     this.persistUsers();
 
     const event = this._buildTriggerEvent("PostConfirmation_ConfirmSignUp", userPool, user, ClientId, {
@@ -825,7 +931,13 @@ class CognitoSimulator {
     }
 
     if (user.UserStatus !== "CONFIRMED") {
-      throw new Error(`User not confirmed: ${username}`);
+      // Valida senha antes de revelar o status — igual ao Cognito real
+      if (!this.verifyPassword(password, user.Password)) {
+        throw new Error("Incorrect username or password");
+      }
+      const err = new Error("User is not confirmed.");
+      err.code = "UserNotConfirmedException";
+      throw err;
     }
 
     // 1. PreAuthentication — dispara antes de validar senha
