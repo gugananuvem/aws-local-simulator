@@ -29,26 +29,24 @@ class DynamoDBSimulator {
   }
 
   loadTables() {
-    // Carrega tabelas da configuração
+    // Carrega tabelas existentes do disco PRIMEIRO para evitar sobrescrever definições persistidas
+    const savedTables = this.store.read("__tables__");
+    if (savedTables) {
+      for (const [name, definition] of Object.entries(savedTables)) {
+        this.tables.set(name, definition);
+      }
+    }
+
+    // Cria tabelas da configuração apenas se ainda não existirem no disco
     if (this.config.dynamodb?.tables) {
       for (const tableDef of this.config.dynamodb.tables) {
         this.createTable(tableDef);
       }
     }
-
-    // Carrega tabelas existentes do disco
-    const savedTables = this.store.read("__tables__");
-    if (savedTables) {
-      for (const [name, definition] of Object.entries(savedTables)) {
-        if (!this.tables.has(name)) {
-          this.tables.set(name, definition);
-        }
-      }
-    }
   }
 
   createTable(params) {
-    const { TableName, KeySchema, AttributeDefinitions, ProvisionedThroughput } = params;
+    const { TableName, KeySchema, AttributeDefinitions, ProvisionedThroughput, GlobalSecondaryIndexes } = params;
 
     if (this.tables.has(TableName)) {
       logger.warn(`Tabela ${TableName} já existe`);
@@ -63,11 +61,21 @@ class DynamoDBSimulator {
       attributeTypes[attr.AttributeName] = attr.AttributeType;
     });
 
+    const globalSecondaryIndexes = {};
+    if (GlobalSecondaryIndexes) {
+      for (const gsi of GlobalSecondaryIndexes) {
+        const gsiHashKey = gsi.KeySchema.find((k) => k.KeyType === "HASH").AttributeName;
+        const gsiRangeKey = gsi.KeySchema.find((k) => k.KeyType === "RANGE")?.AttributeName;
+        globalSecondaryIndexes[gsi.IndexName] = { hashKey: gsiHashKey, rangeKey: gsiRangeKey };
+      }
+    }
+
     const table = {
       name: TableName,
       hashKey,
       rangeKey,
       attributeTypes,
+      globalSecondaryIndexes,
       createdAt: new Date().toISOString(),
       itemCount: 0,
       sizeBytes: 0,
@@ -424,8 +432,24 @@ class DynamoDBSimulator {
 
     let items = this.store.read(TableName);
 
+    // Resolve hash key e range key: usa GSI se IndexName estiver presente, caso contrário usa a tabela principal
+    let hashKey;
+    let rangeKey;
+
+    if (IndexName != null) {
+      const gsiDefs = table.globalSecondaryIndexes || {};
+      const gsi = gsiDefs[IndexName];
+      if (!gsi) {
+        throw new Error(`GSI "${IndexName}" not found on table "${TableName}"`);
+      }
+      hashKey = gsi.hashKey;
+      rangeKey = gsi.rangeKey;
+    } else {
+      hashKey = table.hashKey;
+      rangeKey = table.rangeKey;
+    }
+
     // Filtra pela chave de partição
-    const hashKey = table.hashKey;
     const hashValueMatch = KeyConditionExpression.match(new RegExp(`${hashKey}\\s*=\\s*([^\\s]+)`));
 
     if (hashValueMatch) {
@@ -436,8 +460,7 @@ class DynamoDBSimulator {
     }
 
     // Filtra pela chave de ordenação se existir
-    if (table.rangeKey) {
-      const rangeKey = table.rangeKey;
+    if (rangeKey) {
       const rangeConditionMatch = KeyConditionExpression.match(new RegExp(`${rangeKey}\\s*(=|>|<|>=|<=)\\s*([^\\s]+)`));
 
       if (rangeConditionMatch) {

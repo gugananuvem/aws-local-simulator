@@ -31,7 +31,7 @@ class LocalStore {
     if (!fs.existsSync(filePath)) return [];
     
     try {
-      const content = fs.readFileSync(filePath, 'utf8');
+      const content = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
       return JSON.parse(content);
     } catch (error) {
       console.error(`Erro ao ler ${entity}:`, error);
