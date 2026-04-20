@@ -3,6 +3,7 @@
  */
 
 const express = require('express');
+const cors = require('cors');
 const logger = require('../../utils/logger');
 
 class ECSServer {
@@ -16,6 +17,7 @@ class ECSServer {
   }
 
   setupMiddlewares() {
+    this.app.use(cors());
     this.app.use(express.json());
     
     if (logger.currentLogLevel === 'verboso') {

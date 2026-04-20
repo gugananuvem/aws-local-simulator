@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const crypto = require('crypto');
 const STSSimulator = require('./simulator');
 const logger = require('../../utils/logger');
@@ -14,6 +15,7 @@ class STSServer {
   }
 
   setupMiddlewares() {
+    this.app.use(cors());
     this.app.use(express.raw({ type: '*/*', limit: '10mb' }));
     this.app.use((req, res, next) => {
       if (req.body && Buffer.isBuffer(req.body)) {

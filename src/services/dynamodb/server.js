@@ -3,6 +3,7 @@
  */
 
 const express = require('express');
+const cors = require('cors');
 const DynamoDBSimulator = require('./simulator');
 const logger = require('../../utils/logger');
 
@@ -17,6 +18,7 @@ class DynamoDBServer {
   }
 
   setupMiddlewares() {
+    this.app.use(cors());
     this.app.use(express.json({
       type: 'application/x-amz-json-1.0'
     }));

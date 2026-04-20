@@ -3,6 +3,7 @@
  */
 
 const express = require('express');
+const cors = require('cors');
 const S3Simulator = require('./simulator');
 const logger = require('../../utils/logger');
 
@@ -17,6 +18,7 @@ class S3Server {
   }
 
   setupMiddlewares() {
+    this.app.use(cors());
     // Captura raw body como Buffer para qualquer content-type
     this.app.use(express.raw({ type: () => true, limit: '100mb' }));
     this.app.use(express.text({ limit: '100mb' }));

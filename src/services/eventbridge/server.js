@@ -18,8 +18,8 @@ const cors = require('cors');
 function createEventBridgeServer(simulator, config, logger) {
   const app = express();
 
-  if (config.cors?.enabled) {
-    app.use(cors({ origin: config.cors.origin || '*' }));
+  if (config.cors?.enabled !== false) {
+    app.use(cors({ origin: config.cors?.origin || '*' }));
   }
 
   app.use(express.json({ limit: '10mb' }));

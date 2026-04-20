@@ -3,6 +3,7 @@
  */
 
 const express = require('express');
+const cors = require('cors');
 const logger = require('../../utils/logger');
 
 class CognitoServer {
@@ -16,6 +17,7 @@ class CognitoServer {
   }
 
   setupMiddlewares() {
+    this.app.use(cors());
     this.app.use(express.raw({ type: '*/*', limit: '10mb' }));
     this.app.use((req, res, next) => {
       if (req.body && Buffer.isBuffer(req.body)) {

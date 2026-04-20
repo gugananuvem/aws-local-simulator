@@ -93,8 +93,11 @@
       {
         "PoolName": "my-user-pool",
         "AutoVerifiedAttributes": ["email"],
-        "UserPoolId": "local_my-user-pool_1775267443311",
-        "ClientId": "dea9b7903393ed6dcf5006f2a31658e93d65b3db"
+        "UserPoolId": "us-east-1_eKqARaG2Q",
+        "ClientId": "fn2acoiuo7hj0fotrbrgaash5",
+        "LambdaTriggers": {
+          "PreAuthentication": "pre-autentication-api"
+        }        
       }
     ]
   },
@@ -134,12 +137,8 @@
   },
   "lambdas": [
     {
-      "name": "users-api",
-      "handler": "./handlers/usersX.js",
-      "runtime": "nodejs18.x",
-      "env": {
-        "TABLE_NAME": "users-table"
-      }
+      "name": "pre-autentication-api",
+      "handler": "./handlers/pre-autentication.js"
     }
   ]
 }
