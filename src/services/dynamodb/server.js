@@ -20,7 +20,10 @@ class DynamoDBServer {
   setupMiddlewares() {
     this.app.use(cors());
     this.app.use(express.json({
-      type: 'application/x-amz-json-1.0'
+      type: (req) => {
+        const ct = req.headers['content-type'] || '';
+        return ct.includes('application/x-amz-json-1.0') || ct.includes('application/json');
+      }
     }));
     
     // Logging de requisições
@@ -52,6 +55,8 @@ class DynamoDBServer {
       if (!target) {
         return res.status(400).json({ message: 'Missing X-Amz-Target header' });
       }
+
+      logger.debug(`DynamoDB target=${target} content-type=${req.headers['content-type']} body=${JSON.stringify(req.body)}`);
 
       try {
         const result = await this.simulator.handleRequest(target, req.body);

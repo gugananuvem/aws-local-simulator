@@ -368,6 +368,11 @@ class DynamoDBSimulator {
     const { RequestItems } = params;
     const responses = {};
 
+    if (!RequestItems) {
+      logger.debug(`[DEBUG batchWriteItem] params recebido: ${JSON.stringify(params)}`);
+      throw new Error(`RequestItems is required for BatchWriteItem. Params received: ${JSON.stringify(params)}`);
+    }
+
     for (const [tableName, operations] of Object.entries(RequestItems)) {
       const table = this.tables.get(tableName);
       if (!table) continue;
