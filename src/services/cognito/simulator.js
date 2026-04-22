@@ -223,7 +223,7 @@ class CognitoSimulator {
         Enabled: u.Enabled,
         UserCreateDate: u.CreatedDate,
         UserLastModifiedDate: u.LastModifiedDate,
-        Attributes: this.formatUserAttributes(u.Attributes),
+        Attributes: this._formatUserAttributesWithSub(u),
       })),
       PaginationToken: nextToken,
     };
@@ -570,9 +570,10 @@ class CognitoSimulator {
     if (!this.sessions.has(session.Id)) throw new Error("Token has been revoked");
     const user = this.users.get(session.UserId);
     if (!user) throw new Error("User not found");
+    const attributes = this._formatUserAttributesWithSub(user);
     return {
       Username: user.Username,
-      UserAttributes: this.formatUserAttributes(user.Attributes),
+      UserAttributes: attributes,
       UserStatus: user.UserStatus,
     };
   }
@@ -1155,7 +1156,7 @@ class CognitoSimulator {
 
     return {
       Username: user.Username,
-      UserAttributes: this.formatUserAttributes(user.Attributes),
+      UserAttributes: this._formatUserAttributesWithSub(user),
       UserCreateDate: user.CreatedDate,
       UserLastModifiedDate: user.LastModifiedDate,
       Enabled: user.Enabled,
@@ -1214,7 +1215,7 @@ class CognitoSimulator {
     return {
       User: {
         Username: user.Username,
-        UserAttributes: this.formatUserAttributes(user.Attributes),
+        UserAttributes: this._formatUserAttributesWithSub(user),
         UserCreateDate: user.CreatedDate,
         UserLastModifiedDate: user.LastModifiedDate,
         Enabled: user.Enabled,
@@ -1319,6 +1320,14 @@ class CognitoSimulator {
 
   formatUserAttributes(attributes) {
     return Object.entries(attributes).map(([Name, Value]) => ({ Name, Value }));
+  }
+
+  _formatUserAttributesWithSub(user) {
+    const attrs = this.formatUserAttributes(user.Attributes);
+    if (!attrs.find(a => a.Name === 'sub')) {
+      attrs.unshift({ Name: 'sub', Value: user.UserId });
+    }
+    return attrs;
   }
 
   hashPassword(password) {
