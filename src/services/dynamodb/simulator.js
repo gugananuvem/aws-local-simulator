@@ -37,11 +37,38 @@ class DynamoDBSimulator {
       }
     }
 
-    // Cria tabelas da configuração apenas se ainda não existirem no disco
+    // Cria tabelas da configuração ou atualiza schema (GSIs/attributeTypes) se já existirem
     if (this.config.dynamodb?.tables) {
       for (const tableDef of this.config.dynamodb.tables) {
-        this.createTable(tableDef);
+        const { TableName, AttributeDefinitions, GlobalSecondaryIndexes } = tableDef;
+        if (this.tables.has(TableName)) {
+          // Tabela já existe no disco — atualiza schema sem apagar dados
+          const existing = this.tables.get(TableName);
+
+          if (AttributeDefinitions) {
+            const attributeTypes = {};
+            AttributeDefinitions.forEach((attr) => {
+              attributeTypes[attr.AttributeName] = attr.AttributeType;
+            });
+            existing.attributeTypes = attributeTypes;
+          }
+
+          if (GlobalSecondaryIndexes) {
+            const globalSecondaryIndexes = {};
+            for (const gsi of GlobalSecondaryIndexes) {
+              const gsiHashKey = gsi.KeySchema.find((k) => k.KeyType === "HASH").AttributeName;
+              const gsiRangeKey = gsi.KeySchema.find((k) => k.KeyType === "RANGE")?.AttributeName;
+              globalSecondaryIndexes[gsi.IndexName] = { hashKey: gsiHashKey, rangeKey: gsiRangeKey };
+            }
+            existing.globalSecondaryIndexes = globalSecondaryIndexes;
+          }
+
+          this.tables.set(TableName, existing);
+        } else {
+          this.createTable(tableDef);
+        }
       }
+      this.persistTables();
     }
   }
 
