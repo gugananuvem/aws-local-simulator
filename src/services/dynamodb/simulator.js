@@ -550,18 +550,38 @@ class DynamoDBSimulator {
   normalizeItem(item, table) {
     const normalized = { ...item };
 
-    // Remove os tipos do DynamoDB (S, N, etc)
     for (const [key, value] of Object.entries(normalized)) {
-      if (value && typeof value === "object") {
-        if (value.S !== undefined) normalized[key] = value.S;
-        else if (value.N !== undefined) normalized[key] = parseFloat(value.N);
-        else if (value.BOOL !== undefined) normalized[key] = value.BOOL;
-        else if (value.L !== undefined) normalized[key] = value.L.map((v) => this.normalizeItem(v, table));
-        else if (value.M !== undefined) normalized[key] = this.normalizeItem(value.M, table);
-      }
+      normalized[key] = this.normalizeValue(value, table);
     }
 
     return normalized;
+  }
+
+  normalizeValue(value, table) {
+    if (value === null || value === undefined) return value;
+    if (typeof value !== 'object') return value;
+
+    if (value.S !== undefined) return value.S;
+    if (value.N !== undefined) return parseFloat(value.N);
+    if (value.BOOL !== undefined) return value.BOOL;
+    if (value.NULL !== undefined) return null;
+    if (value.L !== undefined) return value.L.map((v) => this.normalizeValue(v, table));
+    if (value.M !== undefined) return this.normalizeItem(value.M, table);
+    if (value.SS !== undefined) return value.SS;
+    if (value.NS !== undefined) return value.NS.map(Number);
+
+    // plain object (already normalized, e.g. stored without DynamoDB types)
+    return value;
+  }
+
+  marshallValue(value, table) {
+    if (value === null || value === undefined) return { NULL: true };
+    if (typeof value === 'boolean') return { BOOL: value };
+    if (typeof value === 'number') return { N: String(value) };
+    if (typeof value === 'string') return { S: value };
+    if (Array.isArray(value)) return { L: value.map((v) => this.marshallValue(v, table)) };
+    if (typeof value === 'object') return { M: this.marshallItem(value, table) };
+    return { S: String(value) };
   }
 
   marshallItem(item, table) {
@@ -570,19 +590,13 @@ class DynamoDBSimulator {
     for (const [key, value] of Object.entries(item)) {
       if (key.startsWith("_")) continue; // Pula campos internos
 
-      const type = table.attributeTypes[key];
+      const type = table ? table.attributeTypes[key] : null;
       if (type === "S") {
         marshalled[key] = { S: String(value) };
       } else if (type === "N") {
         marshalled[key] = { N: String(value) };
-      } else if (type === "BOOL") {
-        marshalled[key] = { BOOL: Boolean(value) };
-      } else if (Array.isArray(value)) {
-        marshalled[key] = { L: value.map((v) => ({ S: String(v) })) };
-      } else if (typeof value === "object") {
-        marshalled[key] = { M: this.marshallItem(value, table) };
       } else {
-        marshalled[key] = { S: String(value) };
+        marshalled[key] = this.marshallValue(value, table);
       }
     }
 
