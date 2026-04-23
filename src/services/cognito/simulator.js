@@ -87,8 +87,33 @@ class CognitoSimulator {
     this.loadIdentityPools();
     this.loadUsers();
     this.loadSessions();
+    this._watchUsersFile();
 
     logger.debug(`✅ Cognito Simulator inicializado com ${this.userPools.size} user pools, ${this.identityPools.size} identity pools, ${this.users.size} usuários`);
+  }
+
+  _watchUsersFile() {
+    const fs = require("fs");
+    const usersFilePath = this.store.getFilePath("__users__");
+    if (!fs.existsSync(usersFilePath)) return;
+
+    let reloadTimeout = null;
+    fs.watch(usersFilePath, (eventType) => {
+      if (eventType !== "change") return;
+      // Debounce para evitar múltiplos reloads em edições rápidas
+      clearTimeout(reloadTimeout);
+      reloadTimeout = setTimeout(() => {
+        try {
+          this.users.clear();
+          this.loadUsers();
+          logger.info(`🔄 Cognito users recarregados do disco (${this.users.size} usuários)`);
+        } catch (err) {
+          logger.warn(`⚠️ Erro ao recarregar users: ${err.message}`);
+        }
+      }, 200);
+    });
+
+    logger.debug(`👁️ Watching: ${usersFilePath}`);
   }
 
   // ============ User Pool Operations ============

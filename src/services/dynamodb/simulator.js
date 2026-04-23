@@ -25,7 +25,36 @@ class DynamoDBSimulator {
   async initialize() {
     logger.debug("Inicializando DynamoDB Simulator...");
     this.loadTables();
+    this._watchTablesFile();
     logger.debug(`✅ DynamoDB Simulator inicializado com ${this.tables.size} tabelas`);
+  }
+
+  _watchTablesFile() {
+    const fs = require("fs");
+    const tablesFilePath = this.store.getFilePath("__tables__");
+    if (!fs.existsSync(tablesFilePath)) return;
+
+    let reloadTimeout = null;
+    fs.watch(tablesFilePath, (eventType) => {
+      if (eventType !== "change") return;
+      clearTimeout(reloadTimeout);
+      reloadTimeout = setTimeout(() => {
+        try {
+          this.tables.clear();
+          const savedTables = this.store.read("__tables__");
+          if (savedTables) {
+            for (const [name, definition] of Object.entries(savedTables)) {
+              this.tables.set(name, definition);
+            }
+          }
+          logger.info(`🔄 DynamoDB schema recarregado (${this.tables.size} tabelas)`);
+        } catch (err) {
+          logger.warn(`⚠️ Erro ao recarregar schema: ${err.message}`);
+        }
+      }, 200);
+    });
+
+    logger.debug(`👁️ Watching: ${tablesFilePath}`);
   }
 
   loadTables() {
@@ -350,7 +379,11 @@ class DynamoDBSimulator {
         response.Attributes = this.marshallItem(oldItem, table);
         break;
       case "ALL_NEW":
+      case "UPDATED_NEW":
         response.Attributes = this.marshallItem(updatedItem, table);
+        break;
+      case "UPDATED_OLD":
+        response.Attributes = this.marshallItem(oldItem, table);
         break;
       default:
         break;
