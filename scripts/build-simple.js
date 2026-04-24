@@ -96,7 +96,7 @@ copyDir('bin', path.join(distDir, 'bin'));
 
 // Copia arquivos da raiz
 console.log('📄 Copiando arquivos da raiz...');
-const rootFiles = ['package.json', 'README.md', 'LICENSE'];
+const rootFiles = ['package.json', 'README.md', 'LICENSE','aws-config'];
 for (const file of rootFiles) {
     const srcPath = path.join(process.cwd(), file);
     const destPath = path.join(distDir, file);
@@ -141,7 +141,8 @@ pkg.files = [
     "src/",
     "bin/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "aws-config"
 ];
 
 fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));

@@ -1,6 +1,6 @@
 {
   "name": "@gugananuvem/aws-local-simulator",
-  "version": "1.0.23",
+  "version": "1.0.25",
   "description": "Simulador local completo para serviços AWS",
   "main": "src/index.js",
   "bin": {
@@ -87,11 +87,11 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "glob": "^10.3.0",
+    "glob": "10.5.0",
     "jsonwebtoken": "^9.0.2",
     "mkdirp": "^3.0.1",
     "urlpattern-polyfill": "^10.0.0",
-    "uuid": "^9.0.0"
+    "uuid": "14.0.0"
   },
   "devDependencies": {
     "eslint": "^8.44.0",
