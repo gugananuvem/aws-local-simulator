@@ -81,26 +81,38 @@ function createSNSServer(simulator, config, logger) {
   });
 
   app.get('/__admin/topics', (_req, res) => {
-    res.json({ topics: Array.from(simulator.topics.values()) });
+    res.json(Array.from(simulator.topics.values()));
   });
 
+  app.post('/__admin/topics', async (req, res) => {
+    try {
+      const topic = await simulator.createTopic({ Name: req.body.name });
+      res.status(201).json(topic);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+
   app.get('/__admin/subscriptions', (_req, res) => {
-    res.json({ subscriptions: Array.from(simulator.subscriptions.values()) });
+    res.json(Array.from(simulator.subscriptions.values()));
   });
 
   app.get('/__admin/subscriptions/:topicName', (req, res) => {
     const arn  = `arn:aws:sns:us-east-1:123456789012:${req.params.topicName}`;
     const subs = Array.from(simulator.subscriptions.values()).filter(s => s.TopicArn === arn);
-    res.json({ subscriptions: subs });
+    res.json(subs);
   });
 
+
   app.get('/__admin/publish-log', (_req, res) => {
-    res.json({ messages: simulator.publishLog });
+    res.json(simulator.publishLog);
   });
 
   app.get('/__admin/platform-apps', (_req, res) => {
-    res.json({ platformApplications: Array.from(simulator.platformApps.values()) });
+    res.json(Array.from(simulator.platformApps.values()));
   });
+
 
   app.delete('/__admin/topics/:topicName', async (req, res) => {
     try {
@@ -111,6 +123,21 @@ function createSNSServer(simulator, config, logger) {
       res.status(404).json({ error: err.message });
     }
   });
+
+  app.post('/__admin/topics/:topicName/publish', async (req, res) => {
+    try {
+      const arn = `arn:aws:sns:us-east-1:123456789012:${req.params.topicName}`;
+      const result = await simulator.publish({
+        TopicArn: arn,
+        Subject: req.body.subject,
+        Message: req.body.message
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
 
   app.post('/__admin/reset', async (_req, res) => {
     await simulator.reset();

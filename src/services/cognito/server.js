@@ -18,19 +18,10 @@ class CognitoServer {
 
   setupMiddlewares() {
     this.app.use(cors());
-    this.app.use(express.raw({ type: '*/*', limit: '10mb' }));
-    this.app.use((req, res, next) => {
-      if (req.body && Buffer.isBuffer(req.body)) {
-        try {
-          req.body = JSON.parse(req.body.toString('utf8'));
-        } catch (e) {
-          req.body = {};
-        }
-      } else if (!req.body) {
-        req.body = {};
-      }
-      next();
-    });
+    this.app.use(express.json({
+      limit: '10mb',
+      type: ['application/json', 'application/x-amz-json-1.1']
+    }));
     
     if (logger.currentLogLevel === 'verboso') {
       this.app.use((req, res, next) => {
@@ -73,7 +64,8 @@ class CognitoServer {
 
       try {
         const result = await this.handleRequest(target, req.body || {});
-        res.json(result);
+        res.setHeader('Content-Type', 'application/x-amz-json-1.1');
+        res.send(JSON.stringify(result));
       } catch (error) {
         logger.error('Cognito Error:', error.message);
         res.status(400).json({
@@ -108,6 +100,8 @@ class CognitoServer {
         return this.simulator.describeUserPool(params);
       case 'DeleteUserPool':
         return this.simulator.deleteUserPool(params);
+      case 'UpdateUserPool':
+        return this.simulator.updateUserPool(params);
       
       case 'ListUsers':
         return this.simulator.listUsers(params);

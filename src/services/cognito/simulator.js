@@ -127,8 +127,8 @@ class CognitoSimulator {
       Name: PoolName,
       Arn: `arn:aws:cognito:local:000000000000:userpool/${poolId}`,
       Status: "ACTIVE",
-      CreationDate: new Date().toISOString(),
-      LastModifiedDate: new Date().toISOString(),
+      CreationDate: Math.floor(Date.now() / 1000),
+      LastModifiedDate: Math.floor(Date.now() / 1000),
       Policies: Policies || {
         PasswordPolicy: {
           MinimumLength: 8,
@@ -169,6 +169,22 @@ class CognitoSimulator {
         EstimatedNumberOfUsers: 0,
       },
     };
+  }
+
+  updateUserPool(params) {
+    const { UserPoolId, LambdaConfig, MfaConfiguration, AutoVerifiedAttributes, Policies } = params;
+    const userPool = this.userPools.get(UserPoolId);
+    if (!userPool) throw new Error(`User pool ${UserPoolId} not found`);
+
+    if (LambdaConfig !== undefined) userPool.LambdaConfig = LambdaConfig;
+    if (MfaConfiguration !== undefined) userPool.MfaConfiguration = MfaConfiguration;
+    if (AutoVerifiedAttributes !== undefined) userPool.AutoVerifiedAttributes = AutoVerifiedAttributes;
+    if (Policies !== undefined) userPool.Policies = Policies;
+    userPool.LastModifiedDate = Math.floor(Date.now() / 1000);
+
+    this.persistUserPools();
+    logger.debug(`✅ User Pool atualizado: ${UserPoolId}`);
+    return {};
   }
 
   listUserPools(params = {}) {
@@ -386,7 +402,7 @@ class CognitoSimulator {
       // 2. Aplica nova senha e confirma usuário
       user.Password = this.hashPassword(newPassword);
       user.UserStatus = "CONFIRMED";
-      user.LastModifiedDate = new Date().toISOString();
+      user.LastModifiedDate = Math.floor(Date.now() / 1000);
       this.persistUsers();
       this.customAuthSessions.delete(params.Session);
 
@@ -424,8 +440,8 @@ class CognitoSimulator {
         AccessToken: accessToken,
         IdToken: idToken,
         RefreshToken: refreshToken,
-        CreatedAt: new Date().toISOString(),
-        ExpiresAt: new Date(Date.now() + 3600000).toISOString(),
+        CreatedAt: Math.floor(Date.now() / 1000),
+        ExpiresAt: Math.floor((Date.now() + 3600000) / 1000),
       };
       this.sessions.set(sessionId, authSession);
       this.accessTokens.set(accessToken, authSession);
@@ -507,8 +523,8 @@ class CognitoSimulator {
           AccessToken: accessToken,
           IdToken: idToken,
           RefreshToken: refreshToken,
-          CreatedAt: new Date().toISOString(),
-          ExpiresAt: new Date(Date.now() + 3600000).toISOString(),
+          CreatedAt: Math.floor(Date.now() / 1000),
+          ExpiresAt: Math.floor((Date.now() + 3600000) / 1000),
         };
 
         this.sessions.set(sessionId, authSession);
@@ -709,8 +725,8 @@ class CognitoSimulator {
       AllowedOAuthScopes: AllowedOAuthScopes || ["openid", "email", "profile"],
       CallbackURLs: CallbackURLs || [],
       LogoutURLs: LogoutURLs || [],
-      CreatedDate: new Date().toISOString(),
-      LastModifiedDate: new Date().toISOString(),
+      CreatedDate: Math.floor(Date.now() / 1000),
+      LastModifiedDate: Math.floor(Date.now() / 1000),
     };
 
     userPool.Clients.set(clientId, client);
@@ -764,8 +780,8 @@ class CognitoSimulator {
       Attributes: this.normalizeUserAttributes(UserAttributes || []),
       Enabled: true,
       UserStatus: "UNCONFIRMED",
-      CreatedDate: new Date().toISOString(),
-      LastModifiedDate: new Date().toISOString(),
+      CreatedDate: Math.floor(Date.now() / 1000),
+      LastModifiedDate: Math.floor(Date.now() / 1000),
       Password: this.hashPassword(Password),
       ConfirmationCode: confirmationCode,
       MfaOptions: [],
@@ -1485,7 +1501,16 @@ class CognitoSimulator {
     const saved = this.store.read("__userpools__");
     if (saved) {
       for (const [id, data] of Object.entries(saved)) {
+        // Sanitize dates
+        if (typeof data.CreationDate === 'string') data.CreationDate = Math.floor(new Date(data.CreationDate).getTime() / 1000);
+        if (typeof data.LastModifiedDate === 'string') data.LastModifiedDate = Math.floor(new Date(data.LastModifiedDate).getTime() / 1000);
+        
         data.Clients = new Map(Object.entries(data.Clients || {}));
+        for (const client of data.Clients.values()) {
+          if (typeof client.CreatedDate === 'string') client.CreatedDate = Math.floor(new Date(client.CreatedDate).getTime() / 1000);
+          if (typeof client.LastModifiedDate === 'string') client.LastModifiedDate = Math.floor(new Date(client.LastModifiedDate).getTime() / 1000);
+        }
+        
         data.Groups = new Map(Object.entries(data.Groups || {}));
         data.IdentityProviders = new Map(Object.entries(data.IdentityProviders || {}));
         data.ResourceServers = new Map(Object.entries(data.ResourceServers || {}));
@@ -1594,6 +1619,8 @@ class CognitoSimulator {
     const saved = this.store.read("__users__");
     if (saved) {
       for (const [id, user] of Object.entries(saved)) {
+        if (typeof user.CreatedDate === 'string') user.CreatedDate = Math.floor(new Date(user.CreatedDate).getTime() / 1000);
+        if (typeof user.LastModifiedDate === 'string') user.LastModifiedDate = Math.floor(new Date(user.LastModifiedDate).getTime() / 1000);
         this.users.set(id, user);
       }
     }

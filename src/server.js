@@ -5,6 +5,8 @@
 const path = require("path");
 const fs = require("fs");
 const mkdirp = require("mkdirp");
+const express = require("express");
+const cors = require("cors");
 const logger = require("./utils/logger");
 
 // Importa serviços
@@ -34,6 +36,10 @@ class Server {
     this.services = [];
     this.servicesMap = new Map();
     this.running = false;
+    this.managementApp = express();
+    this.managementApp.use(cors());
+    this.managementApp.use(express.json());
+    this.managementServer = null;
     this.setupDataDir();
     this.setupLogLevel();
   }
@@ -63,6 +69,8 @@ class Server {
     try {
       await this.initializeServices();
       await this.startServices();
+      this.setupManagementRoutes();
+      await this.startManagementServer();
 
       this.running = true;
       this.printStatus();
@@ -72,8 +80,114 @@ class Server {
     }
   }
 
-  async initializeServices() {
-    const serviceOrder = [
+  setupManagementRoutes() {
+    const app = this.managementApp;
+
+    // GET /__admin/services — returns all services status
+    app.get("/__admin/services", (req, res) => {
+      const registry = this.buildServiceRegistry();
+      const services = registry.map((def) => {
+        const svc = this.servicesMap.get(def.name);
+        if (svc) {
+          const status = typeof svc.getStatus === "function"
+            ? svc.getStatus()
+            : { name: def.name, running: true, port: svc.port };
+          // Compute canDisable: no running service should depend on this one
+          const canDisable = !registry.some(
+            (other) =>
+              other.depends.includes(def.name) &&
+              this.servicesMap.has(other.name)
+          );
+          return {
+            name: def.name,
+            running: true,
+            enabled: true,
+            port: status.port || this.config.ports?.[def.name],
+            endpoint: status.endpoint || `http://localhost:${status.port || this.config.ports?.[def.name]}`,
+            dependencies: def.depends,
+            canDisable,
+            ...status,
+          };
+        }
+        return {
+          name: def.name,
+          running: false,
+          enabled: false,
+          port: this.config.ports?.[def.name],
+          endpoint: `http://localhost:${this.config.ports?.[def.name]}`,
+          dependencies: def.depends,
+          canDisable: true,
+        };
+      });
+      res.json({ services });
+    });
+
+    // GET /__admin/services/:name — returns single service status
+    app.get("/__admin/services/:name", (req, res) => {
+      const { name } = req.params;
+      const registry = this.buildServiceRegistry();
+      const def = registry.find((d) => d.name === name);
+      if (!def) {
+        return res.status(404).json({ error: `Unknown service: ${name}` });
+      }
+      const svc = this.servicesMap.get(name);
+      const canDisable = !registry.some(
+        (other) =>
+          other.depends.includes(name) &&
+          this.servicesMap.has(other.name)
+      );
+      if (svc) {
+        const status = typeof svc.getStatus === "function"
+          ? svc.getStatus()
+          : { name, running: true, port: svc.port };
+        return res.json({
+          name,
+          running: true,
+          enabled: true,
+          port: status.port || this.config.ports?.[name],
+          endpoint: status.endpoint || `http://localhost:${status.port || this.config.ports?.[name]}`,
+          dependencies: def.depends,
+          canDisable,
+          ...status,
+        });
+      }
+      return res.json({
+        name,
+        running: false,
+        enabled: false,
+        port: this.config.ports?.[name],
+        endpoint: `http://localhost:${this.config.ports?.[name]}`,
+        dependencies: def.depends,
+        canDisable: true,
+      });
+    });
+
+    // POST /__admin/services/:name/enable — enables a service
+    app.post("/__admin/services/:name/enable", async (req, res) => {
+      const result = await this.enableService(req.params.name);
+      res.status(result.success ? 200 : 400).json(result);
+    });
+
+    // POST /__admin/services/:name/disable — disables a service
+    app.post("/__admin/services/:name/disable", async (req, res) => {
+      const result = await this.disableService(req.params.name);
+      res.status(result.success ? 200 : 400).json(result);
+    });
+  }
+
+  startManagementServer() {
+    return new Promise((resolve, reject) => {
+      const port = this.config.adminPort || 9999;
+      this.managementServer = this.managementApp.listen(port, () => {
+        logger.info(`🔧 Management API rodando em http://localhost:${port}`);
+        resolve();
+      });
+      this.managementServer.on("error", reject);
+    });
+  }
+
+  buildServiceRegistry() {
+    return [
       { name: "sts",            class: STSService,            depends: [] },
       { name: "lambda",         class: LambdaService,         depends: [] },
       { name: "dynamodb",       class: DynamoDBService,       depends: [] },
@@ -94,6 +208,10 @@ class Server {
       { name: "config",         class: ConfigService,         depends: [] },
       { name: "athena",         class: AthenaService,         depends: [] },
     ];
+  }
+
+  async initializeServices() {
+    const serviceOrder = this.buildServiceRegistry();
 
     for (const serviceDef of serviceOrder) {
       if (this.config.services[serviceDef.name]) {
@@ -143,6 +261,11 @@ class Server {
       const stopPromises = [...this.services].reverse().map((service) => service.stop());
       await Promise.all(stopPromises);
 
+      if (this.managementServer) {
+        await new Promise((resolve) => this.managementServer.close(resolve));
+        this.managementServer = null;
+      }
+
       this.running = false;
       logger.success("✅ Todos os serviços foram parados");
     } catch (error) {
@@ -175,6 +298,107 @@ class Server {
 
   getService(name) {
     return this.servicesMap.get(name);
+  }
+
+  async enableService(name) {
+    // Check if already running
+    if (this.servicesMap.has(name)) {
+      return { success: false, error: "Service already running" };
+    }
+
+    // Look up in registry
+    const registry = this.buildServiceRegistry();
+    const serviceDef = registry.find((s) => s.name === name);
+    if (!serviceDef) {
+      return { success: false, error: "Unknown service" };
+    }
+
+    // Validate all dependencies are running
+    for (const dep of serviceDef.depends) {
+      if (!this.servicesMap.has(dep)) {
+        return { success: false, error: `Dependency not running: ${dep}` };
+      }
+    }
+
+    try {
+      const service = new serviceDef.class(this.config);
+      await service.initialize();
+      await service.start();
+
+      this.services.push(service);
+      this.servicesMap.set(name, service);
+
+      if (typeof service.injectDependencies === "function") {
+        service.injectDependencies(this);
+      }
+
+      // Build ServiceStatus for the response
+      const canDisable = !registry.some(
+        (other) =>
+          other.depends.includes(name) && this.servicesMap.has(other.name)
+      );
+      const rawStatus =
+        typeof service.getStatus === "function"
+          ? service.getStatus()
+          : { name, running: true, port: service.port };
+
+      const serviceStatus = {
+        name,
+        running: true,
+        enabled: true,
+        port: rawStatus.port || this.config.ports?.[name],
+        endpoint:
+          rawStatus.endpoint ||
+          `http://localhost:${rawStatus.port || this.config.ports?.[name]}`,
+        dependencies: serviceDef.depends,
+        canDisable,
+        ...rawStatus,
+      };
+
+      return { success: true, service: serviceStatus };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async disableService(name) {
+    // Check if running
+    const service = this.servicesMap.get(name);
+    if (!service) {
+      return { success: false, error: "Service not running" };
+    }
+
+    // Check reverse dependencies
+    const registry = this.buildServiceRegistry();
+    for (const other of registry) {
+      if (other.depends.includes(name) && this.servicesMap.has(other.name)) {
+        return {
+          success: false,
+          error: `Cannot disable: ${other.name} depends on it`,
+        };
+      }
+    }
+
+    try {
+      await service.stop();
+      this.services = this.services.filter((s) => s !== service);
+      this.servicesMap.delete(name);
+
+      return {
+        success: true,
+        service: {
+          name,
+          running: false,
+          enabled: false,
+          port: this.config.ports?.[name],
+          endpoint: `http://localhost:${this.config.ports?.[name]}`,
+          dependencies: registry.find((d) => d.name === name)?.depends || [],
+          canDisable: true,
+        },
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   }
 
   printStatus() {

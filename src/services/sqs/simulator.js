@@ -49,7 +49,7 @@ class SQSSimulator {
     }
   }
 
-  createQueue(queueName) {
+  createQueue(queueName, attributes = {}) {
     if (this.queues.has(queueName)) {
       return { error: { code: 'QueueAlreadyExists', message: 'Queue already exists' }, status: 409 };
     }
@@ -60,11 +60,17 @@ class SQSSimulator {
       arn: `arn:aws:sqs:local:000000000000:${queueName}`,
       messages: [],
       handler: null,
-      batchSize: 10,
-      visibilityTimeout: 30,
+      batchSize: parseInt(attributes.BatchSize || 10),
+      visibilityTimeout: parseInt(attributes.VisibilityTimeout || 30),
+      delaySeconds: parseInt(attributes.DelaySeconds || 0),
+      messageRetentionPeriod: parseInt(attributes.MessageRetentionPeriod || 345600),
       createdAt: new Date().toISOString(),
       messageCount: 0
     };
+
+    if (attributes.LambdaName) {
+      this.attachLambdaToQueue(queueName, attributes.LambdaName, { batchSize: queue.batchSize });
+    }
 
     this.queues.set(queueName, queue);
     this.persistQueues();
@@ -73,7 +79,7 @@ class SQSSimulator {
       this.store.write(queueName, []);
     }
 
-    logger.debug(`✅ Fila SQS criada: ${queueName}`);
+    logger.debug(`✅ Fila SQS criada: ${queueName} com atributos: ${JSON.stringify(attributes)}`);
 
     return { queue };
   }
@@ -82,6 +88,8 @@ class SQSSimulator {
     switch(action) {
       case 'CreateQueue':
         return this.createQueueAction(req);
+      case 'SetQueueAttributes':
+        return this.setQueueAttributesAction(req);
       case 'SendMessage':
         return this.sendMessageAction(req);
       case 'SendMessageBatch':
@@ -108,15 +116,65 @@ class SQSSimulator {
     return undefined;
   }
 
+  // Parses Attribute.N.Name and Attribute.N.Value from request body/query
+  extractAttributes(req) {
+    const attributes = {};
+    const source = req.body.Action ? req.body : req.query;
+    
+    Object.keys(source).forEach(key => {
+      if (key.startsWith('Attribute.') && key.endsWith('.Name')) {
+        const index = key.split('.')[1];
+        const name = source[key];
+        const value = source[`Attribute.${index}.Value`];
+        attributes[name] = value;
+      }
+    });
+    return attributes;
+  }
+
   createQueueAction(req) {
     const queueName = req.query.QueueName || req.body.QueueName;
-    const result = this.createQueue(queueName);
+    const attributes = this.extractAttributes(req);
+    const result = this.createQueue(queueName, attributes);
 
     if (result.error) {
       return result;
     }
 
     return { queueUrl: result.queue.url };
+  }
+
+  setQueueAttributesAction(req) {
+    const queueName = this.resolveQueueName(req);
+    const queue = this.queues.get(queueName);
+
+    if (!queue) {
+      return { error: { code: 'QueueDoesNotExist', message: 'Queue does not exist' }, status: 400 };
+    }
+
+    const attributes = this.extractAttributes(req);
+    
+    if (attributes.DelaySeconds !== undefined) queue.delaySeconds = parseInt(attributes.DelaySeconds);
+    if (attributes.VisibilityTimeout !== undefined) queue.visibilityTimeout = parseInt(attributes.VisibilityTimeout);
+    if (attributes.MessageRetentionPeriod !== undefined) queue.messageRetentionPeriod = parseInt(attributes.MessageRetentionPeriod);
+    
+    if (attributes.LambdaName !== undefined) {
+      queue.lambdaName = attributes.LambdaName;
+      if (attributes.LambdaName) {
+        // Here we'd normally re-attach if we had a direct reference to the lambda service function
+        // For now, we store the name and the server/index.js will handle re-attachment or we use the name to look it up
+        this.attachLambdaToQueue(queueName, attributes.LambdaName, { batchSize: queue.batchSize });
+      } else {
+        queue.handler = null;
+      }
+    }
+    
+    if (attributes.BatchSize !== undefined) {
+      queue.batchSize = parseInt(attributes.BatchSize);
+    }
+
+    this.persistQueues();
+    return { success: true };
   }
 
   sendMessageAction(req) {
@@ -334,9 +392,13 @@ class SQSSimulator {
         arn: queue.arn,
         batchSize: queue.batchSize,
         visibilityTimeout: queue.visibilityTimeout,
+        delaySeconds: queue.delaySeconds,
+        messageRetentionPeriod: queue.messageRetentionPeriod,
+        lambdaName: queue.lambdaName,
         createdAt: queue.createdAt,
         messageCount: queue.messageCount
       };
+
     }
     this.store.write('__queues__', queuesObj);
   }
@@ -372,9 +434,15 @@ class SQSSimulator {
       name: q.name,
       url: q.url,
       messagesCount: q.messageCount,
-      createdAt: q.createdAt
+      createdAt: q.createdAt,
+      delaySeconds: q.delaySeconds,
+      visibilityTimeout: q.visibilityTimeout,
+      messageRetentionPeriod: q.messageRetentionPeriod,
+      lambdaName: q.lambdaName,
+      batchSize: q.batchSize
     }));
   }
+
 
   getQueue(queueName) {
     const queue = this.queues.get(queueName);

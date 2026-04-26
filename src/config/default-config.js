@@ -9,12 +9,16 @@ module.exports = {
     s3: true,
     sqs: true,
     lambda: true,
-    sns: false,
-    eventbridge: false,
+    sns: true,
+    eventbridge: true,
     ecs: false,
-    cognito: false,
-    apigateway: false,
+    cognito: true,
+    apigateway: true,
     sts: true,
+    "secret-manager": true,
+    "parameter-store": true,
+    kms: true,
+    kinesis: true,
   },
 
   // Portas padrão
@@ -30,6 +34,10 @@ module.exports = {
     apigateway: 4567,
     sts: 9326,
     athena: 4599,
+    secretManager: 4001,
+    parameterStore: 4002,
+    kms: 4000,
+    kinesis: 4568,
   },
   apigateway: {
     defaultCors: {
@@ -65,4 +73,7 @@ module.exports = {
 
   // Configurações adicionais
   additional: {},
+
+  // Porta do servidor de administração (Management API)
+  adminPort: 9999,
 };

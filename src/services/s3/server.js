@@ -23,6 +23,26 @@ class S3Server {
     this.app.use(express.raw({ type: () => true, limit: '100mb' }));
     this.app.use(express.text({ limit: '100mb' }));
     
+    // Suporte a Virtual Host Style addressing (bucket.localhost:4566)
+    this.app.use((req, res, next) => {
+      const host = req.headers.host || '';
+      // Se o host contém múltiplos pontos e não é apenas um IP ou localhost puro
+      if (host.includes('.') && !host.startsWith('localhost') && !host.startsWith('127.0.0.1')) {
+        const parts = host.split('.');
+        // O primeiro fragmento é o nome do bucket se houver mais de 2 partes (bucket.localhost:port)
+        // ou se a segunda parte for localhost
+        if (parts.length >= 2) {
+          const bucket = parts[0];
+          // Evita processar se for admin ou se já estiver no path style (heurística simples)
+          if (bucket !== 'localhost' && !req.path.startsWith('/__admin/')) {
+            req.url = `/${bucket}${req.url}`;
+            logger.verboso(`S3: Virtual Host Style detected. Rewriting to ${req.url}`);
+          }
+        }
+      }
+      next();
+    });
+
     // Logging de requisições
     if (logger.currentLogLevel === 'verboso') {
       this.app.use((req, res, next) => {
@@ -35,6 +55,7 @@ class S3Server {
       });
     }
   }
+
 
   async initialize() {
     if (!this.simulator) {

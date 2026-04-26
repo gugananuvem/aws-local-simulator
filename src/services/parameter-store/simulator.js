@@ -50,7 +50,7 @@ class ParameterStoreSimulator {
     const storedValue = Type === 'SecureString' ? this._encrypt(Value) : Value;
     const param = {
       Name, Value: storedValue, Type, Description: Description || '', Version: version,
-      LastModifiedDate: new Date().toISOString(),
+      LastModifiedDate: Math.floor(Date.now() / 1000),
       LastModifiedUser: 'local',
       ARN: `arn:aws:ssm:local:000000000000:parameter${Name}`,
       DataType, Tags: Tags || [], KeyId: Type === 'SecureString' ? (KeyId || 'aws/ssm') : undefined

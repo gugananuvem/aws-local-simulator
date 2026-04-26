@@ -17,7 +17,18 @@ class SecretManagerSimulator {
   async initialize() {
     try {
       const secrets = await this.store.read('secret-manager/secrets');
-      if (Array.isArray(secrets)) for (const s of secrets) this.secrets.set(s.Name, s);
+      if (Array.isArray(secrets)) {
+        for (const s of secrets) {
+          if (typeof s.CreatedDate === 'string') s.CreatedDate = Math.floor(new Date(s.CreatedDate).getTime() / 1000);
+          if (typeof s.LastChangedDate === 'string') s.LastChangedDate = Math.floor(new Date(s.LastChangedDate).getTime() / 1000);
+          if (s._versions) {
+            for (const v of Object.values(s._versions)) {
+              if (typeof v.CreatedDate === 'string') v.CreatedDate = Math.floor(new Date(v.CreatedDate).getTime() / 1000);
+            }
+          }
+          this.secrets.set(s.Name, s);
+        }
+      }
       this.logger.info('SecretsManager: dados carregados', 'secret-manager');
     } catch { this.logger.debug('SecretsManager: sem dados anteriores', 'secret-manager'); }
   }
@@ -38,12 +49,12 @@ class SecretManagerSimulator {
       ARN: `arn:aws:secretsmanager:local:000000000000:secret:${Name}-${secretId.slice(0, 6)}`,
       Name, Description: Description || '', Tags,
       KmsKeyId: KmsKeyId || 'aws/secretsmanager',
-      CreatedDate: new Date().toISOString(),
-      LastChangedDate: new Date().toISOString(),
+      CreatedDate: Math.floor(Date.now() / 1000),
+      LastChangedDate: Math.floor(Date.now() / 1000),
       LastAccessedDate: null,
       RotationEnabled: false,
       VersionsToStages: { [secretId]: ['AWSCURRENT'] },
-      _versions: { [secretId]: { SecretString, SecretBinary, CreatedDate: new Date().toISOString() } }
+      _versions: { [secretId]: { SecretString, SecretBinary, CreatedDate: Math.floor(Date.now() / 1000) } }
     };
     this.secrets.set(Name, secret);
     await this._persist();
@@ -55,7 +66,7 @@ class SecretManagerSimulator {
   async getSecretValue(params) {
     const { SecretId, VersionId, VersionStage = 'AWSCURRENT' } = params;
     const secret = this._requireSecret(SecretId);
-    secret.LastAccessedDate = new Date().toISOString();
+    secret.LastAccessedDate = Math.floor(Date.now() / 1000);
     let versionId = VersionId;
     if (!versionId) {
       versionId = Object.entries(secret.VersionsToStages).find(([, stages]) => stages.includes(VersionStage))?.[0];
@@ -81,9 +92,9 @@ class SecretManagerSimulator {
         secret.VersionsToStages[vid] = stages.filter(s => s !== 'AWSCURRENT').concat(['AWSPREVIOUS']);
       }
     }
-    secret._versions[versionId] = { SecretString, SecretBinary, CreatedDate: new Date().toISOString() };
+    secret._versions[versionId] = { SecretString, SecretBinary, CreatedDate: Math.floor(Date.now() / 1000) };
     secret.VersionsToStages[versionId] = VersionStages;
-    secret.LastChangedDate = new Date().toISOString();
+    secret.LastChangedDate = Math.floor(Date.now() / 1000);
     await this._persist();
     return { ARN: secret.ARN, Name: secret.Name, VersionId: versionId, VersionStages };
   }
@@ -103,8 +114,8 @@ class SecretManagerSimulator {
   async deleteSecret(params) {
     const { SecretId, RecoveryWindowInDays = 30, ForceDeleteWithoutRecovery } = params;
     const secret = this._requireSecret(SecretId);
-    const deletionDate = ForceDeleteWithoutRecovery ? new Date().toISOString() : new Date(Date.now() + RecoveryWindowInDays * 86400000).toISOString();
-    secret.DeletedDate = new Date().toISOString();
+    const deletionDate = ForceDeleteWithoutRecovery ? Math.floor(Date.now() / 1000) : Math.floor((Date.now() + RecoveryWindowInDays * 86400000) / 1000);
+    secret.DeletedDate = Math.floor(Date.now() / 1000);
     secret.DeletionDate = deletionDate;
     if (ForceDeleteWithoutRecovery) this.secrets.delete(secret.Name);
     await this._persist();
@@ -146,7 +157,7 @@ class SecretManagerSimulator {
     secret.RotationEnabled = true;
     secret.RotationLambdaARN = RotationLambdaARN;
     secret.RotationRules = RotationRules;
-    secret.LastRotatedDate = new Date().toISOString();
+    secret.LastRotatedDate = Math.floor(Date.now() / 1000);
     await this._persist();
     return { ARN: secret.ARN, Name: secret.Name };
   }

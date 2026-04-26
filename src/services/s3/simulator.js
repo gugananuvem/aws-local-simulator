@@ -489,9 +489,12 @@ class S3Simulator {
   // ─── Utilitários ──────────────────────────────────────────────────────────
 
   isValidBucketName(bucketName) {
-    const regex = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+    // S3 oficial é rigoroso, mas para simulador local vamos ser mais tolerantes
+    // permitindo underscores e letras maiúsculas que são comuns em testes locais
+    const regex = /^[a-zA-Z0-9][a-zA-Z0-9._-]{1,61}[a-zA-Z0-9]$/;
     return regex.test(bucketName) && !bucketName.includes("..") && !bucketName.includes(".-") && !bucketName.includes("-.");
   }
+
 
   extractMetadata(headers) {
     const metadata = {};

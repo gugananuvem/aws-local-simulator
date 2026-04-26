@@ -209,6 +209,18 @@ class APIGatewayServer {
       }
     });
 
+    this.app.patch('/restapis/:apiId', (req, res) => {
+      try {
+        const result = this.simulator.updateRestApi({
+          ...req.body,
+          restApiId: req.params.apiId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
     this.app.delete('/restapis/:apiId', (req, res) => {
       try {
         this.simulator.deleteRestApi({ restApiId: req.params.apiId });
@@ -506,6 +518,31 @@ class APIGatewayServer {
         });
       } else {
         res.status(404).json({ error: 'API not found' });
+      }
+    });
+
+    this.app.post('/__admin/apis/:apiId/endpoints', (req, res) => {
+      try {
+        const result = this.simulator.putEndpoint({
+          ...req.body,
+          restApiId: req.params.apiId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/__admin/apis/:apiId/endpoints', (req, res) => {
+      try {
+        const result = this.simulator.deleteEndpoint({
+          restApiId: req.params.apiId,
+          path: req.query.path,
+          method: req.query.method
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
       }
     });
 

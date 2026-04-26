@@ -186,6 +186,50 @@ npx aws-local-simulator reset
 npx aws-local-simulator status
 ```
 
+## 🖥️ Management API
+
+O simulador expõe uma API de gerenciamento em tempo de execução na porta `9999` (configurável via `adminPort`). Ela permite habilitar e desabilitar serviços individualmente sem reiniciar o processo.
+
+### Endpoints da Management API
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/__admin/services` | Lista todos os 19 serviços com status |
+| GET | `/__admin/services/:name` | Status de um serviço específico |
+| POST | `/__admin/services/:name/enable` | Habilita um serviço parado |
+| POST | `/__admin/services/:name/disable` | Desabilita um serviço em execução |
+
+### Exemplos
+
+```bash
+# Listar todos os serviços
+curl http://localhost:9999/__admin/services
+
+# Habilitar DynamoDB
+curl -X POST http://localhost:9999/__admin/services/dynamodb/enable
+
+# Desabilitar SQS
+curl -X POST http://localhost:9999/__admin/services/sqs/disable
+
+# Status de um serviço
+curl http://localhost:9999/__admin/services/lambda
+```
+
+### Configuração da porta admin
+
+```json
+{
+  "adminPort": 9999
+}
+```
+
+Ou via variável de ambiente:
+```bash
+AWS_LOCAL_SIMULATOR_ADMIN_PORT=9999 npx aws-local-simulator start
+```
+
+> A Management API nunca persiste alterações em disco — todo o estado é mantido em memória. Para uso em desenvolvimento local apenas.
+
 ## 🔌 Endpoints
 
 | Serviço | Endpoint | Admin |
@@ -210,6 +254,7 @@ npx aws-local-simulator status
 | CloudFormation | http://localhost:4580 | http://localhost:4580/__admin/stacks |
 | Athena | http://localhost:4599 | http://localhost:4599/__admin/health |
 | ECS | http://localhost:8080 | http://localhost:8080/__admin/clusters |
+| Management API | http://localhost:9999 | http://localhost:9999/__admin/services |
 
 ## 🧪 Testando com AWS CLI
 

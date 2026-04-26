@@ -45,7 +45,21 @@ class KMSServer {
 
   _setupRoutes() {
     this.app.get('/__admin/health', (req, res) => res.json({ status: 'healthy', service: 'kms', timestamp: new Date().toISOString() }));
-    this.app.get('/__admin/keys', async (req, res) => { const r = await this.simulator.listKeys({}); res.json(r); });
+    this.app.get('/__admin/keys', async (req, res) => {
+      const keys = this.simulator.listKeysFull();
+      res.json(keys);
+    });
+
+    this.app.post('/__admin/keys', async (req, res) => {
+      try {
+        const result = await this.simulator.createKey(req.body);
+        res.status(201).json(result);
+      } catch (err) {
+        res.status(400).json({ __type: err.code || 'KMSInternalException', message: err.message });
+      }
+    });
+
+
 
     this.app.post('/', async (req, res) => {
       const target = req.headers['x-amz-target'];

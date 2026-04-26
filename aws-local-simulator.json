@@ -7,7 +7,7 @@
     "cognito": true,
     "apigateway": true,
     "sts": false,
-    "sns": false,
+    "sns": true,
     "eventbridge": false,
     "kms": true,
     "secret-manager": true,

@@ -65,44 +65,56 @@ class KMSSimulator {
   }
 
   async createKey(params) {
-    const { Description, KeyUsage = 'ENCRYPT_DECRYPT', KeySpec = 'SYMMETRIC_DEFAULT', Tags = [], MultiRegion = false } = params || {};
+    const Description = params.Description || params.description || '';
+    const KeyUsage = params.KeyUsage || params.keyUsage || 'ENCRYPT_DECRYPT';
+    const KeySpec = params.KeySpec || params.keySpec || 'SYMMETRIC_DEFAULT';
+    const Tags = params.Tags || params.tags || [];
+    const MultiRegion = params.MultiRegion || params.multiRegion || false;
+
     const keyId = uuidv4();
     const keyArn = `arn:aws:kms:local:000000000000:key/${keyId}`;
     let keyMaterial;
     let publicKey = null;
     let privateKey = null;
 
-    if (KeySpec === 'SYMMETRIC_DEFAULT') {
-      keyMaterial = crypto.randomBytes(32);
-    } else if (KeySpec.startsWith('RSA_')) {
-      const bits = KeySpec === 'RSA_2048' ? 2048 : KeySpec === 'RSA_3072' ? 3072 : 4096;
-      const pair = crypto.generateKeyPairSync('rsa', {
-        modulusLength: bits,
-        publicKeyEncoding: { type: 'spki', format: 'pem' },
-        privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-      });
-      publicKey = pair.publicKey;
-      privateKey = pair.privateKey;
-      keyMaterial = Buffer.from(privateKey);
-    } else if (KeySpec.startsWith('ECC_')) {
-      const curve = KeySpec.includes('P256') ? 'prime256v1' : KeySpec.includes('P384') ? 'secp384r1' : 'secp521r1';
-      const pair = crypto.generateKeyPairSync('ec', {
-        namedCurve: curve,
-        publicKeyEncoding: { type: 'spki', format: 'pem' },
-        privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-      });
-      publicKey = pair.publicKey;
-      privateKey = pair.privateKey;
-      keyMaterial = Buffer.from(privateKey);
-    } else {
-      keyMaterial = crypto.randomBytes(32);
+    this.logger.debug(`KMS: Criando chave ${keyId} (Spec: ${KeySpec})`, 'kms');
+
+    try {
+      if (KeySpec === 'SYMMETRIC_DEFAULT') {
+        keyMaterial = crypto.randomBytes(32);
+      } else if (KeySpec.startsWith('RSA_')) {
+        const bits = KeySpec === 'RSA_2048' ? 2048 : KeySpec === 'RSA_3072' ? 3072 : 4096;
+        const pair = crypto.generateKeyPairSync('rsa', {
+          modulusLength: bits,
+          publicKeyEncoding: { type: 'spki', format: 'pem' },
+          privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        publicKey = pair.publicKey;
+        privateKey = pair.privateKey;
+        keyMaterial = Buffer.from(privateKey);
+      } else if (KeySpec.startsWith('ECC_')) {
+        const curve = KeySpec.includes('P256') ? 'prime256v1' : KeySpec.includes('P384') ? 'secp384r1' : 'secp521r1';
+        const pair = crypto.generateKeyPairSync('ec', {
+          namedCurve: curve,
+          publicKeyEncoding: { type: 'spki', format: 'pem' },
+          privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        publicKey = pair.publicKey;
+        privateKey = pair.privateKey;
+        keyMaterial = Buffer.from(privateKey);
+      } else {
+        keyMaterial = crypto.randomBytes(32);
+      }
+    } catch (err) {
+      this.logger.error(`KMS: Erro ao gerar material da chave: ${err.message}`, 'kms');
+      throw err;
     }
 
     this.keyMaterial.set(keyId, keyMaterial);
     const key = {
       KeyId: keyId,
       KeyArn: keyArn,
-      Description: Description || '',
+      Description,
       KeyUsage,
       KeySpec,
       KeyState: 'Enabled',
@@ -115,21 +127,29 @@ class KMSSimulator {
     };
     this.keys.set(keyId, key);
     await this._persistKeys();
-    this.logger.info(`KMS: chave criada: ${keyId}`, 'kms');
+    this.logger.info(`KMS: chave criada com sucesso: ${keyId}`, 'kms');
     this.audit.record({ eventName: 'CreateKey', readOnly: false, resources: [{ ARN: keyArn, type: 'AWS::KMS::Key' }], requestParameters: { description: Description, keyUsage: KeyUsage, keySpec: KeySpec } });
     return { KeyMetadata: this._sanitizeKey(key) };
   }
 
   async describeKey(params) {
-    const key = this._requireKey(params.KeyId);
+    const keyId = params.KeyId || params.keyId;
+    const key = this._requireKey(keyId);
     return { KeyMetadata: this._sanitizeKey(key) };
   }
 
   async listKeys(params) {
     const { Limit = 100 } = params || {};
     const keys = Array.from(this.keys.values()).slice(0, Limit);
+    // Para o Dashboard, retornamos mais detalhes se for solicitado via admin
+    // Mas para o SDK padrão, retornamos apenas o que o SDK espera
     return { Keys: keys.map(k => ({ KeyId: k.KeyId, KeyArn: k.KeyArn })) };
   }
+
+  listKeysFull() {
+    return Array.from(this.keys.values()).map(k => this._sanitizeKey(k));
+  }
+
 
   async enableKey(params) {
     const key = this._requireKey(params.KeyId);

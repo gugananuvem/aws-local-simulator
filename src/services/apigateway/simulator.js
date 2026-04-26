@@ -33,6 +33,7 @@ class APIGatewaySimulator {
   async initialize() {
     logger.debug('Inicializando API Gateway Simulator...');
     this.loadAPIs();
+    this._loadStaticAPIs();
     this.loadWebSocketAPIs();
     this.loadDeployments();
     this.loadStages();
@@ -44,8 +45,61 @@ class APIGatewaySimulator {
     this.loadApiKeys();
     this.loadDomainNames();
     
-    logger.debug(`✅ API Gateway Simulator inicializado com ${this.apis.size} APIs, ${this.resources.size} resources, ${this.methods.size} methods`);
+    logger.debug(`✅ API Gateway Simulator inicializado com ${this.apis.size} APIs (${Array.from(this.apis.values()).filter(a => a.isStatic).length} estáticas)`);
   }
+
+  _loadStaticAPIs() {
+    const staticApis = this.config.apigateway?.apis || [];
+    staticApis.forEach((apiConfig, index) => {
+      const apiId = `static_${index}`;
+      
+      const api = {
+        id: apiId,
+        name: apiConfig.name,
+        description: apiConfig.description || 'Configured in aws-local-simulator.json',
+        version: 'config',
+        createdDate: new Date().toISOString(),
+        isStatic: true,
+        apiKeySource: 'HEADER',
+        endpointConfiguration: { types: ['REGIONAL'] },
+        resources: new Map(),
+        stages: new Map(),
+        deployments: new Map(),
+        models: new Map(),
+        authorizers: new Map()
+      };
+      
+      // Adiciona recursos a partir dos endpoints configurados
+      (apiConfig.endpoints || []).forEach((ep, epIndex) => {
+        const resId = `res_${apiId}_${epIndex}`;
+        api.resources.set(resId, {
+          id: resId,
+          path: ep.path,
+          pathPart: ep.path.split('/').pop() || '/',
+          resourceMethods: new Map([[ep.method, {
+            httpMethod: ep.method,
+            authorizationType: ep.authorizerRequired ? 'COGNITO_USER_POOLS' : 'NONE',
+            apiKeyRequired: false,
+            integration: {
+              type: ep.integrationType === 'lambda' ? 'AWS_PROXY' : 'HTTP',
+              uri: ep.lambdaName,
+              integrationHttpMethod: 'POST'
+            }
+          }]])
+        });
+      });
+      
+      // Adiciona um stage padrão
+      api.stages.set('local', {
+        stageName: 'local',
+        createdDate: new Date().toISOString(),
+        deploymentId: 'static-deploy'
+      });
+      
+      this.apis.set(apiId, api);
+    });
+  }
+
 
   // ============ REST API Operations ============
 
@@ -104,10 +158,14 @@ class APIGatewaySimulator {
         description: api.description,
         version: api.version,
         createdDate: api.createdDate,
-        apiKeySource: api.apiKeySource
+        apiKeySource: api.apiKeySource,
+        isStatic: api.isStatic || false,
+        resourceCount: api.resources.size,
+        stageCount: api.stages.size
       }))
     };
   }
+
 
   getRestApi(params) {
     const { restApiId } = params;
@@ -129,6 +187,27 @@ class APIGatewaySimulator {
     };
   }
 
+  updateRestApi(params) {
+    const { restApiId, name, description } = params;
+    const api = this.apis.get(restApiId);
+    
+    if (!api) {
+      throw new Error(`API ${restApiId} not found`);
+    }
+    
+    if (name !== undefined) api.name = name;
+    if (description !== undefined) api.description = description;
+    
+    if (api.isStatic) {
+      // Once edited, the API is no longer static and will be persisted
+      api.isStatic = false;
+    }
+    
+    this.persistAPIs();
+    
+    return this.getRestApi({ restApiId });
+  }
+
   deleteRestApi(params) {
     const { restApiId } = params;
     
@@ -142,7 +221,66 @@ class APIGatewaySimulator {
     return {};
   }
 
+  // ============ Simplified Dashboard Endpoint Operations ============
+
+  putEndpoint(params) {
+    const { restApiId, path, method, integrationType, lambdaName, authorizerRequired } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+
+    if (api.isStatic) api.isStatic = false;
+
+    // Ensure resource exists
+    let resource = Array.from(api.resources.values()).find(r => r.path === path);
+    if (!resource) {
+      const resourceId = `res_${Date.now()}`;
+      resource = {
+        id: resourceId,
+        path: path,
+        pathPart: path.split('/').pop() || '/',
+        parentId: null, // Simplified
+        resourceMethods: new Map()
+      };
+      api.resources.set(resourceId, resource);
+    }
+
+    // Put method
+    resource.resourceMethods.set(method.toUpperCase(), {
+      httpMethod: method.toUpperCase(),
+      authorizationType: authorizerRequired ? 'COGNITO_USER_POOLS' : 'NONE',
+      apiKeyRequired: false,
+      integration: {
+        type: integrationType === 'lambda' ? 'AWS_PROXY' : 'HTTP',
+        uri: lambdaName,
+        integrationHttpMethod: 'POST'
+      }
+    });
+
+    this.persistAPIs();
+    return { resourceId: resource.id, path, method };
+  }
+
+  deleteEndpoint(params) {
+    const { restApiId, path, method } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+
+    if (api.isStatic) api.isStatic = false;
+
+    const resource = Array.from(api.resources.values()).find(r => r.path === path);
+    if (resource) {
+      resource.resourceMethods.delete(method.toUpperCase());
+      // If no methods left and not root, we could delete the resource, but keeping it is fine.
+      if (resource.resourceMethods.size === 0 && resource.path !== '/') {
+        api.resources.delete(resource.id);
+      }
+      this.persistAPIs();
+    }
+    return {};
+  }
+
   // ============ Resource Operations ============
+
 
   createResource(params) {
     const { restApiId, parentId, pathPart } = params;
@@ -1054,7 +1192,10 @@ class APIGatewaySimulator {
     if (saved) {
       for (const [id, data] of Object.entries(saved)) {
         // Reconstitui Maps
-        data.resources = new Map(Object.entries(data.resources || {}));
+        data.resources = new Map(Object.entries(data.resources || {}).map(([rid, r]) => {
+          r.resourceMethods = new Map(Object.entries(r.resourceMethods || {}));
+          return [rid, r];
+        }));
         data.stages = new Map(Object.entries(data.stages || {}));
         data.deployments = new Map(Object.entries(data.deployments || {}));
         data.models = new Map(Object.entries(data.models || {}));
@@ -1063,6 +1204,7 @@ class APIGatewaySimulator {
       }
     }
   }
+
 
   loadWebSocketAPIs() {
     const saved = this.store.read('__websocket_apis__');
@@ -1157,9 +1299,10 @@ class APIGatewaySimulator {
   persistAPIs() {
     const apisObj = {};
     for (const [id, api] of this.apis.entries()) {
+      if (api.isStatic) continue;
       apisObj[id] = {
         ...api,
-        resources: Object.fromEntries(api.resources),
+        resources: Object.fromEntries(Array.from(api.resources.entries()).map(([rid, r]) => [rid, { ...r, resourceMethods: Object.fromEntries(r.resourceMethods) }])),
         stages: Object.fromEntries(api.stages),
         deployments: Object.fromEntries(api.deployments),
         models: Object.fromEntries(api.models),
@@ -1168,6 +1311,7 @@ class APIGatewaySimulator {
     }
     this.store.write('__apis__', apisObj);
   }
+
 
   persistResources(apiId) {
     const api = this.apis.get(apiId);

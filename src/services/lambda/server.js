@@ -80,6 +80,30 @@ class LambdaServer {
     this.app.get('/__admin/functions', (req, res) => {
       res.json(this.simulator.listLambdas());
     });
+    
+    this.app.post('/__admin/functions', async (req, res) => {
+      try {
+        const lambda = await this.simulator.createFunction(req.body);
+        res.status(201).json(lambda);
+      } catch (err) {
+        res.status(400).json({ error: err.message });
+      }
+    });
+
+    this.app.put('/__admin/functions/:name', async (req, res) => {
+      try {
+        const lambda = await this.simulator.updateFunction(req.params.name, req.body);
+        res.json(lambda);
+      } catch (err) {
+        res.status(400).json({ error: err.message });
+      }
+    });
+
+    this.app.delete('/__admin/functions/:name', async (req, res) => {
+      const deleted = await this.simulator.deleteFunction(req.params.name);
+      if (deleted) res.json({ message: 'Lambda deleted' });
+      else res.status(404).json({ error: 'Lambda not found' });
+    });
 
     this.app.post('/__admin/reload', async (req, res) => {
       await this.simulator.reloadLambdas();

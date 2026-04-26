@@ -187,7 +187,10 @@ class SQSServer {
         return this.generateReceiveMessageResponse(result.messages);
       case 'DeleteMessage':
         return this.generateDeleteMessageResponse();
+      case 'SetQueueAttributes':
+        return this.generateSetQueueAttributesResponse();
       case 'GetQueueUrl':
+
         return this.generateGetQueueUrlResponse(result.queueUrl);
       case 'ListQueues':
         return this.generateListQueuesResponse(result.queues);
@@ -195,6 +198,14 @@ class SQSServer {
         return '';
     }
   }
+
+  generateSetQueueAttributesResponse() {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<SetQueueAttributesResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
+  <ResponseMetadata><RequestId>${crypto.randomUUID()}</RequestId></ResponseMetadata>
+</SetQueueAttributesResponse>`;
+  }
+
 
   generateCreateQueueResponse(queueUrl) {
     return `<?xml version="1.0" encoding="UTF-8"?>

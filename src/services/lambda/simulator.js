@@ -1,7 +1,6 @@
-/**
- * Lambda Simulator - Simula execução de funções Lambda
- */
-
+const LocalStore = require("../../utils/local-store");
+const path = require("path");
+const fs = require("fs");
 const HandlerLoader = require("./handler-loader");
 const logger = require("../../utils/logger");
 const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
@@ -9,6 +8,8 @@ const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
 class LambdaSimulator {
   constructor(config) {
     this.config = config;
+    this.dataDir = path.join(process.env.AWS_LOCAL_SIMULATOR_DATA_DIR, "lambda");
+    this.store = new LocalStore(this.dataDir);
     this.lambdas = new Map(); // functionName -> { handler, env, config }
     this.environment = { ...process.env };
     this.audit = new CloudTrailAudit("lambda.amazonaws.com");
@@ -23,14 +24,26 @@ class LambdaSimulator {
     this.globalTimeout = globalDefaults.timeout || null;
     this.globalMemorySize = globalDefaults.memorySize || null;
 
+    // Carrega do config.lambdas (fixo)
     if (this.config.lambdas && this.config.lambdas.length > 0) {
       for (const lambdaConfig of this.config.lambdas) {
         await this.registerLambda(lambdaConfig);
       }
     }
 
+    // Carrega lambdas dinâmicas do disco
+    const savedLambdas = this.store.read("__functions__");
+    if (savedLambdas && Array.isArray(savedLambdas)) {
+      for (const lambdaConfig of savedLambdas) {
+        if (!this.lambdas.has(lambdaConfig.name)) {
+          await this.registerLambda(lambdaConfig);
+        }
+      }
+    }
+
     logger.debug(`✅ ${this.lambdas.size} Lambdas registradas`);
   }
+
 
   async registerLambda(lambdaConfig) {
     try {
@@ -51,6 +64,14 @@ class LambdaSimulator {
       const memorySize = lambdaConfig.memorySize ?? this.globalMemorySize ?? 128;
 
       const handler = await HandlerLoader.load(handlerPath, type);
+      let codeSize = 0;
+      try {
+        const info = await HandlerLoader.getInfo(handlerPath);
+        codeSize = info.size;
+      } catch (err) {
+        // Ignore size errors
+      }
+
       if (handler != undefined) {
         this.lambdas.set(name, {
           name,
@@ -60,6 +81,7 @@ class LambdaSimulator {
           env,
           timeout,
           memorySize,
+          codeSize,
           type,
           registeredAt: new Date().toISOString(),
         });
@@ -147,15 +169,31 @@ class LambdaSimulator {
   }
 
   listLambdas() {
-    return Array.from(this.lambdas.values()).map((l) => ({
-      name: l.name,
-      handlerName: l.handlerName,
-      handlerPath: l.handlerPath,
-      type: l.type,
-      env: l.env,
-      registeredAt: l.registeredAt,
-    }));
+    return Array.from(this.lambdas.values()).map((l) => {
+      let code = "";
+      try {
+        if (fs.existsSync(l.handlerPath)) {
+          code = fs.readFileSync(l.handlerPath, "utf8");
+        }
+      } catch (err) {
+        logger.error(`Erro ao ler código da lambda ${l.name}:`, err);
+      }
+
+      return {
+        name: l.name,
+        handlerName: l.handlerName,
+        handlerPath: l.handlerPath,
+        type: l.type,
+        env: l.env,
+        timeout: l.timeout,
+        memorySize: l.memorySize,
+        codeSize: l.codeSize,
+        registeredAt: l.registeredAt,
+        code: code
+      };
+    });
   }
+
 
   getLambda(name) {
     return this.lambdas.get(name);
@@ -182,12 +220,98 @@ class LambdaSimulator {
     logger.info(`✅ ${this.lambdas.size} Lambdas recarregadas`);
   }
 
+  async createFunction(lambdaConfig) {
+    const { name, code, runtime, handler, timeout, memorySize, environment } = lambdaConfig;
+
+    if (!name) throw new Error("Function name is required");
+
+    // Define o caminho do arquivo (dentro do dataDir/functions)
+    const functionsDir = path.join(this.dataDir, "functions");
+    if (!fs.existsSync(functionsDir)) fs.mkdirSync(functionsDir, { recursive: true });
+
+    const fileName = `${name}.js`;
+    const filePath = path.join(functionsDir, fileName);
+
+    // Salva o código no disco
+    fs.writeFileSync(filePath, code || "// Hello Lambda");
+
+    // Registra a lambda
+    const config = {
+      name,
+      handler: filePath,
+      runtime: runtime || "nodejs18.x",
+      timeout: timeout || 30,
+      memorySize: memorySize || 128,
+      env: environment || {},
+      type: "commonjs"
+    };
+
+    await this.registerLambda(config);
+    this.persistLambdas();
+
+    return this.lambdas.get(name);
+  }
+
+  async updateFunction(name, lambdaConfig) {
+    const lambda = this.lambdas.get(name);
+    if (!lambda) throw new Error(`Function not found: ${name}`);
+
+    const { code, runtime, handler, timeout, memorySize, environment } = lambdaConfig;
+
+    // Se houver código novo, sobrescreve o arquivo
+    if (code !== undefined) {
+      fs.writeFileSync(lambda.handlerPath, code);
+    }
+
+    // Atualiza a configuração
+    const updatedConfig = {
+      name,
+      handler: lambda.handlerPath,
+      runtime: runtime || lambda.runtime,
+      timeout: timeout || lambda.timeout,
+      memorySize: memorySize || lambda.memorySize,
+      env: environment || lambda.env,
+      type: lambda.type
+    };
+
+    await this.registerLambda(updatedConfig);
+    this.persistLambdas();
+
+    return this.lambdas.get(name);
+  }
+
+  async deleteFunction(name) {
+
+    if (this.lambdas.has(name)) {
+      this.lambdas.delete(name);
+      this.persistLambdas();
+      return true;
+    }
+    return false;
+  }
+
+  persistLambdas() {
+    const functionsToSave = Array.from(this.lambdas.values())
+      .filter(l => l.handlerPath.includes(this.dataDir)) // Apenas as dinâmicas
+      .map(l => ({
+        name: l.name,
+        handler: l.handlerPath,
+        type: l.type,
+        env: l.env,
+        timeout: l.timeout,
+        memorySize: l.memorySize,
+      }));
+
+    this.store.write("__functions__", functionsToSave);
+  }
+
   getStats() {
     return {
       totalLambdas: this.lambdas.size,
       lambdas: this.listLambdas().map((l) => ({ name: l.name, handler: l.handlerName })),
     };
   }
+
 
   async reset() {
     await this.reloadLambdas();

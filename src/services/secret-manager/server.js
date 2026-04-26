@@ -37,7 +37,8 @@ class SecretManagerServer {
       if (!operation) return res.status(400).json({ __type: 'UnknownOperationException', message: `Unknown: ${target}` });
       try {
         const result = await this.simulator[operation](req.body || {});
-        res.json(result || {});
+        res.setHeader('Content-Type', 'application/x-amz-json-1.1');
+        res.send(JSON.stringify(result || {}));
       } catch (err) {
         this.logger.error(`SecretsManager ${target}: ${err.message}`, 'secret-manager');
         res.status(err.code === 'ResourceNotFoundException' ? 404 : 400).json({ __type: err.code || 'InternalServiceError', Message: err.message });

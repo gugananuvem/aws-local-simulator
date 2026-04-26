@@ -225,6 +225,19 @@ class DynamoDBSimulator {
         })),
         ItemCount: items.length,
         TableSizeBytes: JSON.stringify(items).length,
+        GlobalSecondaryIndexes: Object.entries(table.globalSecondaryIndexes || {}).map(([indexName, gsi]) => ({
+          IndexName: indexName,
+          IndexStatus: "ACTIVE",
+          KeySchema: [
+            { AttributeName: gsi.hashKey, KeyType: "HASH" },
+            ...(gsi.rangeKey ? [{ AttributeName: gsi.rangeKey, KeyType: "RANGE" }] : []),
+          ],
+          Projection: { ProjectionType: "ALL" },
+          ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5,
+          },
+        })),
         ProvisionedThroughput: {
           ReadCapacityUnits: 5,
           WriteCapacityUnits: 5,
@@ -502,7 +515,7 @@ class DynamoDBSimulator {
   }
 
   query(params) {
-    const { TableName, KeyConditionExpression, ExpressionAttributeValues, IndexName } = params;
+    const { TableName, KeyConditionExpression, ExpressionAttributeValues, ExpressionAttributeNames = {}, IndexName } = params;
     const table = this.tables.get(TableName);
 
     if (!table) {
@@ -511,7 +524,7 @@ class DynamoDBSimulator {
 
     let items = this.store.read(TableName);
 
-    // Resolve hash key e range key: usa GSI se IndexName estiver presente, caso contrário usa a tabela principal
+    // Resolve hash key e range key
     let hashKey;
     let rangeKey;
 
@@ -528,43 +541,56 @@ class DynamoDBSimulator {
       rangeKey = table.rangeKey;
     }
 
-    // Filtra pela chave de partição
-    const hashValueMatch = KeyConditionExpression.match(new RegExp(`${hashKey}\\s*=\\s*([^\\s]+)`));
+    // Helper para resolver nomes de atributos (que podem ser placeholders como #n0)
+    const resolveAttributeName = (name) => {
+      if (name.startsWith("#")) return ExpressionAttributeNames[name] || name;
+      return name;
+    };
 
-    if (hashValueMatch) {
-      const hashValuePlaceholder = hashValueMatch[1];
-      const rawHashValue = ExpressionAttributeValues[hashValuePlaceholder];
-      const hashValue = rawHashValue && typeof rawHashValue === 'object' ? Object.values(rawHashValue)[0] : rawHashValue;
-      items = items.filter((item) => item[hashKey] === hashValue);
-    }
+    // Helper para extrair valor de placeholder (ex: :v0)
+    const resolveValue = (placeholder) => {
+      const rawValue = ExpressionAttributeValues[placeholder];
+      if (rawValue === undefined) return undefined;
+      // Se for formato DynamoDB { S: "..." }, desmembra. Se for nativo (DocumentClient), usa direto.
+      if (rawValue !== null && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+        const keys = Object.keys(rawValue);
+        if (keys.length === 1 && ["S", "N", "BOOL", "NULL", "M", "L", "SS", "NS", "BS"].includes(keys[0])) {
+          return this.normalizeValue(rawValue, table);
+        }
+      }
+      return rawValue;
+    };
 
-    // Filtra pela chave de ordenação se existir
-    if (rangeKey) {
-      const rangeConditionMatch = KeyConditionExpression.match(new RegExp(`${rangeKey}\\s*(=|>|<|>=|<=)\\s*([^\\s]+)`));
+    // Filtra pela KeyConditionExpression
+    // DynamoDB Query KeyConditionExpression tem formato restrito: PartitionKey = :val AND (SortKey operator :val)
+    if (KeyConditionExpression) {
+      const parts = KeyConditionExpression.split(/\s+AND\s+/i);
+      
+      for (const part of parts) {
+        const match = part.match(/([^\s]+)\s*(=|>|<|>=|<=|BEGINS_WITH|BETWEEN)\s*([^\s]+)(?:\s+AND\s+([^\s]+))?/i);
+        if (match) {
+          const attrPlaceholder = match[1];
+          const operator = match[2].toUpperCase();
+          const valPlaceholder = match[3];
+          
+          const attributeName = resolveAttributeName(attrPlaceholder);
+          const expectedValue = resolveValue(valPlaceholder);
 
-      if (rangeConditionMatch) {
-        const operator = rangeConditionMatch[1];
-        const rangeValuePlaceholder = rangeConditionMatch[2];
-        const rawRangeValue = ExpressionAttributeValues[rangeValuePlaceholder];
-        const rangeValue = rawRangeValue && typeof rawRangeValue === 'object' ? Object.values(rawRangeValue)[0] : rawRangeValue;
-
-        items = items.filter((item) => {
-          const itemValue = item[rangeKey];
-          switch (operator) {
-            case "=":
-              return itemValue === rangeValue;
-            case ">":
-              return itemValue > rangeValue;
-            case "<":
-              return itemValue < rangeValue;
-            case ">=":
-              return itemValue >= rangeValue;
-            case "<=":
-              return itemValue <= rangeValue;
-            default:
-              return true;
+          if (operator === "=") {
+            items = items.filter(item => item[attributeName] === expectedValue);
+          } else if (operator === ">") {
+            items = items.filter(item => item[attributeName] > expectedValue);
+          } else if (operator === "<") {
+            items = items.filter(item => item[attributeName] < expectedValue);
+          } else if (operator === ">=") {
+            items = items.filter(item => item[attributeName] >= expectedValue);
+          } else if (operator === "<=") {
+            items = items.filter(item => item[attributeName] <= expectedValue);
+          } else if (operator === "BEGINS_WITH") {
+            const val = expectedValue;
+            items = items.filter(item => String(item[attributeName] || "").startsWith(String(val)));
           }
-        });
+        }
       }
     }
 
@@ -578,7 +604,7 @@ class DynamoDBSimulator {
   }
 
   scan(params) {
-    const { TableName, FilterExpression, ExpressionAttributeValues, Limit } = params;
+    const { TableName, FilterExpression, ExpressionAttributeValues, ExpressionAttributeNames = {}, Limit } = params;
     const table = this.tables.get(TableName);
 
     if (!table) {
@@ -589,7 +615,7 @@ class DynamoDBSimulator {
 
     // Aplica filtro se existir
     if (FilterExpression) {
-      items = this.applyFilter(items, FilterExpression, ExpressionAttributeValues, table);
+      items = this.applyFilter(items, FilterExpression, ExpressionAttributeValues, ExpressionAttributeNames, table);
     }
 
     // Aplica limite
@@ -605,6 +631,7 @@ class DynamoDBSimulator {
       ScannedCount: items.length,
     };
   }
+
 
   // Métodos auxiliares
   normalizeItem(item, table) {
@@ -720,20 +747,70 @@ class DynamoDBSimulator {
     }
   }
 
-  applyFilter(items, expression, values, table) {
-    // Implementação simplificada
-    return items.filter((item) => {
-      const match = expression.match(/([^\s]+)\s*=\s*([^\s]+)/);
-      if (match) {
-        const [, attribute, placeholder] = match;
-        const rawValue = values[placeholder];
-        const expectedValue = rawValue && typeof rawValue === 'object' ? Object.values(rawValue)[0] : rawValue;
-        const actualValue = item[attribute];
-        return actualValue === expectedValue;
+  applyFilter(items, expression, values, names, table) {
+    if (!expression) return items;
+
+    const resolveAttributeName = (name) => {
+      if (name.startsWith("#")) return names[name] || name;
+      return name;
+    };
+
+    const resolveValue = (placeholder) => {
+      const rawValue = values[placeholder];
+      if (rawValue === undefined) return undefined;
+      if (rawValue !== null && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+        const keys = Object.keys(rawValue);
+        if (keys.length === 1 && ["S", "N", "BOOL", "NULL", "M", "L", "SS", "NS", "BS"].includes(keys[0])) {
+          return this.normalizeValue(rawValue, table);
+        }
       }
-      return true;
+      return rawValue;
+    };
+
+    const conditions = expression.split(/\s+AND\s+/i);
+    
+    return items.filter((item) => {
+      return conditions.every(cond => {
+        // Regex para match de funções como contains(#n, :v) ou begins_with(#n, :v)
+        const funcMatch = cond.match(/(contains|begins_with)\s*\(\s*([^\s,]+)\s*,\s*([^\s,)]+)\s*\)/i);
+        if (funcMatch) {
+          const func = funcMatch[1].toLowerCase();
+          const attrName = resolveAttributeName(funcMatch[2]);
+          const expectedVal = resolveValue(funcMatch[3]);
+          const actualVal = item[attrName];
+          
+          if (func === 'contains') {
+            if (Array.isArray(actualVal)) return actualVal.includes(expectedVal);
+            return String(actualVal || "").includes(String(expectedVal));
+          }
+          if (func === 'begins_with') {
+            return String(actualVal || "").startsWith(String(expectedVal));
+          }
+        }
+
+        // Regex para operadores básicos
+        const opMatch = cond.match(/([^\s]+)\s*(=|<>|<|<=|>|>=)\s*([^\s]+)/);
+        if (opMatch) {
+          const attrName = resolveAttributeName(opMatch[1]);
+          const operator = opMatch[2];
+          const expectedVal = resolveValue(opMatch[3]);
+          const actualVal = item[attrName];
+
+          switch (operator) {
+            case "=":  return actualVal === expectedVal;
+            case "<>": return actualVal !== expectedVal;
+            case "<":  return actualVal < expectedVal;
+            case "<=": return actualVal <= expectedVal;
+            case ">":  return actualVal > expectedVal;
+            case ">=": return actualVal >= expectedVal;
+            default:   return true;
+          }
+        }
+        return true;
+      });
     });
   }
+
 
   persistTables() {
     const tablesObj = {};
