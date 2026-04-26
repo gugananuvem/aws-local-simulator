@@ -105,6 +105,7 @@ class Server {
             port: status.port || this.config.ports?.[def.name],
             endpoint: status.endpoint || `http://localhost:${status.port || this.config.ports?.[def.name]}`,
             dependencies: def.depends,
+            category: def.category,
             canDisable,
             ...status,
           };
@@ -188,25 +189,36 @@ class Server {
 
   buildServiceRegistry() {
     return [
-      { name: "sts",            class: STSService,            depends: [] },
-      { name: "lambda",         class: LambdaService,         depends: [] },
-      { name: "dynamodb",       class: DynamoDBService,       depends: [] },
-      { name: "s3",             class: S3Service,             depends: [] },
-      { name: "sqs",            class: SQSService,            depends: ["lambda"] },
-      { name: "sns",            class: SNSService,            depends: [] },
-      { name: "eventbridge",    class: EventBridgeService,    depends: [] },
-      { name: "cognito",        class: CognitoService,        depends: ["lambda"] },
-      { name: "ecs",            class: ECSService,            depends: [] },
-      { name: "apigateway",     class: APIGatewayService,     depends: ["lambda", "cognito"] },
-      { name: "kms",            class: KMSService,            depends: [] },
-      { name: "cloudwatch",     class: CloudWatchService,     depends: [] },
-      { name: "cloudtrail",     class: CloudTrailService,     depends: [] },
-      { name: "cloudformation", class: CloudFormationService, depends: [] },
-      { name: "xray",           class: XRayService,           depends: [] },
-      { name: "secret-manager", class: SecretManagerService,  depends: [] },
-      { name: "parameter-store",class: ParameterStoreService, depends: [] },
-      { name: "config",         class: ConfigService,         depends: [] },
-      { name: "athena",         class: AthenaService,         depends: [] },
+      //Armazenamento & BD
+      { name: "dynamodb", class: DynamoDBService, depends: [], category: 'Armazenamento & Banco de Dados' },
+      { name: "s3", class: S3Service, depends: [], category: 'Armazenamento & Banco de Dados' },
+      { name: "athena", class: AthenaService, depends: [], category: 'Armazenamento & Banco de Dados' },
+
+      //Computação
+      { name: "lambda", class: LambdaService, depends: [], category: 'Computação' },
+      /*      { name: "ecs",            class: ECSService,            depends: [] , category:'Computação'},*/
+
+      { name: "cognito", class: CognitoService, depends: ["lambda"], category: 'Segurança & Identidade' },
+      { name: "sts", class: STSService, depends: [], category: 'Segurança & Identidade' },
+      { name: "kms", class: KMSService, depends: [], category: 'Segurança & Identidade' },
+      { name: "secret-manager", class: SecretManagerService, depends: [], category: 'Segurança & Identidade' },
+      { name: "parameter-store", class: ParameterStoreService, depends: [], category: 'Segurança & Identidade' },
+
+      //Mensageria
+      { name: "sqs", class: SQSService, depends: ["lambda"], category: 'Mensageria & Integração' },
+      { name: "sns", class: SNSService, depends: [], category: 'Mensageria & Integração' },
+      { name: "eventbridge", class: EventBridgeService, depends: [], category: 'Mensageria & Integração' },
+
+      //Networking
+      { name: "apigateway", class: APIGatewayService, depends: ["lambda", "cognito"], category: 'Networking' },
+
+      //Observabilidade & Conformidade
+      { name: "cloudwatch", class: CloudWatchService, depends: [], category: 'Observabilidade & Conformidade' },
+      { name: "cloudtrail", class: CloudTrailService, depends: [], category: 'Observabilidade & Conformidade' },
+      { name: "xray", class: XRayService, depends: [], category: 'Observabilidade & Conformidade' },
+      { name: "config", class: ConfigService, depends: [], category: 'Observabilidade & Conformidade' },
+      { name: "cloudformation", class: CloudFormationService, depends: [], category: 'Observabilidade & Conformidade' },
+
     ];
   }
 
