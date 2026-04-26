@@ -53,3 +53,5 @@ obfuscator-config.js
 *.tgz
 aws-local-simulator.json
 tests/*
+.gitmodules
+dashboard-react
