@@ -14,8 +14,7 @@
     "publish:obfuscated": "npm run build:obfuscated && npm run verify-build && cd dist && npm publish --access public",
     "publish:clean": "npm run build && cd dist && npm publish --access public",
     "clean": "rimraf dist",
-    "preinstall": "node scripts/check-node-version.js",
-    "postinstall": "node scripts/postinstall.js"
+    "preinstall": "node scripts/check-deps.js"
   },
   "dependencies": {
     "@aws-sdk/client-api-gateway": "^3.0.0",
@@ -26,13 +25,19 @@
     "@aws-sdk/client-s3": "^3.0.0",
     "@aws-sdk/client-sqs": "^3.0.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "child_process": "1.0.2",
     "cors": "^2.8.5",
+    "crypto": "1.0.1",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "fs": "0.0.1-security",
     "glob": "10.5.0",
+    "http": "0.0.1-security",
     "js-yaml": "4.1.1",
     "jsonwebtoken": "^9.0.2",
     "mkdirp": "^3.0.1",
+    "path": "0.12.7",
+    "url": "0.11.4",
     "urlpattern-polyfill": "^10.0.0",
     "uuid": "14.0.0"
   },
