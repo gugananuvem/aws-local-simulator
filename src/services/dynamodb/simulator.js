@@ -480,7 +480,9 @@ class DynamoDBSimulator {
       }
 
       this.store.write(tableName, items);
-      responses[tableName] = { UnprocessedItems: unprocessedItems };
+      if (unprocessedItems.length > 0) {
+        responses[tableName] = unprocessedItems;
+      }
     }
 
     this.persistTables();
