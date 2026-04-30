@@ -112,7 +112,13 @@ class LambdaSimulator {
       return { StatusCode: 202 };
     }
 
-    const result = await this.executeHandler(lambda.handler, event);
+    let result;
+    try {
+      result = await this.executeHandler(lambda.handler, event);
+    } catch (error) {
+      logger.error(`❌ Lambda handler error (${functionName}):`, error);
+      throw error;
+    }
     this.audit.record({
       eventName: "Invoke",
       readOnly: false,
@@ -123,17 +129,9 @@ class LambdaSimulator {
   }
 
   async executeHandler(handler, event) {
-    try {
-      const context = this.createContext();
-      const result = await handler(event, context);
-      return result;
-    } catch (error) {
-      logger.error("❌ Erro no handler:", error);
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: "Internal Server Error", message: error.message }),
-      };
-    }
+    const context = this.createContext();
+    const result = await handler(event, context);
+    return result;
   }
 
   createContext() {

@@ -77,8 +77,14 @@ class CognitoSimulator {
       return null;
     }
 
-    const result = await this.lambdaSimulator.invoke(fnName, event, "RequestResponse");
-    return result.Payload;
+    try {
+      const result = await this.lambdaSimulator.invoke(fnName, event, "RequestResponse");
+      return result.Payload;
+    } catch (error) {
+      const wrappedError = new Error(error.message);
+      wrappedError.code = "UserLambdaValidationException";
+      throw wrappedError;
+    }
   }
 
   async initialize() {
