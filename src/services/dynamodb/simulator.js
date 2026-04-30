@@ -21,6 +21,20 @@ class DynamoDBSimulator {
     this.store = new LocalStore(this.dataDir);
     this.tables = new Map();
     this.audit = new CloudTrailAudit("dynamodb.amazonaws.com");
+    // Mutex por tabela para evitar race condition em escritas concorrentes
+    this._writeLocks = new Map();
+  }
+
+  /**
+   * Executa fn com exclusão mútua por tableName.
+   * Garante que escritas na mesma tabela não se sobreponham.
+   */
+  _withTableLock(tableName, fn) {
+    const prev = this._writeLocks.get(tableName) || Promise.resolve();
+    const next = prev.then(() => fn());
+    // Guarda apenas a tail da cadeia (sem acumular referências)
+    this._writeLocks.set(tableName, next.catch(() => {}));
+    return next;
   }
   async initialize() {
     logger.debug("Inicializando DynamoDB Simulator...");
@@ -179,10 +193,10 @@ class DynamoDBSimulator {
         case "DescribeTable":  return this.describeTable(params.TableName);
         case "ListTables":     return this.listTables(params);
         case "DeleteTable":    return this.deleteTable(params);
-        case "PutItem":        return this.putItem(params);
+        case "PutItem":        return this._withTableLock(params.TableName, () => this.putItem(params));
         case "GetItem":        return this.getItem(params);
-        case "UpdateItem":     return this.updateItem(params);
-        case "DeleteItem":     return this.deleteItem(params);
+        case "UpdateItem":     return this._withTableLock(params.TableName, () => this.updateItem(params));
+        case "DeleteItem":     return this._withTableLock(params.TableName, () => this.deleteItem(params));
         case "BatchWriteItem": return this.batchWriteItem(params);
         case "BatchGetItem":   return this.batchGetItem(params);
         case "Query":          return this.query(params);
@@ -446,48 +460,67 @@ class DynamoDBSimulator {
       throw new Error(`RequestItems is required for BatchWriteItem. Params received: ${JSON.stringify(params)}`);
     }
 
-    for (const [tableName, operations] of Object.entries(RequestItems)) {
-      const table = this.tables.get(tableName);
-      if (!table) continue;
+    // Serializa por tabela usando o mutex para evitar race condition
+    const tablePromises = Object.entries(RequestItems).map(([tableName, operations]) =>
+      this._withTableLock(tableName, () => {
+        const table = this.tables.get(tableName);
+        if (!table) {
+          logger.info(`[BATCH-DEBUG] tabela não encontrada: ${tableName}`);
+          return;
+        }
 
-      let items = this.store.read(tableName);
-      const unprocessedItems = [];
+        const itemsBefore = this.store.read(tableName);
+        logger.info(`[BATCH-DEBUG] ${tableName} | antes=${itemsBefore.length} | ops=${operations.length}`);
 
-      for (const op of operations) {
-        if (op.PutRequest) {
-          const item = this.normalizeItem(op.PutRequest.Item, table);
-          const itemKey = this.getItemKey(item, table);
-          const index = items.findIndex((i) => this.getItemKey(i, table) === itemKey);
+        let items = [...itemsBefore];
+        const unprocessedItems = [];
+        let inserts = 0;
+        let updates = 0;
 
-          if (index !== -1) {
-            items[index] = item;
-          } else {
-            items.push(item);
-            table.itemCount++;
-          }
-        } else if (op.DeleteRequest) {
-          const key = op.DeleteRequest.Key;
-          const itemKey = this.getItemKeyFromKeys(key, table);
-          const index = items.findIndex((i) => this.getItemKey(i, table) === itemKey);
+        for (const op of operations) {
+          if (op.PutRequest) {
+            const item = this.normalizeItem(op.PutRequest.Item, table);
+            const itemKey = this.getItemKey(item, table);
+            const index = items.findIndex((i) => this.getItemKey(i, table) === itemKey);
 
-          if (index !== -1) {
-            items.splice(index, 1);
-            table.itemCount--;
-          } else {
-            unprocessedItems.push(op);
+            if (index !== -1) {
+              items[index] = item;
+              updates++;
+            } else {
+              items.push(item);
+              table.itemCount++;
+              inserts++;
+            }
+          } else if (op.DeleteRequest) {
+            const key = op.DeleteRequest.Key;
+            const itemKey = this.getItemKeyFromKeys(key, table);
+            const index = items.findIndex((i) => this.getItemKey(i, table) === itemKey);
+
+            if (index !== -1) {
+              items.splice(index, 1);
+              table.itemCount--;
+            } else {
+              unprocessedItems.push(op);
+            }
           }
         }
-      }
 
-      this.store.write(tableName, items);
-      if (unprocessedItems.length > 0) {
-        responses[tableName] = unprocessedItems;
-      }
-    }
+        this.store.write(tableName, items);
+        const itemsAfter = this.store.read(tableName);
+        logger.info(`[BATCH-DEBUG] ${tableName} | depois=${itemsAfter.length} | esperado=${items.length} | match=${itemsAfter.length === items.length} | inserts=${inserts} | updates=${updates}`);
 
-    this.persistTables();
+        if (unprocessedItems.length > 0) {
+          responses[tableName] = unprocessedItems;
+        }
+      })
+    );
 
-    return { UnprocessedItems: responses };
+    return Promise.all(tablePromises).then(() => {
+      this.persistTables();
+      const finalCount = this.store.read(Object.keys(RequestItems)[0]).length;
+      //logger.info(`[BATCH-DEBUG] FINAL | tabela=${Object.keys(RequestItems)[0]} | total=${finalCount}`);
+      return { UnprocessedItems: responses };
+    });
   }
 
   batchGetItem(params) {
