@@ -13,6 +13,7 @@ class LambdaSimulator {
     this.lambdas = new Map(); // functionName -> { handler, env, config }
     this.environment = { ...process.env };
     this.audit = new CloudTrailAudit("lambda.amazonaws.com");
+    this.cloudwatchSimulator = null; // injected via injectDependencies
   }
 
   async initialize() {
@@ -108,13 +109,13 @@ class LambdaSimulator {
     logger.debug(`🎯 Invocando Lambda: ${functionName}`);
 
     if (invocationType === "Event") {
-      this.executeHandler(lambda.handler, event).catch((err) => logger.error(`❌ Async Lambda error (${functionName}):`, err));
+      this.executeHandler(lambda, functionName, event).catch((err) => logger.error(`❌ Async Lambda error (${functionName}):`, err));
       return { StatusCode: 202 };
     }
 
     let result;
     try {
-      result = await this.executeHandler(lambda.handler, event);
+      result = await this.executeHandler(lambda, functionName, event);
     } catch (error) {
       logger.error(`❌ Lambda handler error (${functionName}):`, error);
       throw error;
@@ -128,21 +129,63 @@ class LambdaSimulator {
     return { StatusCode: result.statusCode || 200, Payload: result };
   }
 
-  async executeHandler(handler, event) {
-    const context = this.createContext();
-    const result = await handler(event, context);
+  async executeHandler(lambda, functionName, event) {
+    const requestId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+    const capturedLogs = [];
+
+    const context = this.createContext(functionName, requestId);
+
+    // Intercept console output during handler execution
+    const origLog = console.log;
+    const origError = console.error;
+    const origWarn = console.warn;
+    const origInfo = console.info;
+
+    const capture = (...args) => {
+      const line = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+      capturedLogs.push(line);
+    };
+
+    console.log = (...args) => { capture(...args); origLog(...args); };
+    console.error = (...args) => { capture(`[ERROR] ${args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`); origError(...args); };
+    console.warn = (...args) => { capture(`[WARN] ${args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`); origWarn(...args); };
+    console.info = (...args) => { capture(`[INFO] ${args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`); origInfo(...args); };
+
+    let result;
+    let execError;
+    try {
+      result = await lambda.handler(event, context);
+    } catch (err) {
+      execError = err;
+      capturedLogs.push(`[ERROR] ${err.message}`);
+    } finally {
+      console.log = origLog;
+      console.error = origError;
+      console.warn = origWarn;
+      console.info = origInfo;
+    }
+
+    // Send logs to CloudWatch asynchronously (non-blocking)
+    if (this.cloudwatchSimulator) {
+      this.cloudwatchSimulator
+        .putLambdaLogs(functionName, requestId, capturedLogs)
+        .catch((err) => logger.debug(`[CloudWatch] Failed to store Lambda logs: ${err.message}`));
+    }
+
+    if (execError) throw execError;
     return result;
   }
 
-  createContext() {
+  createContext(functionName = "local-lambda", requestId = null) {
+    const reqId = requestId || Math.random().toString(36).substring(2, 18);
     return {
-      awsRequestId: Math.random().toString(36).substring(7),
-      functionName: "local-lambda",
+      awsRequestId: reqId,
+      functionName,
       functionVersion: "$LATEST",
-      invokedFunctionArn: "arn:aws:lambda:local:000000000000:function:local-lambda",
+      invokedFunctionArn: `arn:aws:lambda:local:000000000000:function:${functionName}`,
       memoryLimitInMB: "1024",
-      logGroupName: "/aws/lambda/local-lambda",
-      logStreamName: "local-stream",
+      logGroupName: `/aws/lambda/${functionName}`,
+      logStreamName: `${new Date().toISOString().slice(0, 10).replace(/-/g, '/')}/${reqId.slice(0, 8)}`,
       getRemainingTimeInMillis: () => 30000,
       callbackWaitsForEmptyEventLoop: true,
       identity: null,

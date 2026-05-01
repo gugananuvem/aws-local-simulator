@@ -36,6 +36,9 @@ class LambdaService {
   injectDependencies(server) {
     const ct = server.getService('cloudtrail');
     if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
+
+    const cw = server.getService('cloudwatch');
+    if (cw?.simulator) this.simulator.cloudwatchSimulator = cw.simulator;
   }
 
   async start() {
