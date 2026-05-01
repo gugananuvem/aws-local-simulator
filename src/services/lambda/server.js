@@ -18,7 +18,6 @@ class LambdaServer {
   }
 
   setupMiddlewares() {
-    this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true }));
     this.app.use(cors());
     
@@ -51,7 +50,22 @@ class LambdaServer {
     this.app.post('/2015-03-31/functions/:functionName/invocations', async (req, res) => {
       const { functionName } = req.params;
       const invocationType = req.headers['x-amz-invocation-type'] || 'RequestResponse';
-      const event = req.body || {};
+
+      // Read body directly from stream, bypassing all body parsers
+      let event = {};
+      try {
+        const rawBody = await new Promise((resolve, reject) => {
+          const chunks = [];
+          req.on('data', chunk => chunks.push(chunk));
+          req.on('end', () => resolve(Buffer.concat(chunks)));
+          req.on('error', reject);
+        });
+        if (rawBody.length > 0) {
+          event = JSON.parse(rawBody.toString('utf8'));
+        }
+      } catch {
+        event = {};
+      }
 
       logger.debug(`Lambda invoke: ${functionName} (${invocationType})`);
 
@@ -77,11 +91,19 @@ class LambdaServer {
   }
 
   setupAdminRoutes() {
+    // Helper: parse Buffer body as JSON for admin routes
+    const parseJson = (req, res, next) => {
+      if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+        try { req.body = JSON.parse(req.body.toString('utf8')); } catch { req.body = {}; }
+      }
+      next();
+    };
+
     this.app.get('/__admin/functions', (req, res) => {
       res.json(this.simulator.listLambdas());
     });
     
-    this.app.post('/__admin/functions', async (req, res) => {
+    this.app.post('/__admin/functions', parseJson, async (req, res) => {
       try {
         const lambda = await this.simulator.createFunction(req.body);
         res.status(201).json(lambda);
@@ -90,7 +112,7 @@ class LambdaServer {
       }
     });
 
-    this.app.put('/__admin/functions/:name', async (req, res) => {
+    this.app.put('/__admin/functions/:name', parseJson, async (req, res) => {
       try {
         const lambda = await this.simulator.updateFunction(req.params.name, req.body);
         res.json(lambda);
@@ -110,7 +132,7 @@ class LambdaServer {
       res.json({ message: 'Lambdas recarregadas', count: this.simulator.getLambdasCount() });
     });
 
-    this.app.post('/__admin/env', (req, res) => {
+    this.app.post('/__admin/env', parseJson, (req, res) => {
       const { key, value } = req.body;
       if (key && value !== undefined) {
         this.simulator.setEnvironmentVariable(key, value);
