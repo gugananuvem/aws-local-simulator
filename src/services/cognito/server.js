@@ -164,6 +164,8 @@ class CognitoServer {
         return this.simulator.adminListGroupsForUser(params);
       case 'AdminUserGlobalSignOut':
         return this.simulator.adminUserGlobalSignOut(params);
+      case 'AdminUpdateUserAttributes':
+        return this.simulator.adminUpdateUserAttributes(params);
       
       // Identity Pool Operations
       case 'CreateIdentityPool':

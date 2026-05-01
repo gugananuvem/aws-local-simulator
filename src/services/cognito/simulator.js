@@ -1284,6 +1284,28 @@ class CognitoSimulator {
     return password.sort(() => Math.random() - 0.5).join("");
   }
 
+  adminUpdateUserAttributes(params) {
+    const { UserPoolId, Username, UserAttributes } = params;
+    const userPool = this.userPools.get(UserPoolId);
+
+    if (!userPool) {
+      throw new Error(`User pool ${UserPoolId} not found`);
+    }
+
+    const user = this.findUserByUsername(Username, null, UserPoolId);
+    if (!user) {
+      throw new Error(`User not found: ${Username}`);
+    }
+
+    const updates = this.normalizeUserAttributes(UserAttributes || []);
+    Object.assign(user.Attributes, updates);
+    user.LastModifiedDate = Math.floor(Date.now() / 1000);
+    this.persistUsers();
+
+    logger.debug(`✅ AdminUpdateUserAttributes: ${Username} in ${UserPoolId}`);
+    return {};
+  }
+
   adminSetUserPassword(params) {
     const { UserPoolId, Username, Password, Permanent } = params;
     const user = this.findUserByUsername(Username, null, UserPoolId);
