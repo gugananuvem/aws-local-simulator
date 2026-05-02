@@ -748,8 +748,8 @@ class DynamoDBSimulator {
         const [path, valueExpr] = assignment.split("=").map((s) => s.trim());
         const attributeName = nameMap[path] || path.replace(/#/g, "");
         const rawValue = valueMap[valueExpr];
-        const value = rawValue && typeof rawValue === 'object' ? Object.values(rawValue)[0] : rawValue;
-        item[attributeName] = value;
+        // Usa normalizeValue para garantir o mesmo formato que o putItem
+        item[attributeName] = this.normalizeValue(rawValue, table);
       }
     }
 
@@ -761,7 +761,8 @@ class DynamoDBSimulator {
         const parts = assignment.split(/\s+/);
         const attributeName = nameMap[parts[0]] || parts[0].replace(/#/g, "");
         const rawValue = valueMap[parts[1]];
-        const delta = rawValue && typeof rawValue === 'object' ? Object.values(rawValue)[0] : rawValue;
+        // Usa normalizeValue para garantir o mesmo formato que o putItem
+        const delta = this.normalizeValue(rawValue, table);
         const current = item[attributeName];
         if (current === undefined || current === null) {
           item[attributeName] = typeof delta === 'number' ? delta : parseFloat(delta) || 0;
