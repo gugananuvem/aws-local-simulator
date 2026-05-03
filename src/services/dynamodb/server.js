@@ -85,7 +85,16 @@ class DynamoDBServer {
     });
     
     this.app.get('/__admin/tables/:tableName/items', (req, res) => {
-      const items = this.simulator.scan({ TableName: req.params.tableName });
+      const params = { TableName: req.params.tableName };
+      if (req.query.Limit) params.Limit = Number(req.query.Limit);
+      if (req.query.ExclusiveStartKey) {
+        try {
+          params.ExclusiveStartKey = JSON.parse(req.query.ExclusiveStartKey);
+        } catch (e) {
+          // Ignore invalid JSON for ExclusiveStartKey
+        }
+      }
+      const items = this.simulator.scan(params);
       res.json(items);
     });
     

@@ -33,7 +33,7 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 ## 📦 Instalação
 
 ```bash
-npm install --save-dev aws-local-simulator
+npm install --save-dev @gugananuvem/aws-local-simulator
 ```
 
 ## 🚀 Uso Rápido

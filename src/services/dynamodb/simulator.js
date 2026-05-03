@@ -550,7 +550,17 @@ class DynamoDBSimulator {
   }
 
   query(params) {
-    const { TableName, KeyConditionExpression, ExpressionAttributeValues, ExpressionAttributeNames = {}, IndexName } = params;
+    const { 
+      TableName, 
+      KeyConditionExpression, 
+      FilterExpression,
+      ExpressionAttributeValues, 
+      ExpressionAttributeNames = {}, 
+      IndexName,
+      Limit,
+      ExclusiveStartKey,
+      ProjectionExpression
+    } = params;
     const table = this.tables.get(TableName);
 
     if (!table) {
@@ -558,23 +568,6 @@ class DynamoDBSimulator {
     }
 
     let items = this.store.read(TableName);
-
-    // Resolve hash key e range key
-    let hashKey;
-    let rangeKey;
-
-    if (IndexName != null) {
-      const gsiDefs = table.globalSecondaryIndexes || {};
-      const gsi = gsiDefs[IndexName];
-      if (!gsi) {
-        throw new Error(`GSI "${IndexName}" not found on table "${TableName}"`);
-      }
-      hashKey = gsi.hashKey;
-      rangeKey = gsi.rangeKey;
-    } else {
-      hashKey = table.hashKey;
-      rangeKey = table.rangeKey;
-    }
 
     // Helper para resolver nomes de atributos (que podem ser placeholders como #n0)
     const resolveAttributeName = (name) => {
@@ -586,7 +579,6 @@ class DynamoDBSimulator {
     const resolveValue = (placeholder) => {
       const rawValue = ExpressionAttributeValues[placeholder];
       if (rawValue === undefined) return undefined;
-      // Se for formato DynamoDB { S: "..." }, desmembra. Se for nativo (DocumentClient), usa direto.
       if (rawValue !== null && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
         const keys = Object.keys(rawValue);
         if (keys.length === 1 && ["S", "N", "BOOL", "NULL", "M", "L", "SS", "NS", "BS"].includes(keys[0])) {
@@ -597,31 +589,23 @@ class DynamoDBSimulator {
     };
 
     // Filtra pela KeyConditionExpression
-    // DynamoDB Query KeyConditionExpression tem formato restrito: PartitionKey = :val AND (SortKey operator :val)
     if (KeyConditionExpression) {
       const parts = KeyConditionExpression.split(/\s+AND\s+/i);
-      
       for (const part of parts) {
         const match = part.match(/([^\s]+)\s*(=|>|<|>=|<=|BEGINS_WITH|BETWEEN)\s*([^\s]+)(?:\s+AND\s+([^\s]+))?/i);
         if (match) {
           const attrPlaceholder = match[1];
           const operator = match[2].toUpperCase();
           const valPlaceholder = match[3];
-          
           const attributeName = resolveAttributeName(attrPlaceholder);
           const expectedValue = resolveValue(valPlaceholder);
 
-          if (operator === "=") {
-            items = items.filter(item => item[attributeName] === expectedValue);
-          } else if (operator === ">") {
-            items = items.filter(item => item[attributeName] > expectedValue);
-          } else if (operator === "<") {
-            items = items.filter(item => item[attributeName] < expectedValue);
-          } else if (operator === ">=") {
-            items = items.filter(item => item[attributeName] >= expectedValue);
-          } else if (operator === "<=") {
-            items = items.filter(item => item[attributeName] <= expectedValue);
-          } else if (operator === "BEGINS_WITH") {
+          if (operator === "=") items = items.filter(item => item[attributeName] === expectedValue);
+          else if (operator === ">") items = items.filter(item => item[attributeName] > expectedValue);
+          else if (operator === "<") items = items.filter(item => item[attributeName] < expectedValue);
+          else if (operator === ">=") items = items.filter(item => item[attributeName] >= expectedValue);
+          else if (operator === "<=") items = items.filter(item => item[attributeName] <= expectedValue);
+          else if (operator === "BEGINS_WITH") {
             const val = expectedValue;
             items = items.filter(item => String(item[attributeName] || "").startsWith(String(val)));
           }
@@ -629,42 +613,120 @@ class DynamoDBSimulator {
       }
     }
 
-    const marshalledItems = items.map((item) => this.marshallItem(item, table));
+    const scannedCount = items.length;
+
+    // Aplica FilterExpression se existir
+    if (FilterExpression) {
+      items = this.applyFilter(items, FilterExpression, ExpressionAttributeValues, ExpressionAttributeNames, table);
+    }
+
+    const totalMatchingCount = items.length;
+
+    // Apply Pagination (ExclusiveStartKey)
+    if (ExclusiveStartKey) {
+      const startKeyStr = this.getItemKeyFromKeys(ExclusiveStartKey, table);
+      const startIndex = items.findIndex(item => this.getItemKey(item, table) === startKeyStr);
+      if (startIndex !== -1) {
+        items = items.slice(startIndex + 1);
+      }
+    }
+
+    // Apply Limit
+    let lastEvaluatedKey = null;
+    if (Limit && items.length > Limit) {
+      const lastItem = items[Limit - 1];
+      lastEvaluatedKey = this.marshallItem(lastItem, table);
+      items = items.slice(0, Limit);
+    }
+
+    let marshalledItems = items.map((item) => this.marshallItem(item, table));
+
+    // Apply Projection
+    if (ProjectionExpression) {
+      marshalledItems = this.applyProjection(marshalledItems, ProjectionExpression, ExpressionAttributeNames);
+    }
 
     return {
       Items: marshalledItems,
       Count: marshalledItems.length,
-      ScannedCount: items.length,
+      ScannedCount: scannedCount,
+      LastEvaluatedKey: lastEvaluatedKey || undefined
     };
   }
 
   scan(params) {
-    const { TableName, FilterExpression, ExpressionAttributeValues, ExpressionAttributeNames = {}, Limit } = params;
+    const { 
+      TableName, 
+      FilterExpression, 
+      ExpressionAttributeValues, 
+      ExpressionAttributeNames = {}, 
+      Limit,
+      ExclusiveStartKey,
+      ProjectionExpression
+    } = params;
     const table = this.tables.get(TableName);
 
     if (!table) {
       throw new Error(`Table ${TableName} does not exist`);
     }
 
-    let items = this.store.read(TableName);
+    const allItems = this.store.read(TableName);
+    let items = allItems;
+    const scannedCount = items.length;
 
     // Aplica filtro se existir
     if (FilterExpression) {
       items = this.applyFilter(items, FilterExpression, ExpressionAttributeValues, ExpressionAttributeNames, table);
     }
 
-    // Aplica limite
+    // Apply Pagination (ExclusiveStartKey)
+    if (ExclusiveStartKey) {
+      const startKeyStr = this.getItemKeyFromKeys(ExclusiveStartKey, table);
+      const startIndex = items.findIndex(item => this.getItemKey(item, table) === startKeyStr);
+      if (startIndex !== -1) {
+        items = items.slice(startIndex + 1);
+      }
+    }
+
+    // Apply Limit
+    let lastEvaluatedKey = null;
     if (Limit && items.length > Limit) {
+      const lastItem = items[Limit - 1];
+      lastEvaluatedKey = this.marshallItem(lastItem, table);
       items = items.slice(0, Limit);
     }
 
-    const marshalledItems = items.map((item) => this.marshallItem(item, table));
+    let marshalledItems = items.map((item) => this.marshallItem(item, table));
+
+    // Apply Projection
+    if (ProjectionExpression) {
+      marshalledItems = this.applyProjection(marshalledItems, ProjectionExpression, ExpressionAttributeNames);
+    }
 
     return {
       Items: marshalledItems,
       Count: marshalledItems.length,
-      ScannedCount: items.length,
+      ScannedCount: scannedCount,
+      LastEvaluatedKey: lastEvaluatedKey || undefined
     };
+  }
+
+  applyProjection(items, expression, names = {}) {
+    const projectedAttrs = expression.split(',').map(s => s.trim()).filter(Boolean);
+    const resolvedAttrs = projectedAttrs.map(attr => {
+      if (attr.startsWith("#")) return names[attr] || attr;
+      return attr;
+    });
+
+    return items.map(item => {
+      const newItem = {};
+      resolvedAttrs.forEach(attr => {
+        if (item[attr] !== undefined) {
+          newItem[attr] = item[attr];
+        }
+      });
+      return newItem;
+    });
   }
 
 
