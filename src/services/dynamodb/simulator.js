@@ -559,7 +559,8 @@ class DynamoDBSimulator {
       IndexName,
       Limit,
       ExclusiveStartKey,
-      ProjectionExpression
+      ProjectionExpression,
+      ScanIndexForward = true
     } = params;
     const table = this.tables.get(TableName);
 
@@ -568,6 +569,15 @@ class DynamoDBSimulator {
     }
 
     let items = this.store.read(TableName);
+
+    // Se for consulta por índice, filtra itens que não possuem as chaves do índice (Sparse Index)
+    if (IndexName && table.globalSecondaryIndexes?.[IndexName]) {
+      const gsi = table.globalSecondaryIndexes[IndexName];
+      items = items.filter(item => item[gsi.hashKey] !== undefined);
+      if (gsi.rangeKey) {
+        items = items.filter(item => item[gsi.rangeKey] !== undefined);
+      }
+    }
 
     // Helper para resolver nomes de atributos (que podem ser placeholders como #n0)
     const resolveAttributeName = (name) => {
@@ -611,6 +621,32 @@ class DynamoDBSimulator {
           }
         }
       }
+    }
+
+    // Ordenação (DynamoDB sempre ordena pela Sort Key)
+    let sortKey = table.rangeKey;
+    if (IndexName && table.globalSecondaryIndexes?.[IndexName]) {
+      sortKey = table.globalSecondaryIndexes[IndexName].rangeKey;
+    }
+
+    if (sortKey) {
+      items.sort((a, b) => {
+        const valA = a[sortKey];
+        const valB = b[sortKey];
+        
+        if (valA === valB) return 0;
+        if (valA === undefined || valA === null) return 1;
+        if (valB === undefined || valB === null) return -1;
+        
+        let comparison = 0;
+        if (typeof valA === 'number' && typeof valB === 'number') {
+          comparison = valA - valB;
+        } else {
+          comparison = String(valA).localeCompare(String(valB));
+        }
+        
+        return ScanIndexForward ? comparison : -comparison;
+      });
     }
 
     const scannedCount = items.length;
