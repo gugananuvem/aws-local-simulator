@@ -602,7 +602,19 @@ class DynamoDBSimulator {
     if (KeyConditionExpression) {
       const parts = KeyConditionExpression.split(/\s+AND\s+/i);
       for (const part of parts) {
-        const match = part.match(/([^\s]+)\s*(=|>|<|>=|<=|BEGINS_WITH|BETWEEN)\s*([^\s]+)(?:\s+AND\s+([^\s]+))?/i);
+        const trimmedPart = part.trim();
+
+        // Tenta match de função: begins_with(attr, :val)
+        const funcMatch = trimmedPart.match(/^begins_with\s*\(\s*([^\s,]+)\s*,\s*([^\s,)]+)\s*\)$/i);
+        if (funcMatch) {
+          const attributeName = resolveAttributeName(funcMatch[1]);
+          const expectedValue = resolveValue(funcMatch[2]);
+          items = items.filter(item => String(item[attributeName] || "").startsWith(String(expectedValue)));
+          continue;
+        }
+
+        // Tenta match de operador infix: attr OP :val
+        const match = trimmedPart.match(/([^\s]+)\s*(=|>|<|>=|<=|BEGINS_WITH|BETWEEN)\s*([^\s]+)(?:\s+AND\s+([^\s]+))?/i);
         if (match) {
           const attrPlaceholder = match[1];
           const operator = match[2].toUpperCase();
