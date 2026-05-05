@@ -1222,6 +1222,23 @@ class CognitoSimulator {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
 
+    // Check if a user with the same Username or email already exists in this pool
+    const normalizedAttrs = this.normalizeUserAttributes(UserAttributes || []);
+    const emailToCheck = normalizedAttrs.email;
+
+    const existingUser = Array.from(this.users.values()).find((u) => {
+      if (u.UserPoolId !== UserPoolId) return false;
+      if (u.Username === Username) return true;
+      if (emailToCheck && u.Attributes?.email === emailToCheck) return true;
+      return false;
+    });
+
+    if (existingUser) {
+      const err = new Error(`User account already exists`);
+      err.code = "UsernameExistsException";
+      throw err;
+    }
+
     const tempPassword = TemporaryPassword || this._generateTemporaryPassword();
 
     const userId = uuidv4();
@@ -1229,7 +1246,7 @@ class CognitoSimulator {
       Username: Username,
       UserPoolId: UserPoolId,
       UserId: userId,
-      Attributes: this.normalizeUserAttributes(UserAttributes || []),
+      Attributes: normalizedAttrs,
       Enabled: true,
       UserStatus: "FORCE_CHANGE_PASSWORD",
       CreatedDate: new Date().toISOString(),
@@ -1242,7 +1259,7 @@ class CognitoSimulator {
 
     // PreSignUp trigger — dispara antes de criar o usuário (admin context)
     const preSignUpEvent = this._buildTriggerEvent("PreSignUp_AdminCreateUser", userPool, user, "ADMIN", {
-      userAttributes: this.normalizeUserAttributes(UserAttributes || []),
+      userAttributes: normalizedAttrs,
       validationData: {},
       clientMetadata: {},
     });
