@@ -268,8 +268,8 @@ class CognitoSimulator {
         Username: u.Username,
         UserStatus: u.UserStatus,
         Enabled: u.Enabled,
-        UserCreateDate: u.CreatedDate,
-        UserLastModifiedDate: u.LastModifiedDate,
+        UserCreateDate: new Date(u.CreatedDate).getTime() / 1000,
+        UserLastModifiedDate: new Date(u.LastModifiedDate).getTime() / 1000,
         Attributes: this._formatUserAttributesWithSub(u),
       })),
       PaginationToken: nextToken,
@@ -1204,8 +1204,8 @@ class CognitoSimulator {
     return {
       Username: user.Username,
       UserAttributes: this._formatUserAttributesWithSub(user),
-      UserCreateDate: user.CreatedDate,
-      UserLastModifiedDate: user.LastModifiedDate,
+      UserCreateDate: new Date(user.CreatedDate).getTime() / 1000,
+      UserLastModifiedDate: new Date(user.LastModifiedDate).getTime() / 1000,
       Enabled: user.Enabled,
       UserStatus: user.UserStatus,
       MFAOptions: user.MfaOptions,
@@ -1279,12 +1279,12 @@ class CognitoSimulator {
     return {
       User: {
         Username: user.Username,
-        UserAttributes: this._formatUserAttributesWithSub(user),
-        UserCreateDate: user.CreatedDate,
-        UserLastModifiedDate: user.LastModifiedDate,
+        Attributes: this._formatUserAttributesWithSub(user),
+        UserCreateDate: new Date(user.CreatedDate).getTime() / 1000,
+        UserLastModifiedDate: new Date(user.LastModifiedDate).getTime() / 1000,
         Enabled: user.Enabled,
         UserStatus: user.UserStatus,
-        TemporaryPassword: tempPassword,
+        MFAOptions: user.MfaOptions || [],
       },
     };
   }
@@ -1506,7 +1506,7 @@ class CognitoSimulator {
       AccessKeyId: `AKIA${crypto.randomBytes(16).toString("hex").toUpperCase()}`,
       SecretKey: crypto.randomBytes(32).toString("hex"),
       SessionToken: crypto.randomBytes(64).toString("base64"),
-      Expiration: new Date(Date.now() + 3600000).toISOString(),
+      Expiration: new Date(Date.now() + 3600000),
     };
 
     return {
