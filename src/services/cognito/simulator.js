@@ -253,15 +253,39 @@ class CognitoSimulator {
       throw new Error(`User pool ${UserPoolId} not found`);
     }
 
-    let users = Array.from(this.users.values()).filter((u) => u.UserPoolId === UserPoolId);
+    // Parse and validate filter if provided
+    let filteredUsers = Array.from(this.users.values()).filter((u) => u.UserPoolId === UserPoolId);
+
+    if (Filter) {
+      try {
+        // Validate filter syntax first
+        this.validateFilterSyntax(Filter);
+
+        // Parse filter expression
+        const filterExpression = this.parseFilterExpression(Filter);
+
+        if (filterExpression) {
+          filteredUsers = filteredUsers.filter((u) => {
+            const userAttributeValue = u.Attributes?.[filterExpression.attribute];
+            if (userAttributeValue === undefined) return false;
+            return this._matchFilterValue(userAttributeValue, filterExpression.operator, filterExpression.value);
+          });
+        }
+      } catch (err) {
+        if (err.code !== "InvalidParameterException") {
+          err.code = "InvalidParameterException";
+        }
+        throw err;
+      }
+    }
 
     if (PaginationToken) {
       const startIndex = parseInt(PaginationToken);
-      users = users.slice(startIndex);
+      filteredUsers = filteredUsers.slice(startIndex);
     }
 
-    const results = users.slice(0, Limit);
-    const nextToken = results.length === Limit && users.length > Limit ? String(Limit) : null;
+    const results = filteredUsers.slice(0, Limit);
+    const nextToken = results.length === Limit && filteredUsers.length > Limit ? String(Limit) : null;
 
     return {
       Users: results.map((u) => ({
@@ -274,6 +298,192 @@ class CognitoSimulator {
       })),
       PaginationToken: nextToken,
     };
+  }
+
+  /**
+   * Validates filter expression syntax
+   * @param {string} filter - The filter expression string
+   * @returns {boolean} - Returns true if filter is valid, null if filter is empty/undefined
+   * @throws {InvalidParameterException} - If filter syntax is invalid or contains unsupported operator
+   */
+  validateFilterSyntax(filter) {
+    if (!filter || filter.trim() === "") {
+      return null;
+    }
+
+    const trimmedFilter = filter.trim();
+
+    // Supported operators - check longer operators first to avoid partial matches
+    // Note: "CONTAINS" must come before "=" to avoid matching "=" inside "CONTAINS"
+    // "S=" and "B=" need to be checked with a space before them (e.g., "email S=")
+    const supportedOperators = ["CONTAINS", "^=", "S=", "B=", "="];
+
+    // Find which operator is used
+    let operatorFound = null;
+    let operatorIndex = -1;
+
+    for (const op of supportedOperators) {
+      const idx = trimmedFilter.indexOf(op);
+      if (idx !== -1) {
+        // For S= and B=, ensure there's a space or start of string before the operator
+        // For other operators, just use the first match
+        if ((op === "S=" || op === "B=") && idx > 0) {
+          const charBefore = trimmedFilter[idx - 1];
+          if (charBefore !== " ") {
+            continue; // Skip this operator if not preceded by space
+          }
+        }
+        operatorFound = op;
+        operatorIndex = idx;
+        break;
+      }
+    }
+
+    if (!operatorFound) {
+      const err = new Error(`Invalid filter syntax: unsupported operator in "${filter}"`);
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    // Split by operator
+    const parts = trimmedFilter.split(operatorFound);
+    if (parts.length !== 2) {
+      const err = new Error(`Invalid filter syntax: expected format "attribute operator value" in "${filter}"`);
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    const [attributePart, valuePart] = parts;
+
+    // Validate attribute name (can be quoted or unquoted)
+    const attribute = attributePart.trim();
+    if (attribute === "") {
+      const err = new Error(`Invalid filter syntax: empty attribute name in "${filter}"`);
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    // Validate value (can be quoted or unquoted)
+    const value = valuePart.trim();
+    if (value === "") {
+      const err = new Error(`Invalid filter syntax: empty value in "${filter}"`);
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    return true;
+  }
+
+  /**
+   * Parses filter expression into structured object
+   * @param {string} filter - The filter expression string
+   * @returns {{ attribute: string, operator: string, value: string } | null} - Parsed filter object or null if filter is empty
+   * @throws {InvalidParameterException} - If filter syntax is invalid
+   */
+  parseFilterExpression(filter) {
+    if (!filter || filter.trim() === "") {
+      return null;
+    }
+
+    const trimmedFilter = filter.trim();
+
+    // Supported operators - check longer operators first to avoid partial matches
+    // Note: "CONTAINS" must come before "=" to avoid matching "=" inside "CONTAINS"
+    // "S=" and "B=" need to be checked with a space before them (e.g., "email S=")
+    const supportedOperators = ["CONTAINS", "^=", "S=", "B=", "="];
+
+    // Find which operator is used
+    let operatorFound = null;
+    let operatorIndex = -1;
+
+    for (const op of supportedOperators) {
+      const idx = trimmedFilter.indexOf(op);
+      if (idx !== -1) {
+        // For S= and B=, ensure there's a space or start of string before the operator
+        // For other operators, just use the first match
+        if ((op === "S=" || op === "B=") && idx > 0) {
+          const charBefore = trimmedFilter[idx - 1];
+          if (charBefore !== " ") {
+            continue; // Skip this operator if not preceded by space
+          }
+        }
+        operatorFound = op;
+        operatorIndex = idx;
+        break;
+      }
+    }
+
+    if (!operatorFound) {
+      const err = new Error(`Invalid filter syntax: unsupported operator in "${filter}"`);
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    // Split by operator
+    const attributePart = trimmedFilter.substring(0, operatorIndex).trim();
+    const valuePart = trimmedFilter.substring(operatorIndex + operatorFound.length).trim();
+
+    // Validate attribute name
+    if (attributePart === "") {
+      const err = new Error(`Invalid filter syntax: empty attribute name in "${filter}"`);
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    // Remove quotes from attribute name if present
+    let attribute = attributePart;
+    if ((attributePart.startsWith('"') && attributePart.endsWith('"')) ||
+      (attributePart.startsWith("'") && attributePart.endsWith("'"))) {
+      attribute = attributePart.slice(1, -1);
+    }
+
+    // Validate value
+    if (valuePart === "") {
+      const err = new Error(`Invalid filter syntax: empty value in "${filter}"`);
+      err.code = "InvalidParameterException";
+      throw err;
+    }
+
+    // Remove quotes from value if present
+    let value = valuePart;
+    if ((valuePart.startsWith('"') && valuePart.endsWith('"')) ||
+      (valuePart.startsWith("'") && valuePart.endsWith("'"))) {
+      value = valuePart.slice(1, -1);
+    }
+
+    return {
+      attribute,
+      operator: operatorFound,
+      value,
+    };
+  }
+
+  /**
+   * Matches a user attribute value against the filter operator and value
+   * @param {string} userAttributeValue - The user's attribute value
+   * @param {string} operator - The filter operator
+   * @param {string} filterValue - The filter value
+   * @returns {boolean} - Whether the value matches
+   */
+  _matchFilterValue(userAttributeValue, operator, filterValue) {
+    if (typeof userAttributeValue !== "string") {
+      userAttributeValue = String(userAttributeValue);
+    }
+
+    switch (operator) {
+      case "^=": // Starts with
+        return userAttributeValue.startsWith(filterValue);
+      case "=": // Exact match
+        return userAttributeValue === filterValue;
+      case "CONTAINS": // Contains substring
+        return userAttributeValue.includes(filterValue);
+      case "S=": // String match (same as exact match for string attributes)
+        return userAttributeValue === filterValue;
+      case "B=": // Binary match (treat as string for simplicity)
+        return userAttributeValue === filterValue;
+      default:
+        return false;
+    }
   }
 
   listUserPoolClients(params = {}) {
@@ -321,7 +531,11 @@ class CognitoSimulator {
     const user = this.findUserByUsername(Username, ClientId);
     if (!user) throw new Error(`User not found: ${Username}`);
 
-    if (user.UserStatus !== "CONFIRMED") {
+    // Cognito real bloqueia forgotPassword apenas para usuários que nunca foram confirmados
+    // (UNCONFIRMED, FORCE_CHANGE_PASSWORD) pois não têm email/phone verificado.
+    // CONFIRMED e RESET_REQUIRED são válidos — o usuário já foi confirmado anteriormente.
+    const blockedStatuses = ["UNCONFIRMED", "FORCE_CHANGE_PASSWORD"];
+    if (blockedStatuses.includes(user.UserStatus)) {
       const err = new Error("Cannot reset password for the user as there is no registered/verified email or phone_number");
       err.code = "InvalidParameterException";
       throw err;
@@ -351,7 +565,8 @@ class CognitoSimulator {
     const user = this.findUserByUsername(Username, ClientId);
     if (!user) throw new Error(`User not found: ${Username}`);
 
-    if (user.UserStatus !== "CONFIRMED") {
+    const blockedStatuses = ["UNCONFIRMED", "FORCE_CHANGE_PASSWORD"];
+    if (blockedStatuses.includes(user.UserStatus)) {
       const err = new Error("Cannot reset password for the user as there is no registered/verified email or phone_number");
       err.code = "InvalidParameterException";
       throw err;
@@ -364,6 +579,8 @@ class CognitoSimulator {
     }
 
     user.Password = this.hashPassword(Password);
+    user.UserStatus = "CONFIRMED";
+    user.LastModifiedDate = Math.floor(Date.now() / 1000);
     delete user.PasswordResetCode;
     this.persistUsers();
     return {};
@@ -409,6 +626,7 @@ class CognitoSimulator {
       user.Password = this.hashPassword(newPassword);
       user.UserStatus = "CONFIRMED";
       user.LastModifiedDate = Math.floor(Date.now() / 1000);
+      delete user.PasswordTemp;
       this.persistUsers();
       this.customAuthSessions.delete(params.Session);
 
@@ -868,6 +1086,7 @@ class CognitoSimulator {
     user.UserStatus = "CONFIRMED";
     user.LastModifiedDate = new Date().toISOString();
     delete user.ConfirmationCode;
+    delete user.PasswordTemp;
     this.persistUsers();
 
     const event = this._buildTriggerEvent("PostConfirmation_ConfirmSignUp", userPool, user, ClientId, {
@@ -976,6 +1195,14 @@ class CognitoSimulator {
         Session: sessionToken,
         AuthenticationResult: null,
       };
+    }
+
+    if (user.UserStatus === "RESET_REQUIRED") {
+      // Cognito real retorna PasswordResetRequiredException quando o usuário tenta logar
+      // com status RESET_REQUIRED — ele deve usar forgotPassword para redefinir a senha
+      const err = new Error("Password reset required for the user");
+      err.code = "PasswordResetRequiredException";
+      throw err;
     }
 
     if (user.UserStatus !== "CONFIRMED") {
@@ -1252,6 +1479,7 @@ class CognitoSimulator {
       CreatedDate: new Date().toISOString(),
       LastModifiedDate: new Date().toISOString(),
       Password: this.hashPassword(tempPassword),
+      PasswordTemp: tempPassword,
       MfaOptions: [],
       PreferredMfaSetting: null,
       UserMFASettingList: [],
@@ -1284,6 +1512,7 @@ class CognitoSimulator {
         UserLastModifiedDate: new Date(user.LastModifiedDate).getTime() / 1000,
         Enabled: user.Enabled,
         UserStatus: user.UserStatus,
+        PasswordTemp: tempPassword,
         MFAOptions: user.MfaOptions || [],
       },
     };
@@ -1334,7 +1563,9 @@ class CognitoSimulator {
     user.Password = this.hashPassword(Password);
     if (Permanent) {
       user.UserStatus = "CONFIRMED";
-    }
+      delete user.PasswordTemp;
+    } else
+      user.PasswordTemp = Password;
     user.LastModifiedDate = new Date().toISOString();
     this.persistUsers();
 
@@ -1549,13 +1780,13 @@ class CognitoSimulator {
         // Sanitize dates
         if (typeof data.CreationDate === 'string') data.CreationDate = Math.floor(new Date(data.CreationDate).getTime() / 1000);
         if (typeof data.LastModifiedDate === 'string') data.LastModifiedDate = Math.floor(new Date(data.LastModifiedDate).getTime() / 1000);
-        
+
         data.Clients = new Map(Object.entries(data.Clients || {}));
         for (const client of data.Clients.values()) {
           if (typeof client.CreatedDate === 'string') client.CreatedDate = Math.floor(new Date(client.CreatedDate).getTime() / 1000);
           if (typeof client.LastModifiedDate === 'string') client.LastModifiedDate = Math.floor(new Date(client.LastModifiedDate).getTime() / 1000);
         }
-        
+
         data.Groups = new Map(Object.entries(data.Groups || {}));
         data.IdentityProviders = new Map(Object.entries(data.IdentityProviders || {}));
         data.ResourceServers = new Map(Object.entries(data.ResourceServers || {}));
