@@ -1,7 +1,7 @@
 /**
  * DynamoDB Simulator Core
  */
-
+const SQLiteStore = require("./sqlite-store");
 const LocalStore = require("../../utils/local-store");
 const logger = require("../../utils/logger");
 const crypto = require("crypto");
@@ -12,12 +12,21 @@ class DynamoDBSimulator {
   constructor(config) {
     this.config = config;
     const dataDir = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR || config.dataDir || "./.aws-local-simulator-data";
+    this.useSQLite = process.env.DYNAMODB_USE_SQLITE !== 'false'; // Default true
 
     if (!dataDir) {
       throw new Error("AWS_LOCAL_SIMULATOR_DATA_DIR not set");
     }
 
-    this.dataDir = path.join(dataDir, "dynamodb");
+    // Escolhe o store baseado na configuração
+    if (this.useSQLite) {
+      this.store = new SQLiteStore(this.dataDir);
+      logger.info("📦 Usando SQLite Store para persistência");
+    } else {
+      this.store = new LocalStore(this.dataDir);
+      logger.info("📄 Usando JSON Store (legacy) para persistência");
+    }
+    
     this.store = new LocalStore(this.dataDir);
     this.tables = new Map();
     this.audit = new CloudTrailAudit("dynamodb.amazonaws.com");
@@ -33,7 +42,10 @@ class DynamoDBSimulator {
     const prev = this._writeLocks.get(tableName) || Promise.resolve();
     const next = prev.then(() => fn());
     // Guarda apenas a tail da cadeia (sem acumular referências)
-    this._writeLocks.set(tableName, next.catch(() => {}));
+    this._writeLocks.set(
+      tableName,
+      next.catch(() => {}),
+    );
     return next;
   }
   async initialize() {
@@ -160,7 +172,12 @@ class DynamoDBSimulator {
     }
 
     logger.debug(`✅ Tabela criada: ${TableName}`);
-    this.audit.record({ eventName: "CreateTable", readOnly: false, resources: [{ ARN: `arn:aws:dynamodb:local:000000000000:table/${TableName}`, type: "AWS::DynamoDB::Table" }], requestParameters: { tableName: TableName } });
+    this.audit.record({
+      eventName: "CreateTable",
+      readOnly: false,
+      resources: [{ ARN: `arn:aws:dynamodb:local:000000000000:table/${TableName}`, type: "AWS::DynamoDB::Table" }],
+      requestParameters: { tableName: TableName },
+    });
 
     return {
       TableDescription: {
@@ -189,19 +206,32 @@ class DynamoDBSimulator {
 
     const result = (() => {
       switch (action) {
-        case "CreateTable":    return this.createTable(params);
-        case "DescribeTable":  return this.describeTable(params.TableName);
-        case "ListTables":     return this.listTables(params);
-        case "DeleteTable":    return this.deleteTable(params);
-        case "PutItem":        return this._withTableLock(params.TableName, () => this.putItem(params));
-        case "GetItem":        return this.getItem(params);
-        case "UpdateItem":     return this._withTableLock(params.TableName, () => this.updateItem(params));
-        case "DeleteItem":     return this._withTableLock(params.TableName, () => this.deleteItem(params));
-        case "BatchWriteItem": return this.batchWriteItem(params);
-        case "BatchGetItem":   return this.batchGetItem(params);
-        case "Query":          return this.query(params);
-        case "Scan":           return this.scan(params);
-        default: throw new Error(`Unsupported action: ${action}`);
+        case "CreateTable":
+          return this.createTable(params);
+        case "DescribeTable":
+          return this.describeTable(params.TableName);
+        case "ListTables":
+          return this.listTables(params);
+        case "DeleteTable":
+          return this.deleteTable(params);
+        case "PutItem":
+          return this._withTableLock(params.TableName, () => this.putItem(params));
+        case "GetItem":
+          return this.getItem(params);
+        case "UpdateItem":
+          return this._withTableLock(params.TableName, () => this.updateItem(params));
+        case "DeleteItem":
+          return this._withTableLock(params.TableName, () => this.deleteItem(params));
+        case "BatchWriteItem":
+          return this.batchWriteItem(params);
+        case "BatchGetItem":
+          return this.batchGetItem(params);
+        case "Query":
+          return this.query(params);
+        case "Scan":
+          return this.scan(params);
+        default:
+          throw new Error(`Unsupported action: ${action}`);
       }
     })();
 
@@ -242,10 +272,7 @@ class DynamoDBSimulator {
         GlobalSecondaryIndexes: Object.entries(table.globalSecondaryIndexes || {}).map(([indexName, gsi]) => ({
           IndexName: indexName,
           IndexStatus: "ACTIVE",
-          KeySchema: [
-            { AttributeName: gsi.hashKey, KeyType: "HASH" },
-            ...(gsi.rangeKey ? [{ AttributeName: gsi.rangeKey, KeyType: "RANGE" }] : []),
-          ],
+          KeySchema: [{ AttributeName: gsi.hashKey, KeyType: "HASH" }, ...(gsi.rangeKey ? [{ AttributeName: gsi.rangeKey, KeyType: "RANGE" }] : [])],
           Projection: { ProjectionType: "ALL" },
           ProvisionedThroughput: {
             ReadCapacityUnits: 5,
@@ -512,7 +539,7 @@ class DynamoDBSimulator {
         if (unprocessedItems.length > 0) {
           responses[tableName] = unprocessedItems;
         }
-      })
+      }),
     );
 
     return Promise.all(tablePromises).then(() => {
@@ -550,17 +577,17 @@ class DynamoDBSimulator {
   }
 
   query(params) {
-    const { 
-      TableName, 
-      KeyConditionExpression, 
+    const {
+      TableName,
+      KeyConditionExpression,
       FilterExpression,
-      ExpressionAttributeValues, 
-      ExpressionAttributeNames = {}, 
+      ExpressionAttributeValues,
+      ExpressionAttributeNames = {},
       IndexName,
       Limit,
       ExclusiveStartKey,
       ProjectionExpression,
-      ScanIndexForward = true
+      ScanIndexForward = true,
     } = params;
     const table = this.tables.get(TableName);
 
@@ -573,9 +600,9 @@ class DynamoDBSimulator {
     // Se for consulta por índice, filtra itens que não possuem as chaves do índice (Sparse Index)
     if (IndexName && table.globalSecondaryIndexes?.[IndexName]) {
       const gsi = table.globalSecondaryIndexes[IndexName];
-      items = items.filter(item => item[gsi.hashKey] !== undefined);
+      items = items.filter((item) => item[gsi.hashKey] !== undefined);
       if (gsi.rangeKey) {
-        items = items.filter(item => item[gsi.rangeKey] !== undefined);
+        items = items.filter((item) => item[gsi.rangeKey] !== undefined);
       }
     }
 
@@ -589,7 +616,7 @@ class DynamoDBSimulator {
     const resolveValue = (placeholder) => {
       const rawValue = ExpressionAttributeValues[placeholder];
       if (rawValue === undefined) return undefined;
-      if (rawValue !== null && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+      if (rawValue !== null && typeof rawValue === "object" && !Array.isArray(rawValue)) {
         const keys = Object.keys(rawValue);
         if (keys.length === 1 && ["S", "N", "BOOL", "NULL", "M", "L", "SS", "NS", "BS"].includes(keys[0])) {
           return this.normalizeValue(rawValue, table);
@@ -609,7 +636,7 @@ class DynamoDBSimulator {
         if (funcMatch) {
           const attributeName = resolveAttributeName(funcMatch[1]);
           const expectedValue = resolveValue(funcMatch[2]);
-          items = items.filter(item => String(item[attributeName] || "").startsWith(String(expectedValue)));
+          items = items.filter((item) => String(item[attributeName] || "").startsWith(String(expectedValue)));
           continue;
         }
 
@@ -622,14 +649,14 @@ class DynamoDBSimulator {
           const attributeName = resolveAttributeName(attrPlaceholder);
           const expectedValue = resolveValue(valPlaceholder);
 
-          if (operator === "=") items = items.filter(item => item[attributeName] === expectedValue);
-          else if (operator === ">") items = items.filter(item => item[attributeName] > expectedValue);
-          else if (operator === "<") items = items.filter(item => item[attributeName] < expectedValue);
-          else if (operator === ">=") items = items.filter(item => item[attributeName] >= expectedValue);
-          else if (operator === "<=") items = items.filter(item => item[attributeName] <= expectedValue);
+          if (operator === "=") items = items.filter((item) => item[attributeName] === expectedValue);
+          else if (operator === ">") items = items.filter((item) => item[attributeName] > expectedValue);
+          else if (operator === "<") items = items.filter((item) => item[attributeName] < expectedValue);
+          else if (operator === ">=") items = items.filter((item) => item[attributeName] >= expectedValue);
+          else if (operator === "<=") items = items.filter((item) => item[attributeName] <= expectedValue);
           else if (operator === "BEGINS_WITH") {
             const val = expectedValue;
-            items = items.filter(item => String(item[attributeName] || "").startsWith(String(val)));
+            items = items.filter((item) => String(item[attributeName] || "").startsWith(String(val)));
           }
         }
       }
@@ -645,18 +672,18 @@ class DynamoDBSimulator {
       items.sort((a, b) => {
         const valA = a[sortKey];
         const valB = b[sortKey];
-        
+
         if (valA === valB) return 0;
         if (valA === undefined || valA === null) return 1;
         if (valB === undefined || valB === null) return -1;
-        
+
         let comparison = 0;
-        if (typeof valA === 'number' && typeof valB === 'number') {
+        if (typeof valA === "number" && typeof valB === "number") {
           comparison = valA - valB;
         } else {
           comparison = String(valA).localeCompare(String(valB));
         }
-        
+
         return ScanIndexForward ? comparison : -comparison;
       });
     }
@@ -673,7 +700,7 @@ class DynamoDBSimulator {
     // Apply Pagination (ExclusiveStartKey)
     if (ExclusiveStartKey) {
       const startKeyStr = this.getItemKeyFromKeys(ExclusiveStartKey, table);
-      const startIndex = items.findIndex(item => this.getItemKey(item, table) === startKeyStr);
+      const startIndex = items.findIndex((item) => this.getItemKey(item, table) === startKeyStr);
       if (startIndex !== -1) {
         items = items.slice(startIndex + 1);
       }
@@ -698,20 +725,12 @@ class DynamoDBSimulator {
       Items: marshalledItems,
       Count: marshalledItems.length,
       ScannedCount: scannedCount,
-      LastEvaluatedKey: lastEvaluatedKey || undefined
+      LastEvaluatedKey: lastEvaluatedKey || undefined,
     };
   }
 
   scan(params) {
-    const { 
-      TableName, 
-      FilterExpression, 
-      ExpressionAttributeValues, 
-      ExpressionAttributeNames = {}, 
-      Limit,
-      ExclusiveStartKey,
-      ProjectionExpression
-    } = params;
+    const { TableName, FilterExpression, ExpressionAttributeValues, ExpressionAttributeNames = {}, Limit, ExclusiveStartKey, ProjectionExpression } = params;
     const table = this.tables.get(TableName);
 
     if (!table) {
@@ -730,7 +749,7 @@ class DynamoDBSimulator {
     // Apply Pagination (ExclusiveStartKey)
     if (ExclusiveStartKey) {
       const startKeyStr = this.getItemKeyFromKeys(ExclusiveStartKey, table);
-      const startIndex = items.findIndex(item => this.getItemKey(item, table) === startKeyStr);
+      const startIndex = items.findIndex((item) => this.getItemKey(item, table) === startKeyStr);
       if (startIndex !== -1) {
         items = items.slice(startIndex + 1);
       }
@@ -755,20 +774,23 @@ class DynamoDBSimulator {
       Items: marshalledItems,
       Count: marshalledItems.length,
       ScannedCount: scannedCount,
-      LastEvaluatedKey: lastEvaluatedKey || undefined
+      LastEvaluatedKey: lastEvaluatedKey || undefined,
     };
   }
 
   applyProjection(items, expression, names = {}) {
-    const projectedAttrs = expression.split(',').map(s => s.trim()).filter(Boolean);
-    const resolvedAttrs = projectedAttrs.map(attr => {
+    const projectedAttrs = expression
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const resolvedAttrs = projectedAttrs.map((attr) => {
       if (attr.startsWith("#")) return names[attr] || attr;
       return attr;
     });
 
-    return items.map(item => {
+    return items.map((item) => {
       const newItem = {};
-      resolvedAttrs.forEach(attr => {
+      resolvedAttrs.forEach((attr) => {
         if (item[attr] !== undefined) {
           newItem[attr] = item[attr];
         }
@@ -776,7 +798,6 @@ class DynamoDBSimulator {
       return newItem;
     });
   }
-
 
   // Métodos auxiliares
   normalizeItem(item, table) {
@@ -791,7 +812,7 @@ class DynamoDBSimulator {
 
   normalizeValue(value, table) {
     if (value === null || value === undefined) return value;
-    if (typeof value !== 'object') return value;
+    if (typeof value !== "object") return value;
 
     if (value.S !== undefined) return value.S;
     if (value.N !== undefined) return parseFloat(value.N);
@@ -808,11 +829,11 @@ class DynamoDBSimulator {
 
   marshallValue(value, table) {
     if (value === null || value === undefined) return { NULL: true };
-    if (typeof value === 'boolean') return { BOOL: value };
-    if (typeof value === 'number') return { N: String(value) };
-    if (typeof value === 'string') return { S: value };
+    if (typeof value === "boolean") return { BOOL: value };
+    if (typeof value === "number") return { N: String(value) };
+    if (typeof value === "string") return { S: value };
     if (Array.isArray(value)) return { L: value.map((v) => this.marshallValue(v, table)) };
-    if (typeof value === 'object') return { M: this.marshallItem(value, table) };
+    if (typeof value === "object") return { M: this.marshallItem(value, table) };
     return { S: String(value) };
   }
 
@@ -843,9 +864,9 @@ class DynamoDBSimulator {
 
   getItemKeyFromKeys(keys, table) {
     const rawHash = keys[table.hashKey];
-    const hashValue = rawHash && typeof rawHash === 'object' ? Object.values(rawHash)[0] : rawHash;
+    const hashValue = rawHash && typeof rawHash === "object" ? Object.values(rawHash)[0] : rawHash;
     const rawRange = table.rangeKey ? keys[table.rangeKey] : null;
-    const rangeValue = rawRange && typeof rawRange === 'object' ? Object.values(rawRange)[0] : rawRange;
+    const rangeValue = rawRange && typeof rawRange === "object" ? Object.values(rawRange)[0] : rawRange;
     return rangeValue ? `${hashValue}|${rangeValue}` : String(hashValue);
   }
 
@@ -875,7 +896,7 @@ class DynamoDBSimulator {
         const delta = this.normalizeValue(rawValue, table);
         const current = item[attributeName];
         if (current === undefined || current === null) {
-          item[attributeName] = typeof delta === 'number' ? delta : parseFloat(delta) || 0;
+          item[attributeName] = typeof delta === "number" ? delta : parseFloat(delta) || 0;
         } else {
           item[attributeName] = (parseFloat(current) || 0) + (parseFloat(delta) || 0);
         }
@@ -904,7 +925,7 @@ class DynamoDBSimulator {
     const resolveValue = (placeholder) => {
       const rawValue = values[placeholder];
       if (rawValue === undefined) return undefined;
-      if (rawValue !== null && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+      if (rawValue !== null && typeof rawValue === "object" && !Array.isArray(rawValue)) {
         const keys = Object.keys(rawValue);
         if (keys.length === 1 && ["S", "N", "BOOL", "NULL", "M", "L", "SS", "NS", "BS"].includes(keys[0])) {
           return this.normalizeValue(rawValue, table);
@@ -914,9 +935,9 @@ class DynamoDBSimulator {
     };
 
     const conditions = expression.split(/\s+AND\s+/i);
-    
+
     return items.filter((item) => {
-      return conditions.every(cond => {
+      return conditions.every((cond) => {
         // Regex para match de funções como contains(#n, :v) ou begins_with(#n, :v)
         const funcMatch = cond.match(/(contains|begins_with)\s*\(\s*([^\s,]+)\s*,\s*([^\s,)]+)\s*\)/i);
         if (funcMatch) {
@@ -924,12 +945,12 @@ class DynamoDBSimulator {
           const attrName = resolveAttributeName(funcMatch[2]);
           const expectedVal = resolveValue(funcMatch[3]);
           const actualVal = item[attrName];
-          
-          if (func === 'contains') {
+
+          if (func === "contains") {
             if (Array.isArray(actualVal)) return actualVal.includes(expectedVal);
             return String(actualVal || "").includes(String(expectedVal));
           }
-          if (func === 'begins_with') {
+          if (func === "begins_with") {
             return String(actualVal || "").startsWith(String(expectedVal));
           }
         }
@@ -943,20 +964,26 @@ class DynamoDBSimulator {
           const actualVal = item[attrName];
 
           switch (operator) {
-            case "=":  return actualVal === expectedVal;
-            case "<>": return actualVal !== expectedVal;
-            case "<":  return actualVal < expectedVal;
-            case "<=": return actualVal <= expectedVal;
-            case ">":  return actualVal > expectedVal;
-            case ">=": return actualVal >= expectedVal;
-            default:   return true;
+            case "=":
+              return actualVal === expectedVal;
+            case "<>":
+              return actualVal !== expectedVal;
+            case "<":
+              return actualVal < expectedVal;
+            case "<=":
+              return actualVal <= expectedVal;
+            case ">":
+              return actualVal > expectedVal;
+            case ">=":
+              return actualVal >= expectedVal;
+            default:
+              return true;
           }
         }
         return true;
       });
     });
   }
-
 
   persistTables() {
     const tablesObj = {};
