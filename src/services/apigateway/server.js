@@ -1,3 +1,4 @@
+const { setupServiceMiddleware } = require('../../middleware');
 /**
  * API Gateway Server - Servidor HTTP para API Gateway
  */
@@ -8,6 +9,8 @@ const logger = require('../../utils/logger');
 
 class APIGatewayServer {
   constructor(port, config) {
+    this.organizationsService = null;
+    this.stsService = null;
     this.port = port;
     this.config = config;
     this.app = express();
@@ -68,50 +71,159 @@ class APIGatewayServer {
       const cognitoAuthorizer = this._buildCognitoAuthorizer(api.authorizer);
 
       for (const endpoint of (api.endpoints || [])) {
-        const { path, method, lambdaName, integrationType, authorizerRequired } = endpoint;
+        const { path, method, lambdaName, integrationType, authorizerRequired, queueArn, queueUrl, eventBusName, topicArn } = endpoint;
         if (!path || !method) continue;
 
         const expressPath = path.replace(/\{([^}]+)\}/g, ':$1');
         const httpMethod = method.toLowerCase();
 
-        logger.debug(`📡 Registrando rota: ${method} ${path} -> ${lambdaName}`);
+        const intType = (integrationType || '').toLowerCase();
+        logger.debug(`📡 Registrando rota: ${method} ${path} -> ${intType || 'lambda'} (${lambdaName || queueArn || topicArn || eventBusName || 'n/a'})`);
 
-        const handler = async (req, res) => {
-          try {
-            const lambdaService = this.lambdaService;
-            if (!lambdaService) {
-              return res.status(500).json({ error: 'Lambda service not available' });
-            }
-
-            const event = {
-              httpMethod: req.method,
-              path: req.path,
-              headers: req.headers,
-              queryStringParameters: Object.keys(req.query).length ? req.query : null,
-              pathParameters: Object.keys(req.params).length ? req.params : null,
-              body: req.body ? JSON.stringify(req.body) : null,
-              isBase64Encoded: false,
-              requestContext: {
-                path: req.path,
-                stage: 'local',
-                requestId: Math.random().toString(36).substring(7),
-                identity: { sourceIp: req.ip },
-                authorizer: req.cognitoAuthorizer || null
+        let handler;
+        if (intType === 'sqs' || queueArn || queueUrl) {
+          handler = async (req, res) => {
+            try {
+              const sqsService = this.sqsService;
+              if (!sqsService) {
+                return res.status(500).json({ error: 'SQS service not available' });
               }
-            };
+              const sqsSim = sqsService.simulator;
+              let resolvedQueueUrl = queueUrl;
+              if (!resolvedQueueUrl && queueArn) {
+                const nameMatch = String(queueArn).match(/:([^:]+)$/);
+                if (nameMatch) {
+                  const q = sqsSim.queues.get(nameMatch[1]);
+                  resolvedQueueUrl = q && q.url;
+                }
+              }
+              const bodyContent = req.body ? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body)) : '';
+              const messageBody = req.body?.MessageBody || bodyContent;
+              if (!resolvedQueueUrl) {
+                return res.status(400).json({ __type: 'MissingParameter', message: 'QueueUrl or queueArn must be configured' });
+              }
+              const result = sqsSim.sendMessage({
+                QueueUrl: resolvedQueueUrl,
+                MessageBody: messageBody,
+                DelaySeconds: req.body?.DelaySeconds,
+                MessageAttributes: req.body?.MessageAttributes
+              });
+              if (result.error) return res.status(result.status || 400).json(result.error);
+              res.status(200).json({
+                SendMessageResponse: {
+                  SendMessageResult: { MessageId: result.messageId, MD5OfMessageBody: result.md5 },
+                  ResponseMetadata: { RequestId: Math.random().toString(36).slice(2) }
+                }
+              });
+            } catch (err) {
+              logger.error('SQS send error:', err);
+              res.status(500).json({ error: err.message });
+            }
+          };
+        } else if (intType === 'eventbridge' || intType === 'events' || eventBusName) {
+          handler = async (req, res) => {
+            try {
+              const ebService = this.eventbridgeService;
+              if (!ebService) {
+                return res.status(500).json({ error: 'EventBridge service not available' });
+              }
+              const ebSim = ebService.simulator;
+              const entries = req.body?.Entries || [{
+                Source: req.body?.Source || 'aws.apigateway',
+                DetailType: req.body?.DetailType || 'API Gateway Request',
+                Detail: JSON.stringify(req.body?.Detail || req.body || {}),
+                EventBusName: eventBusName || req.body?.EventBusName || 'default',
+                Time: new Date().toISOString(),
+                Resources: []
+              }];
+              const norm = entries.map(e => ({
+                Time: e.Time || new Date().toISOString(),
+                Source: e.Source || 'aws.apigateway',
+                Resources: e.Resources || [],
+                DetailType: e.DetailType || 'API Gateway Request',
+                Detail: typeof e.Detail === 'string' ? e.Detail : JSON.stringify(e.Detail || {}),
+                EventBusName: eventBusName || e.EventBusName || 'default',
+                TraceHeader: e.TraceHeader
+              }));
+              const result = await ebSim.putEvents({ Entries: norm });
+              res.status(200).json({
+                Entries: (result.Entries || []).map(e => ({
+                  EventId: e.EventId || Math.random().toString(36).slice(2),
+                  ErrorCode: e.ErrorCode,
+                  ErrorMessage: e.ErrorMessage
+                })),
+                FailedEntryCount: result.FailedEntryCount || 0
+              });
+            } catch (err) {
+              logger.error('EventBridge putEvents error:', err);
+              res.status(500).json({ error: err.message });
+            }
+          };
+        } else if (intType === 'sns' || topicArn) {
+          handler = async (req, res) => {
+            try {
+              const snsService = this.snsService;
+              if (!snsService) {
+                return res.status(500).json({ error: 'SNS service not available' });
+              }
+              const snsSim = snsService.simulator;
+              const message = req.body?.Message || (req.body ? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body)) : '');
+              const result = await snsSim.publish({
+                TopicArn: topicArn || req.body?.TopicArn,
+                TargetArn: req.body?.TargetArn,
+                Message: message,
+                Subject: req.body?.Subject,
+                MessageAttributes: req.body?.MessageAttributes
+              });
+              res.status(200).json({
+                PublishResponse: {
+                  PublishResult: { MessageId: result.messageId || Math.random().toString(36).slice(2) },
+                  ResponseMetadata: { RequestId: Math.random().toString(36).slice(2) }
+                }
+              });
+            } catch (err) {
+              logger.error('SNS publish error:', err);
+              res.status(500).json({ error: err.message });
+            }
+          };
+        } else {
+          handler = async (req, res) => {
+            try {
+              const lambdaService = this.lambdaService;
+              if (!lambdaService) {
+                return res.status(500).json({ error: 'Lambda service not available' });
+              }
 
-            const result = await lambdaService.simulator.invoke(lambdaName, event);
-            const payload = result.Payload || {};
-            const statusCode = payload.statusCode || 200;
-            const headers = payload.headers || { 'Content-Type': 'application/json' };
-            const body = payload.body;
+              const event = {
+                httpMethod: req.method,
+                path: req.path,
+                headers: req.headers,
+                queryStringParameters: Object.keys(req.query).length ? req.query : null,
+                pathParameters: Object.keys(req.params).length ? req.params : null,
+                body: req.body ? JSON.stringify(req.body) : null,
+                isBase64Encoded: false,
+                requestContext: {
+                  path: req.path,
+                  stage: 'local',
+                  requestId: Math.random().toString(36).substring(7),
+                  identity: { sourceIp: req.ip },
+                  authorizer: req.cognitoAuthorizer || null
+                }
+              };
 
-            res.status(statusCode).set(headers).send(body);
-          } catch (err) {
-            logger.error(`Lambda invoke error (${lambdaName}):`, err);
-            res.status(500).json({ error: err.message });
-          }
-        };
+              const result = await lambdaService.simulator.invoke(lambdaName, event);
+              const payload = result.Payload || {};
+              const statusCode = payload.statusCode || 200;
+              const headers = payload.headers || { 'Content-Type': 'application/json' };
+              const body = payload.body;
+
+              res.status(statusCode).set(headers).send(body);
+            } catch (err) {
+              logger.error(`Lambda invoke error (${lambdaName}):`, err);
+              res.status(500).json({ error: err.message });
+            }
+          };
+        }
 
         const middlewares = [];
         if (authorizerRequired && cognitoAuthorizer) {
@@ -431,6 +543,106 @@ class APIGatewayServer {
         res.json(result);
       } catch (error) {
         res.status(400).json({ error: error.message });
+      }
+    });
+
+    // Models
+    this.app.post('/restapis/:apiId/models', (req, res) => {
+      try {
+        const result = this.simulator.createModel({ ...req.body, restApiId: req.params.apiId });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/restapis/:apiId/models', (req, res) => {
+      try {
+        const result = this.simulator.getModels({ restApiId: req.params.apiId });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/restapis/:apiId/models/:modelName', (req, res) => {
+      try {
+        const result = this.simulator.getModel({
+          restApiId: req.params.apiId,
+          modelName: req.params.modelName,
+          flatten: req.query.flatten
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/restapis/:apiId/models/:modelName', (req, res) => {
+      try {
+        const result = this.simulator.deleteModel({
+          restApiId: req.params.apiId,
+          modelName: req.params.modelName
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    // Request Validators
+    this.app.post('/restapis/:apiId/requestvalidators', (req, res) => {
+      try {
+        const result = this.simulator.createRequestValidator({ ...req.body, restApiId: req.params.apiId });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/restapis/:apiId/requestvalidators', (req, res) => {
+      try {
+        const result = this.simulator.getRequestValidators({ restApiId: req.params.apiId });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/restapis/:apiId/requestvalidators/:requestValidatorId', (req, res) => {
+      try {
+        const result = this.simulator.getRequestValidator({
+          restApiId: req.params.apiId,
+          requestValidatorId: req.params.requestValidatorId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
+      }
+    });
+
+    this.app.patch('/restapis/:apiId/requestvalidators/:requestValidatorId', (req, res) => {
+      try {
+        const result = this.simulator.updateRequestValidator({
+          ...req.body,
+          restApiId: req.params.apiId,
+          requestValidatorId: req.params.requestValidatorId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/restapis/:apiId/requestvalidators/:requestValidatorId', (req, res) => {
+      try {
+        const result = this.simulator.deleteRequestValidator({
+          restApiId: req.params.apiId,
+          requestValidatorId: req.params.requestValidatorId
+        });
+        res.json(result);
+      } catch (error) {
+        res.status(404).json({ error: error.message });
       }
     });
 

@@ -94,6 +94,44 @@ class SQSService {
   getServer() {
     return this.server;
   }
+
+  injectDependencies(server) {
+    const lambdaService = server.getService('lambda');
+    if (lambdaService) {
+      this.lambdaService = lambdaService;
+      if (this.simulator) {
+        this.simulator.setLambdaService(lambdaService);
+        this.simulator.reattachLambdaHandlers();
+      }
+      if (this.server) {
+        this.server.lambdaService = lambdaService;
+      }
+    }
+
+    const iamService = server.getService('iam');
+    if (iamService && iamService.getSimulator()) {
+      const { createIAMEnforcementMiddleware } = require('../iam/middleware');
+      const iamSimulator = iamService.getSimulator();
+
+      const middleware = createIAMEnforcementMiddleware({
+        iamSimulator,
+        servicePrefix: 'sqs',
+        extractAction: (req) => req.body?.Action || req.query?.Action || 'Unknown',
+        extractResource: (req) => {
+          const queueUrl = req.body?.QueueUrl || req.query?.QueueUrl || '';
+          const queueName = queueUrl.split('/').pop() || req.body?.QueueName || 'unknown';
+          return `arn:aws:sqs:us-east-1:123456789012:${queueName}`;
+        },
+        formatError: (res, code, message) => {
+          res.status(403).set('Content-Type', 'text/xml').send(
+            `<ErrorResponse><Error><Type>Sender</Type><Code>${code}</Code><Message>${message}</Message></Error></ErrorResponse>`
+          );
+        }
+      });
+
+      this.server.iamMiddleware = middleware;
+    }
+  }
 }
 
 module.exports = SQSService;

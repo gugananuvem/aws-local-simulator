@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudShell - AWS Local Simulator</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5/css/xterm.css">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #tab-bar {
+      display: flex;
+      align-items: center;
+      background: #252526;
+      border-bottom: 1px solid #3c3c3c;
+      height: 36px;
+      min-height: 36px;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    #tab-bar::-webkit-scrollbar {
+      height: 4px;
+    }
+
+    #tab-bar::-webkit-scrollbar-thumb {
+      background: #555;
+      border-radius: 2px;
+    }
+
+    .tab {
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      height: 100%;
+      cursor: pointer;
+      border-right: 1px solid #3c3c3c;
+      white-space: nowrap;
+      font-size: 13px;
+      color: #969696;
+      user-select: none;
+      transition: background 0.1s;
+    }
+
+    .tab:hover {
+      background: #2d2d2d;
+    }
+
+    .tab.active {
+      background: #1e1e1e;
+      color: #ffffff;
+      border-bottom: 2px solid #007acc;
+    }
+
+    .tab .tab-title {
+      margin-right: 8px;
+    }
+
+    .tab .tab-close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 1;
+      color: #969696;
+    }
+
+    .tab .tab-close:hover {
+      background: #4a4a4a;
+      color: #ffffff;
+    }
+
+    #new-tab-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 100%;
+      cursor: pointer;
+      color: #969696;
+      font-size: 18px;
+      border: none;
+      background: none;
+      transition: background 0.1s;
+    }
+
+    #new-tab-btn:hover {
+      background: #2d2d2d;
+      color: #ffffff;
+    }
+
+    #terminal-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .terminal-wrapper {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: none;
+      padding: 4px;
+    }
+
+    .terminal-wrapper.active {
+      display: block;
+    }
+
+    .terminal-wrapper .xterm {
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="tab-bar">
+    <button id="new-tab-btn" title="New terminal session">+</button>
+  </div>
+  <div id="terminal-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0/lib/xterm-addon-fit.js"></script>
+  <script>
+    (function () {
+      const API_BASE = '/__admin/cloudshell/sessions';
+      const sessions = new Map(); // sessionId -> { term, fitAddon, ws, tabEl, wrapperEl }
+      let activeSessionId = null;
+      let tabCounter = 0;
+
+      const tabBar = document.getElementById('tab-bar');
+      const newTabBtn = document.getElementById('new-tab-btn');
+      const terminalContainer = document.getElementById('terminal-container');
+
+      // --- API Helpers ---
+
+      async function fetchSessions() {
+        const res = await fetch(API_BASE);
+        const data = await res.json();
+        return data.sessions || [];
+      }
+
+      async function createSessionAPI() {
+        const res = await fetch(API_BASE, { method: 'POST' });
+        return await res.json();
+      }
+
+      async function deleteSessionAPI(sessionId) {
+        await fetch(`${API_BASE}/${sessionId}`, { method: 'DELETE' });
+      }
+
+      // --- WebSocket ---
+
+      function connectWebSocket(sessionId) {
+        const wsUrl = `ws://${window.location.host}/ws/cloudshell/${sessionId}`;
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = 'arraybuffer';
+
+        const session = sessions.get(sessionId);
+        if (!session) return null;
+
+        ws.onopen = function () {
+          session.ws = ws;
+        };
+
+        ws.onmessage = function (event) {
+          const s = sessions.get(sessionId);
+          if (s && s.term) {
+            s.term.write(typeof event.data === 'string' ? event.data : new Uint8Array(event.data));
+          }
+        };
+
+        ws.onclose = function () {
+          const s = sessions.get(sessionId);
+          if (s) {
+            s.ws = null;
+          }
+        };
+
+        ws.onerror = function () {
+          // WebSocket errors are followed by onclose
+        };
+
+        return ws;
+      }
+
+      // --- Terminal & Session Management ---
+
+      function createTerminalSession(sessionId) {
+        tabCounter++;
+
+        // Create xterm instance
+        const term = new Terminal({
+          theme: {
+            background: '#1e1e1e',
+            foreground: '#d4d4d4',
+            cursor: '#d4d4d4',
+            selectionBackground: '#264f78',
+          },
+          fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+          fontSize: 14,
+          cursorBlink: true,
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
+        // Create terminal wrapper element
+        const wrapperEl = document.createElement('div');
+        wrapperEl.className = 'terminal-wrapper';
+        wrapperEl.id = `terminal-${sessionId}`;
+        terminalContainer.appendChild(wrapperEl);
+
+        // Open terminal in wrapper
+        term.open(wrapperEl);
+
+        // Create tab element
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab';
+        tabEl.dataset.sessionId = sessionId;
+        tabEl.innerHTML = `
+          <span class="tab-title">Terminal ${tabCounter}</span>
+          <span class="tab-close" title="Close session">&times;</span>
+        `;
+
+        // Insert tab before the new-tab button
+        tabBar.insertBefore(tabEl, newTabBtn);
+
+        // Tab click handler (switch tab)
+        tabEl.addEventListener('click', function (e) {
+          if (e.target.classList.contains('tab-close')) return;
+          switchTab(sessionId);
+        });
+
+        // Tab close handler
+        tabEl.querySelector('.tab-close').addEventListener('click', function (e) {
+          e.stopPropagation();
+          closeSession(sessionId);
+        });
+
+        // Store session data
+        const sessionData = { term, fitAddon, ws: null, tabEl, wrapperEl };
+        sessions.set(sessionId, sessionData);
+
+        // Connect WebSocket
+        const ws = connectWebSocket(sessionId);
+        sessionData.ws = ws;
+
+        // Terminal data handler -> send to WebSocket
+        term.onData(function (data) {
+          const s = sessions.get(sessionId);
+          if (s && s.ws && s.ws.readyState === WebSocket.OPEN) {
+            s.ws.send(data);
+          }
+        });
+
+        // Activate this tab
+        switchTab(sessionId);
+
+        // Fit terminal after it's visible
+        requestAnimationFrame(function () {
+          fitAddon.fit();
+          sendResize(sessionId);
+        });
+
+        return sessionData;
+      }
+
+      function switchTab(sessionId) {
+        // Deactivate all tabs and wrappers
+        for (const [id, session] of sessions) {
+          session.tabEl.classList.remove('active');
+          session.wrapperEl.classList.remove('active');
+        }
+
+        // Activate selected session
+        const session = sessions.get(sessionId);
+        if (session) {
+          session.tabEl.classList.add('active');
+          session.wrapperEl.classList.add('active');
+          activeSessionId = sessionId;
+
+          // Re-fit after becoming visible
+          requestAnimationFrame(function () {
+            session.fitAddon.fit();
+            session.term.focus();
+          });
+        }
+      }
+
+      async function closeSession(sessionId) {
+        const session = sessions.get(sessionId);
+        if (!session) return;
+
+        // Close WebSocket
+        if (session.ws) {
+          session.ws.close();
+        }
+
+        // Destroy terminal
+        session.term.dispose();
+
+        // Remove DOM elements
+        session.tabEl.remove();
+        session.wrapperEl.remove();
+
+        // Remove from map
+        sessions.delete(sessionId);
+
+        // Delete session on backend
+        await deleteSessionAPI(sessionId);
+
+        // If closed the active tab, switch to another
+        if (activeSessionId === sessionId) {
+          activeSessionId = null;
+          const remaining = Array.from(sessions.keys());
+          if (remaining.length > 0) {
+            switchTab(remaining[remaining.length - 1]);
+          }
+        }
+      }
+
+      function sendResize(sessionId) {
+        const session = sessions.get(sessionId);
+        if (!session || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+
+        const cols = session.term.cols;
+        const rows = session.term.rows;
+
+        session.ws.send(JSON.stringify({
+          type: 'resize',
+          cols: cols,
+          rows: rows,
+        }));
+      }
+
+      // --- Window Resize Handler ---
+
+      let resizeTimeout = null;
+      window.addEventListener('resize', function () {
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(function () {
+          for (const [id, session] of sessions) {
+            session.fitAddon.fit();
+          }
+          if (activeSessionId) {
+            sendResize(activeSessionId);
+          }
+        }, 100);
+      });
+
+      // --- New Tab Button ---
+
+      newTabBtn.addEventListener('click', async function () {
+        try {
+          const data = await createSessionAPI();
+          createTerminalSession(data.id);
+        } catch (err) {
+          console.error('Failed to create session:', err);
+        }
+      });
+
+      // --- Page Load: Initialize ---
+
+      async function initialize() {
+        try {
+          const existingSessions = await fetchSessions();
+
+          if (existingSessions.length > 0) {
+            // Reconnect to existing sessions
+            for (const sess of existingSessions) {
+              createTerminalSession(sess.id);
+            }
+          } else {
+            // Create a first session automatically
+            const data = await createSessionAPI();
+            createTerminalSession(data.id);
+          }
+        } catch (err) {
+          console.error('Failed to initialize CloudShell:', err);
+        }
+      }
+
+      initialize();
+    })();
+  </script>
+</body>
+</html>

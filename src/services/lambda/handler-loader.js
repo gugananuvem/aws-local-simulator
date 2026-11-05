@@ -146,9 +146,25 @@ class HandlerLoader {
    * Recarrega um handler (útil para hot reload)
    */
   static async reload(handlerPath, type = 'auto') {
-    // Limpa cache
-    const fullPath = path.resolve(process.cwd(), handlerPath);
-    delete require.cache[require.resolve(fullPath)];
+    // Resolve path: try cwd first, then data dir (same logic as load())
+    let fullPath = path.resolve(process.cwd(), handlerPath);
+
+    if (!fs.existsSync(fullPath)) {
+      const dataDir = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR;
+      if (dataDir) {
+        const dataPath = path.resolve(dataDir, 'lambda', handlerPath.replace(/^\.\//, ''));
+        if (fs.existsSync(dataPath)) {
+          fullPath = dataPath;
+        }
+      }
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`Handler não encontrado: ${fullPath}`);
+    }
+
+    // Limpa cache do require
+    delete require.cache[fullPath];
     
     // Recarrega
     return this.load(handlerPath, type);
@@ -158,7 +174,20 @@ class HandlerLoader {
    * Valida se um caminho de handler é válido
    */
   static isValid(handlerPath) {
-    const fullPath = path.resolve(process.cwd(), handlerPath);
+    // Tenta resolver de cwd primeiro
+    let fullPath = path.resolve(process.cwd(), handlerPath);
+    
+    if (!fs.existsSync(fullPath)) {
+      // Tenta resolver do data dir
+      const dataDir = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR;
+      if (dataDir) {
+        const dataPath = path.resolve(dataDir, 'lambda', handlerPath.replace(/^\.\//, ''));
+        if (fs.existsSync(dataPath)) {
+          return true;
+        }
+      }
+    }
+    
     return fs.existsSync(fullPath);
   }
   
@@ -166,7 +195,23 @@ class HandlerLoader {
    * Retorna informações sobre o handler
    */
   static async getInfo(handlerPath) {
-    const fullPath = path.resolve(process.cwd(), handlerPath);
+    // Resolve path: try cwd first, then data dir (same logic as load())
+    let fullPath = path.resolve(process.cwd(), handlerPath);
+
+    if (!fs.existsSync(fullPath)) {
+      const dataDir = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR;
+      if (dataDir) {
+        const dataPath = path.resolve(dataDir, 'lambda', handlerPath.replace(/^\.\//, ''));
+        if (fs.existsSync(dataPath)) {
+          fullPath = dataPath;
+        }
+      }
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`Handler não encontrado: ${fullPath}`);
+    }
+
     const type = this.detectType(fullPath);
     const stats = fs.statSync(fullPath);
     

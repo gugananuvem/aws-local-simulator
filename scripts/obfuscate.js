@@ -173,7 +173,9 @@ class Obfuscator {
             }
             
             const ext = path.extname(file);
-            if (extensionsToObfuscate.includes(ext)) {
+            // Bootstraps de runtimes externos (python/node) são copiados sem ofuscar
+            const isRuntimeBootstrap = relativePath.split(path.sep).join('/').includes('services/lambda/runtimes/') && path.basename(file).startsWith('bootstrap.');
+            if (extensionsToObfuscate.includes(ext) && !isRuntimeBootstrap) {
                 await this.obfuscateFile(file, targetPath);
             } else {
                 // Copia arquivos não-JS

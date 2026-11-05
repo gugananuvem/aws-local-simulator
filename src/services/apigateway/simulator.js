@@ -27,8 +27,22 @@ class APIGatewaySimulator {
     this.usagePlans = new Map();
     this.apiKeys = new Map();
     this.domainNames = new Map();
+    this.requestValidators = new Map();
     this.audit = new CloudTrailAudit('execute-api.amazonaws.com');
+    this.lambdaService = null;
+    this.sqsService = null;
+    this.snsService = null;
+    this.eventbridgeService = null;
+    this.region = 'local';
+    this.accountId = '000000000000';
   }
+
+  setLambdaService(service) { this.lambdaService = service; }
+  setSqsService(service) { this.sqsService = service; }
+  setSnsService(service) { this.snsService = service; }
+  setEventbridgeService(service) { this.eventbridgeService = service; }
+  setRegion(region) { this.region = region || this.region; }
+  setAccountId(accountId) { this.accountId = accountId || this.accountId; }
 
   async initialize() {
     logger.debug('Inicializando API Gateway Simulator...');
@@ -66,12 +80,52 @@ class APIGatewaySimulator {
         stages: new Map(),
         deployments: new Map(),
         models: new Map(),
-        authorizers: new Map()
+        authorizers: new Map(),
+        requestValidators: new Map()
       };
       
-      // Adiciona recursos a partir dos endpoints configurados
       (apiConfig.endpoints || []).forEach((ep, epIndex) => {
         const resId = `res_${apiId}_${epIndex}`;
+        const intType = (ep.integrationType || '').toLowerCase();
+        let integration;
+
+        if (intType === 'sqs' || ep.queueArn || ep.queueUrl) {
+          integration = {
+            type: 'AWS',
+            awsService: 'sqs',
+            action: 'SendMessage',
+            uri: ep.queueArn || ep.queueUrl || `arn:aws:apigateway:local:sqs:action/SendMessage`,
+            queueArn: ep.queueArn,
+            queueUrl: ep.queueUrl,
+            integrationHttpMethod: 'POST'
+          };
+        } else if (intType === 'sns' || ep.topicArn) {
+          integration = {
+            type: 'AWS',
+            awsService: 'sns',
+            action: 'Publish',
+            uri: ep.topicArn || `arn:aws:apigateway:local:sns:action/Publish`,
+            topicArn: ep.topicArn,
+            integrationHttpMethod: 'POST'
+          };
+        } else if (intType === 'eventbridge' || intType === 'events' || ep.eventBusName) {
+          integration = {
+            type: 'AWS',
+            awsService: 'events',
+            action: 'PutEvents',
+            uri: `arn:aws:apigateway:local:events:action/PutEvents`,
+            eventBusName: ep.eventBusName,
+            integrationHttpMethod: 'POST'
+          };
+        } else {
+          integration = {
+            type: 'AWS_PROXY',
+            awsService: 'lambda',
+            uri: ep.lambdaName || '',
+            integrationHttpMethod: 'POST'
+          };
+        }
+
         api.resources.set(resId, {
           id: resId,
           path: ep.path,
@@ -80,11 +134,7 @@ class APIGatewaySimulator {
             httpMethod: ep.method,
             authorizationType: ep.authorizerRequired ? 'COGNITO_USER_POOLS' : 'NONE',
             apiKeyRequired: false,
-            integration: {
-              type: ep.integrationType === 'lambda' ? 'AWS_PROXY' : 'HTTP',
-              uri: ep.lambdaName,
-              integrationHttpMethod: 'POST'
-            }
+            integration
           }]])
         });
       });
@@ -124,7 +174,8 @@ class APIGatewaySimulator {
       models: new Map(),
       authorizers: new Map(),
       gatewayResponses: new Map(),
-      documentationParts: new Map()
+      documentationParts: new Map(),
+      requestValidators: new Map()
     };
     
     // Cria recurso raiz
@@ -136,7 +187,9 @@ class APIGatewaySimulator {
       resourceMethods: new Map()
     };
     
-    api.resources.set('/', rootResource);
+    api.resources.set(rootResource.id, rootResource);
+    rootResource.apiId = apiId;
+    api.rootResourceId = rootResource.id;
     
     this.apis.set(apiId, api);
     this.persistAPIs();
@@ -224,13 +277,12 @@ class APIGatewaySimulator {
   // ============ Simplified Dashboard Endpoint Operations ============
 
   putEndpoint(params) {
-    const { restApiId, path, method, integrationType, lambdaName, authorizerRequired } = params;
+    const { restApiId, path, method, integrationType, lambdaName, authorizerRequired, queueArn, queueUrl, topicArn, eventBusName } = params;
     const api = this.apis.get(restApiId);
     if (!api) throw new Error(`API ${restApiId} not found`);
 
     if (api.isStatic) api.isStatic = false;
 
-    // Ensure resource exists
     let resource = Array.from(api.resources.values()).find(r => r.path === path);
     if (!resource) {
       const resourceId = `res_${Date.now()}`;
@@ -238,22 +290,57 @@ class APIGatewaySimulator {
         id: resourceId,
         path: path,
         pathPart: path.split('/').pop() || '/',
-        parentId: null, // Simplified
+        parentId: null,
         resourceMethods: new Map()
       };
       api.resources.set(resourceId, resource);
     }
 
-    // Put method
+    const intType = (integrationType || '').toLowerCase();
+    let integration;
+
+    if (intType === 'sqs' || queueArn || queueUrl) {
+      integration = {
+        type: 'AWS',
+        awsService: 'sqs',
+        action: 'SendMessage',
+        uri: queueArn || queueUrl || `arn:aws:apigateway:local:sqs:action/SendMessage`,
+        queueArn,
+        queueUrl,
+        integrationHttpMethod: 'POST'
+      };
+    } else if (intType === 'sns' || topicArn) {
+      integration = {
+        type: 'AWS',
+        awsService: 'sns',
+        action: 'Publish',
+        uri: topicArn || `arn:aws:apigateway:local:sns:action/Publish`,
+        topicArn,
+        integrationHttpMethod: 'POST'
+      };
+    } else if (intType === 'eventbridge' || intType === 'events' || eventBusName) {
+      integration = {
+        type: 'AWS',
+        awsService: 'events',
+        action: 'PutEvents',
+        uri: `arn:aws:apigateway:local:events:action/PutEvents`,
+        eventBusName,
+        integrationHttpMethod: 'POST'
+      };
+    } else {
+      integration = {
+        type: 'AWS_PROXY',
+        awsService: 'lambda',
+        uri: lambdaName || '',
+        integrationHttpMethod: 'POST'
+      };
+    }
+
     resource.resourceMethods.set(method.toUpperCase(), {
       httpMethod: method.toUpperCase(),
       authorizationType: authorizerRequired ? 'COGNITO_USER_POOLS' : 'NONE',
       apiKeyRequired: false,
-      integration: {
-        type: integrationType === 'lambda' ? 'AWS_PROXY' : 'HTTP',
-        uri: lambdaName,
-        integrationHttpMethod: 'POST'
-      }
+      integration
     });
 
     this.persistAPIs();
@@ -369,7 +456,7 @@ class APIGatewaySimulator {
   // ============ Method Operations ============
 
   putMethod(params) {
-    const { restApiId, resourceId, httpMethod, authorizationType, apiKeyRequired, requestParameters, requestModels, authorizerId } = params;
+    const { restApiId, resourceId, httpMethod, authorizationType, apiKeyRequired, requestParameters, requestModels, authorizerId, requestValidatorId } = params;
     const api = this.apis.get(restApiId);
     
     if (!api) {
@@ -388,6 +475,7 @@ class APIGatewaySimulator {
       requestParameters: requestParameters || {},
       requestModels: requestModels || {},
       authorizerId: authorizerId || null,
+      requestValidatorId: requestValidatorId || null,
       methodResponses: new Map(),
       integration: null
     };
@@ -846,7 +934,24 @@ class APIGatewaySimulator {
     if (usagePlan && !this.checkThrottle(usagePlan)) {
       return this.createResponse(429, 'Too Many Requests');
     }
-    
+
+    // Valida request parâmetros e body (Request Validator / Models)
+    const pathParams = resource ? this.extractPathParams(resource.path, path) : {};
+    const validationError = this.validateRequest({
+      api,
+      methodDef,
+      headers,
+      queryString,
+      pathParams,
+      body
+    });
+    if (validationError) {
+      return this.createResponse(400, {
+        __type: 'BadRequestException',
+        message: validationError
+      });
+    }
+
     // Processa integração
     const integration = methodDef.integration;
     if (!integration) {
@@ -860,6 +965,7 @@ class APIGatewaySimulator {
       headers,
       body,
       queryString,
+      pathParams,
       resource,
       stage
     });
@@ -974,17 +1080,295 @@ class APIGatewaySimulator {
   }
 
   async executeAWSIntegration(integration, context, body, headers) {
-    // Simula integração com Lambda
-    const uriParts = integration.uri.split(':');
+    const uri = integration.uri || '';
+    const action = integration.action;
+    const explicitService = (integration.awsService || '').toLowerCase();
+
+    // Detecta serviço AWS alvo pela URI (formato: arn:aws:apigateway:{region}:{service}:path|action/{action})
+    // Ex.: arn:aws:apigateway:us-east-1:sqs:action/SendMessage
+    // Ex.: arn:aws:apigateway:us-east-1:events:action/PutEvents
+    // Ou URI estilo AWS service path /2012-11-05/queues/{queueName}/sendMessage
+    // Ou por configuração explícita (integrações de dashboard / config estática)
+    let awsService = explicitService || null;
+    let awsAction = action;
+    const arnMatch = uri.match(/arn:aws:apigateway:[^:]*:([^:]+):(?:action|path)\/([^?/]+)/);
+    if (arnMatch) {
+      awsService = awsService || arnMatch[1];
+      awsAction = awsAction || arnMatch[2];
+    } else if (integration.queueArn || integration.queueUrl || (/sqs/i.test(uri) || /SendMessage/i.test(uri))) {
+      awsService = awsService || 'sqs';
+      awsAction = awsAction || 'SendMessage';
+    } else if (integration.eventBusName || (/events|eventbridge/i.test(uri) || /PutEvents/i.test(uri))) {
+      awsService = awsService || 'events';
+      awsAction = awsAction || 'PutEvents';
+    } else if (integration.topicArn || (/sns/i.test(uri) || /Publish/i.test(uri))) {
+      awsService = awsService || 'sns';
+      awsAction = awsAction || 'Publish';
+    } else if (/lambda/i.test(uri) || integration.type === 'AWS_PROXY') {
+      awsService = awsService || 'lambda';
+    }
+    awsService = awsService || 'lambda';
+    awsAction = awsAction || '';
+
+    const ctx = context || {};
+    const parsedBody = (typeof body === 'string' && body.length > 0)
+      ? (() => { try { return JSON.parse(body); } catch { return null; } })()
+      : body || ctx.body || null;
+
+    if (awsService === 'sqs') {
+      return this._executeSQSIntegration(integration, awsAction, parsedBody || {}, ctx);
+    }
+
+    if (awsService === 'events') {
+      return this._executeEventBridgeIntegration(integration, awsAction, parsedBody || {}, ctx);
+    }
+
+    if (awsService === 'sns') {
+      return this._executeSNSIntegration(integration, awsAction, parsedBody || {}, ctx);
+    }
+
+    // Lambda (padrão)
+    const uriParts = uri.split(':');
     const functionName = uriParts[uriParts.length - 1];
-    
-    // Aqui poderia chamar o simulador Lambda
     logger.debug(`Invoking Lambda: ${functionName}`);
-    
+
+    if (this.lambdaService?.simulator) {
+      const lambdaEvent = {
+        ...(ctx.headers ? { headers: ctx.headers } : {}),
+        ...(ctx.queryString ? { queryStringParameters: ctx.queryString } : {}),
+        ...(ctx.pathParams ? { pathParameters: ctx.pathParams } : {}),
+        ...(parsedBody ? { body: JSON.stringify(parsedBody) } : { body: body || null }),
+        httpMethod: ctx.method || 'POST',
+        path: ctx.path || '/',
+        isBase64Encoded: false,
+        requestContext: { stage: ctx.stage?.stageName || 'local' }
+      };
+      const result = await this.lambdaService.simulator.invoke(functionName, lambdaEvent);
+      const payload = result.Payload || {};
+      return this.createResponse(
+        payload.statusCode || 200,
+        typeof payload.body === 'string'
+          ? (() => { try { return JSON.parse(payload.body); } catch { return payload.body; } })()
+          : payload
+      );
+    }
+
     return this.createResponse(200, {
       message: `Lambda ${functionName} invoked`,
       event: context
     });
+  }
+
+  _resolveSQSQueueArnOrName(queueNameOrUrlOrArn) {
+    if (!queueNameOrUrlOrArn) return null;
+    const s = String(queueNameOrUrlOrArn);
+    const arnMatch = s.match(/arn:aws:sqs:[^:]+:[^:]+:([^:]+)$/);
+    if (arnMatch) return { name: arnMatch[1], arn: s };
+    const urlMatch = s.match(/\/queue\/([^/?]+)/);
+    if (urlMatch) return { name: urlMatch[1], arn: null };
+    return { name: s, arn: null };
+  }
+
+  async _executeSQSIntegration(integration, action, payload, ctx) {
+    if (!this.sqsService?.simulator) {
+      return this.createResponse(503, { __type: 'ServiceUnavailable', message: 'SQS service not available' });
+    }
+
+    const sqsSim = this.sqsService.simulator;
+    const actionLower = (action || '').toLowerCase();
+
+    if (actionLower === 'sendmessage' || actionLower === '') {
+      let queueUrl = payload.QueueUrl;
+      let messageBody = payload.MessageBody;
+      let delaySeconds = payload.DelaySeconds;
+      let messageAttributes = payload.MessageAttributes;
+
+      if (!queueUrl && integration.queueUrl) {
+        queueUrl = integration.queueUrl;
+      }
+      if (!queueUrl && integration.queueArn) {
+        const qInfo = this._resolveSQSQueueArnOrName(integration.queueArn);
+        if (qInfo?.name) {
+          const q = sqsSim.queues.get(qInfo.name);
+          queueUrl = q && q.url;
+        }
+      }
+      if (!queueUrl && ctx.pathParams) {
+        const qName = ctx.pathParams.queueName || ctx.pathParams.name;
+        if (qName) {
+          const queue = sqsSim.queues.get(qName);
+          queueUrl = queue && queue.url;
+        }
+      }
+      if (!queueUrl && integration.requestParameters) {
+        for (const [k, v] of Object.entries(integration.requestParameters)) {
+          if (k.toLowerCase() === 'integration.request.querystring.queueurl' || k.toLowerCase() === 'integration.request.path.queueurl') {
+            const val = this.resolveParameter(v, { ...ctx, headers: ctx.headers || {}, queryString: ctx.queryString || {} });
+            if (val) queueUrl = val;
+          }
+        }
+      }
+      if (!messageBody) {
+        if (ctx.body && typeof ctx.body === 'string' && ctx.body.length > 0) {
+          messageBody = ctx.body;
+        }
+      }
+      if (!messageBody) {
+        if (payload && Object.keys(payload).length > 0 && payload.MessageBody === undefined) {
+          messageBody = typeof payload === 'string' ? payload : JSON.stringify(payload);
+        }
+      }
+
+      const queueInfo = this._resolveSQSQueueArnOrName(queueUrl || ctx.queryString?.queueUrl || '');
+      if (!queueUrl && queueInfo?.name) {
+        const q = sqsSim.queues.get(queueInfo.name);
+        queueUrl = q && q.url;
+      }
+
+      if (!queueUrl) {
+        return this.createResponse(400, { __type: 'MissingParameter', message: 'QueueUrl is required' });
+      }
+      if (!messageBody) {
+        return this.createResponse(400, { __type: 'MissingParameter', message: 'MessageBody is required' });
+      }
+
+      try {
+        const result = sqsSim.sendMessage({ QueueUrl: queueUrl, MessageBody: messageBody, DelaySeconds: delaySeconds, MessageAttributes: messageAttributes });
+        if (result.error) {
+          return this.createResponse(result.status || 400, { __type: result.error.code || 'InternalError', message: result.error.message });
+        }
+        return this.createResponse(200, {
+          SendMessageResponse: {
+            SendMessageResult: {
+              MessageId: result.messageId,
+              MD5OfMessageBody: result.md5
+            },
+            ResponseMetadata: { RequestId: crypto.randomUUID() }
+          }
+        });
+      } catch (err) {
+        logger.error('APIGateway SQS integration error:', err);
+        return this.createResponse(502, { __type: 'InternalFailure', message: err.message });
+      }
+    }
+
+    if (actionLower === 'sendmessagebatch') {
+      return this.createResponse(501, { __type: 'NotImplemented', message: 'SendMessageBatch not implemented' });
+    }
+
+    return this.createResponse(400, { __type: 'InvalidAction', message: `Action ${action} not supported for SQS` });
+  }
+
+  async _executeEventBridgeIntegration(integration, action, payload, ctx) {
+    if (!this.eventbridgeService?.simulator) {
+      return this.createResponse(503, { __type: 'ServiceUnavailable', message: 'EventBridge service not available' });
+    }
+
+    const ebSim = this.eventbridgeService.simulator;
+    const actionLower = (action || '').toLowerCase();
+    const defaultEventBusName = integration.eventBusName;
+
+    if (actionLower === 'putevents' || actionLower === '') {
+      let entries = payload.Entries;
+      if (!entries && payload && Object.keys(payload).length > 0) {
+        entries = [{
+          Source: payload.Source || payload.source || 'aws.apigateway',
+          DetailType: payload.DetailType || payload.detailType || 'API Gateway Request',
+          Detail: JSON.stringify(payload.Detail || payload.detail || payload),
+          EventBusName: payload.EventBusName || payload.eventBusName || defaultEventBusName || 'default',
+          Time: payload.Time || new Date().toISOString(),
+          Resources: payload.Resources || []
+        }];
+      } else if (entries && defaultEventBusName) {
+        entries = entries.map(e => ({
+          ...e,
+          EventBusName: e.EventBusName || defaultEventBusName
+        }));
+      }
+      if (!entries || !Array.isArray(entries) || entries.length === 0) {
+        return this.createResponse(400, { __type: 'ValidationException', message: 'Entries list is required and must not be empty' });
+      }
+
+      const normalizedEntries = entries.map(e => ({
+        Time: e.Time || new Date().toISOString(),
+        Source: e.Source || 'aws.apigateway',
+        Resources: e.Resources || [],
+        DetailType: e.DetailType || 'API Gateway Request',
+        Detail: typeof e.Detail === 'string' ? e.Detail : JSON.stringify(e.Detail || {}),
+        EventBusName: e.EventBusName || defaultEventBusName || 'default',
+        TraceHeader: e.TraceHeader
+      }));
+
+      try {
+        const result = await ebSim.putEvents({ Entries: normalizedEntries });
+        return this.createResponse(200, {
+          Entries: (result.Entries || []).map(e => ({
+            EventId: e.EventId || crypto.randomUUID(),
+            ErrorCode: e.ErrorCode,
+            ErrorMessage: e.ErrorMessage
+          })),
+          FailedEntryCount: result.FailedEntryCount || 0
+        });
+      } catch (err) {
+        logger.error('APIGateway EventBridge integration error:', err);
+        return this.createResponse(err.name && err.name !== 'Error' ? 400 : 502, {
+          __type: err.__type || err.name || 'InternalFailure',
+          message: err.message
+        });
+      }
+    }
+
+    return this.createResponse(400, { __type: 'InvalidAction', message: `Action ${action} not supported for EventBridge` });
+  }
+
+  async _executeSNSIntegration(integration, action, payload, ctx) {
+    if (!this.snsService?.simulator) {
+      return this.createResponse(503, { __type: 'ServiceUnavailable', message: 'SNS service not available' });
+    }
+
+    const snsSim = this.snsService.simulator;
+    const actionLower = (action || '').toLowerCase();
+
+    if (actionLower === 'publish' || actionLower === '') {
+      let topicArn = payload.TopicArn || payload.TargetArn || ctx.queryString?.TopicArn;
+      if (!topicArn && integration.topicArn) {
+        topicArn = integration.topicArn;
+      }
+      let message = payload.Message;
+      if (!message && ctx.body && typeof ctx.body === 'string' && ctx.body.length > 0) {
+        message = ctx.body;
+      }
+      if (!message && payload && Object.keys(payload).length > 0 && payload.Message === undefined) {
+        message = typeof payload === 'string' ? payload : JSON.stringify(payload);
+      }
+      const subject = payload.Subject;
+      if (!message) return this.createResponse(400, { __type: 'MissingParameter', message: 'Message is required' });
+
+      try {
+        const result = await snsSim.publish({
+          TopicArn: topicArn,
+          TargetArn: payload.TargetArn,
+          Message: typeof message === 'string' ? message : JSON.stringify(message),
+          Subject: subject,
+          MessageAttributes: payload.MessageAttributes
+        });
+
+        return this.createResponse(200, {
+          PublishResponse: {
+            PublishResult: { MessageId: result.messageId || crypto.randomUUID() },
+            ResponseMetadata: { RequestId: crypto.randomUUID() }
+          }
+        });
+      } catch (err) {
+        logger.error('APIGateway SNS integration error:', err);
+        return this.createResponse(err.__type ? 400 : 502, {
+          __type: err.__type || err.name || 'InternalFailure',
+          message: err.message
+        });
+      }
+    }
+
+    return this.createResponse(400, { __type: 'InvalidAction', message: `Action ${action} not supported for SNS` });
   }
 
   async executeHTTPIntegration(integration, context, body, headers) {
@@ -1200,6 +1584,7 @@ class APIGatewaySimulator {
         data.deployments = new Map(Object.entries(data.deployments || {}));
         data.models = new Map(Object.entries(data.models || {}));
         data.authorizers = new Map(Object.entries(data.authorizers || {}));
+        data.requestValidators = new Map(Object.entries(data.requestValidators || {}));
         this.apis.set(id, data);
       }
     }
@@ -1306,7 +1691,8 @@ class APIGatewaySimulator {
         stages: Object.fromEntries(api.stages),
         deployments: Object.fromEntries(api.deployments),
         models: Object.fromEntries(api.models),
-        authorizers: Object.fromEntries(api.authorizers)
+        authorizers: Object.fromEntries(api.authorizers),
+        requestValidators: Object.fromEntries(api.requestValidators)
       };
     }
     this.store.write('__apis__', apisObj);
@@ -1352,6 +1738,373 @@ class APIGatewaySimulator {
     this.store.write('__usage_plans__', plansObj);
   }
 
+  // ============ JSON Schema Validator (API Gateway style - JSON Schema draft-04) ============
+
+  _jsonSchemaTypeMatches(value, type) {
+    if (value === null) return type === 'null' || type === undefined;
+    switch (type) {
+      case 'string': return typeof value === 'string';
+      case 'integer': return Number.isInteger(value);
+      case 'number': return typeof value === 'number' && Number.isFinite(value);
+      case 'boolean': return typeof value === 'boolean';
+      case 'array': return Array.isArray(value);
+      case 'object': return typeof value === 'object' && !Array.isArray(value);
+      case 'null': return value === null;
+      default: return true;
+    }
+  }
+
+  _validateJsonSchema(value, schema, path = '$') {
+    if (!schema || typeof schema !== 'object') return null;
+
+    if (schema.type !== undefined) {
+      const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+      if (!types.some(t => this._jsonSchemaTypeMatches(value, t))) {
+        return `${path} should be ${types.join(' or ')}`;
+      }
+    }
+
+    if (schema.enum !== undefined && Array.isArray(schema.enum)) {
+      const match = schema.enum.some(opt => JSON.stringify(opt) === JSON.stringify(value));
+      if (!match) return `${path} should be equal to one of the allowed values`;
+    }
+
+    if (typeof value === 'string') {
+      if (schema.minLength !== undefined && value.length < schema.minLength) {
+        return `${path} should NOT be shorter than ${schema.minLength} characters`;
+      }
+      if (schema.maxLength !== undefined && value.length > schema.maxLength) {
+        return `${path} should NOT be longer than ${schema.maxLength} characters`;
+      }
+      if (schema.pattern !== undefined) {
+        try {
+          const re = new RegExp(schema.pattern);
+          if (!re.test(value)) return `${path} should match pattern "${schema.pattern}"`;
+        } catch (_e) { /* invalid pattern, skip */ }
+      }
+      if (schema.format !== undefined) {
+        const fmt = schema.format.toLowerCase();
+        if (fmt === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${path} should be format "date"`;
+        if (fmt === 'date-time') {
+          if (Number.isNaN(Date.parse(value))) return `${path} should be format "date-time"`;
+        }
+        if (fmt === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) return `${path} should be format "email"`;
+        if ((fmt === 'uri' || fmt === 'uriref') && !/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(value)) {
+          if (fmt === 'uri') return `${path} should be format "uri"`;
+        }
+        if (fmt === 'uuid' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+          return `${path} should be format "uuid"`;
+        }
+      }
+    }
+
+    if (typeof value === 'number') {
+      if (schema.minimum !== undefined) {
+        if (schema.exclusiveMinimum ? value <= schema.minimum : value < schema.minimum) {
+          return `${path} should be ${schema.exclusiveMinimum ? '>' : '>='} ${schema.minimum}`;
+        }
+      }
+      if (schema.maximum !== undefined) {
+        if (schema.exclusiveMaximum ? value >= schema.maximum : value > schema.maximum) {
+          return `${path} should be ${schema.exclusiveMaximum ? '<' : '<='} ${schema.maximum}`;
+        }
+      }
+      if (schema.multipleOf !== undefined && value % schema.multipleOf !== 0) {
+        return `${path} should be multiple of ${schema.multipleOf}`;
+      }
+    }
+
+    if (Array.isArray(value)) {
+      if (schema.minItems !== undefined && value.length < schema.minItems) {
+        return `${path} should NOT have fewer than ${schema.minItems} items`;
+      }
+      if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+        return `${path} should NOT have more than ${schema.maxItems} items`;
+      }
+      if (schema.uniqueItems === true) {
+        const seen = new Set();
+        for (const item of value) {
+          const key = JSON.stringify(item);
+          if (seen.has(key)) return `${path} should NOT have duplicate items`;
+          seen.add(key);
+        }
+      }
+      if (schema.items !== undefined) {
+        if (Array.isArray(schema.items)) {
+          for (let i = 0; i < Math.min(schema.items.length, value.length); i++) {
+            const err = this._validateJsonSchema(value[i], schema.items[i], `${path}[${i}]`);
+            if (err) return err;
+          }
+        } else {
+          for (let i = 0; i < value.length; i++) {
+            const err = this._validateJsonSchema(value[i], schema.items, `${path}[${i}]`);
+            if (err) return err;
+          }
+        }
+      }
+    }
+
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (schema.required !== undefined && Array.isArray(schema.required)) {
+        for (const reqField of schema.required) {
+          if (!(reqField in value) || value[reqField] === undefined) {
+            return `${path} should have required property '${reqField}'`;
+          }
+        }
+      }
+      if (schema.minProperties !== undefined && Object.keys(value).length < schema.minProperties) {
+        return `${path} should NOT have fewer than ${schema.minProperties} properties`;
+      }
+      if (schema.maxProperties !== undefined && Object.keys(value).length > schema.maxProperties) {
+        return `${path} should NOT have more than ${schema.maxProperties} properties`;
+      }
+      if (schema.properties && typeof schema.properties === 'object') {
+        for (const [key, subSchema] of Object.entries(schema.properties)) {
+          if (key in value && value[key] !== undefined) {
+            const err = this._validateJsonSchema(value[key], subSchema, `${path}.${key}`);
+            if (err) return err;
+          }
+        }
+      }
+      if (schema.additionalProperties === false && schema.properties) {
+        const allowed = new Set(Object.keys(schema.properties));
+        for (const k of Object.keys(value)) {
+          if (!allowed.has(k)) return `${path} should NOT have additional properties '${k}'`;
+        }
+      } else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+        if (schema.properties) {
+          const defined = new Set(Object.keys(schema.properties));
+          for (const [k, v] of Object.entries(value)) {
+            if (!defined.has(k)) {
+              const err = this._validateJsonSchema(v, schema.additionalProperties, `${path}.${k}`);
+              if (err) return err;
+            }
+          }
+        }
+      }
+      if (schema.patternProperties && typeof schema.patternProperties === 'object') {
+        for (const [pattern, subSchema] of Object.entries(schema.patternProperties)) {
+          try {
+            const re = new RegExp(pattern);
+            for (const [k, v] of Object.entries(value)) {
+              if (re.test(k)) {
+                const err = this._validateJsonSchema(v, subSchema, `${path}.${k}`);
+                if (err) return err;
+              }
+            }
+          } catch (_e) { /* ignore bad pattern */ }
+        }
+      }
+      if (schema.allOf && Array.isArray(schema.allOf)) {
+        for (let i = 0; i < schema.allOf.length; i++) {
+          const err = this._validateJsonSchema(value, schema.allOf[i], path);
+          if (err) return err;
+        }
+      }
+      if (schema.oneOf && Array.isArray(schema.oneOf)) {
+        let matchCount = 0;
+        for (const sub of schema.oneOf) if (!this._validateJsonSchema(value, sub, path)) matchCount++;
+        if (matchCount !== 1) return `${path} should match exactly one schema in oneOf`;
+      }
+      if (schema.anyOf && Array.isArray(schema.anyOf)) {
+        let ok = false;
+        for (const sub of schema.anyOf) if (!this._validateJsonSchema(value, sub, path)) { ok = true; break; }
+        if (!ok) return `${path} should match some schema in anyOf`;
+      }
+      if (schema.not) {
+        if (!this._validateJsonSchema(value, schema.not, path)) return `${path} should NOT be valid against the schema in "not"`;
+      }
+    }
+
+    return null;
+  }
+
+  // ============ Request Validation (AWS API Gateway style) ============
+
+  validateRequest({ api, methodDef, headers, queryString, pathParams, body }) {
+    const validator = (methodDef && methodDef.requestValidatorId && api?.requestValidators)
+      ? api.requestValidators.get(methodDef.requestValidatorId)
+      : null;
+
+    const validateParams = !!validator?.validateRequestParameters;
+    const validateBody = !!validator?.validateRequestBody;
+
+    if (!validateParams && !validateBody) return null;
+
+    if (validateParams && methodDef.requestParameters) {
+      for (const [paramKey, required] of Object.entries(methodDef.requestParameters)) {
+        if (!required) continue;
+        const key = String(paramKey);
+        let value = null;
+        if (key.startsWith('method.request.querystring.')) {
+          const name = key.slice('method.request.querystring.'.length);
+          value = (queryString && name in queryString) ? queryString[name] : null;
+        } else if (key.startsWith('method.request.path.')) {
+          const name = key.slice('method.request.path.'.length);
+          value = (pathParams && name in pathParams) ? pathParams[name] : null;
+        } else if (key.startsWith('method.request.header.')) {
+          const name = key.slice('method.request.header.'.length);
+          value = null;
+          if (headers) {
+            value = headers[name] ?? headers[name.toLowerCase()] ?? null;
+          }
+        }
+        if (value === null || value === undefined || value === '') {
+          return `Missing required request parameters: [${key}]`;
+        }
+      }
+    }
+
+    if (validateBody && methodDef.requestModels) {
+      const contentType = (headers && (headers['Content-Type'] || headers['content-type'])) || 'application/json';
+      const modelName = methodDef.requestModels[contentType] || methodDef.requestModels['application/json'];
+      if (!modelName) return null;
+
+      const model = (api?.models && api.models.get(modelName)) || this.models.get(modelName);
+      if (!model) {
+        logger.warn(`APIGateway: Model "${modelName}" referenced but not found for validation`);
+        return null;
+      }
+
+      const schema = typeof model.schema === 'string'
+        ? (() => { try { return JSON.parse(model.schema); } catch (_e) { return null; } })()
+        : model.schema;
+      if (!schema || typeof schema !== 'object') return null;
+
+      let parsed = body;
+      if (typeof parsed === 'string') {
+        try { parsed = JSON.parse(parsed); }
+        catch (_e) { return 'Invalid request body: expected valid JSON'; }
+      }
+
+      const err = this._validateJsonSchema(parsed, schema, '$');
+      if (err) return `Invalid request body: ${err}`;
+    }
+
+    return null;
+  }
+
+  // ============ Model Operations ============
+
+  createModel(params) {
+    const { restApiId, name, description, schema, contentType } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+    if (!name) throw new Error('Model name is required');
+
+    const schemaStr = typeof schema === 'string' ? schema : JSON.stringify(schema || {});
+    const model = {
+      name,
+      description: description || '',
+      schema: schemaStr,
+      contentType: contentType || 'application/json',
+      createdDate: new Date().toISOString()
+    };
+
+    api.models.set(name, model);
+    this.persistAPIs();
+    return { id: name, ...model };
+  }
+
+  getModel(params) {
+    const { restApiId, modelName, flatten } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+    const model = api.models.get(modelName);
+    if (!model) throw new Error(`Model ${modelName} not found`);
+
+    if (flatten === 'true' || flatten === true) {
+      const parsed = typeof model.schema === 'string'
+        ? (() => { try { return JSON.parse(model.schema); } catch (_e) { return {}; } })()
+        : model.schema;
+      return { name: model.name, description: model.description, contentType: model.contentType, schema: parsed };
+    }
+    return { ...model };
+  }
+
+  getModels(params) {
+    const { restApiId } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+    return {
+      items: Array.from(api.models.values()).map(m => ({
+        name: m.name,
+        description: m.description,
+        contentType: m.contentType,
+        createdDate: m.createdDate
+      }))
+    };
+  }
+
+  deleteModel(params) {
+    const { restApiId, modelName } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+    if (!api.models.has(modelName)) throw new Error(`Model ${modelName} not found`);
+    api.models.delete(modelName);
+    this.persistAPIs();
+    return {};
+  }
+
+  // ============ Request Validator Operations ============
+
+  createRequestValidator(params) {
+    const { restApiId, name, validateRequestBody, validateRequestParameters } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+
+    const id = `rv_${crypto.randomBytes(6).toString('hex')}`;
+    const validator = {
+      id,
+      name: name || `validator-${id}`,
+      validateRequestBody: !!validateRequestBody,
+      validateRequestParameters: !!validateRequestParameters
+    };
+
+    api.requestValidators.set(id, validator);
+    this.persistAPIs();
+    return validator;
+  }
+
+  getRequestValidator(params) {
+    const { restApiId, requestValidatorId } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+    const v = api.requestValidators.get(requestValidatorId);
+    if (!v) throw new Error(`Request validator ${requestValidatorId} not found`);
+    return { ...v };
+  }
+
+  getRequestValidators(params) {
+    const { restApiId } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+    return { items: Array.from(api.requestValidators.values()) };
+  }
+
+  updateRequestValidator(params) {
+    const { restApiId, requestValidatorId, name, validateRequestBody, validateRequestParameters } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+    const v = api.requestValidators.get(requestValidatorId);
+    if (!v) throw new Error(`Request validator ${requestValidatorId} not found`);
+    if (name !== undefined) v.name = name;
+    if (validateRequestBody !== undefined) v.validateRequestBody = !!validateRequestBody;
+    if (validateRequestParameters !== undefined) v.validateRequestParameters = !!validateRequestParameters;
+    this.persistAPIs();
+    return { ...v };
+  }
+
+  deleteRequestValidator(params) {
+    const { restApiId, requestValidatorId } = params;
+    const api = this.apis.get(restApiId);
+    if (!api) throw new Error(`API ${restApiId} not found`);
+    if (!api.requestValidators.has(requestValidatorId)) throw new Error(`Request validator ${requestValidatorId} not found`);
+    api.requestValidators.delete(requestValidatorId);
+    this.persistAPIs();
+    return {};
+  }
+
   async reset() {
     this.apis.clear();
     this.websocketApis.clear();
@@ -1364,6 +2117,7 @@ class APIGatewaySimulator {
     this.usagePlans.clear();
     this.apiKeys.clear();
     this.domainNames.clear();
+    this.requestValidators.clear();
     
     this.persistAPIs();
     this.persistApiKeys();

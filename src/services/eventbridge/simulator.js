@@ -6,6 +6,12 @@
 'use strict';
 
 const crypto = require('crypto');
+const { ArchiveFeature } = require('./features/archives');
+const { PipeFeature } = require('./features/pipes');
+const { SchedulerFeature } = require('./features/scheduler');
+const { IntegrationFeature } = require('./features/integrations');
+const { SchemaFeature } = require('./features/schemas');
+const { GlobalEndpointFeature } = require('./features/global-endpoints');
 
 /**
  * EventBridge Simulator
@@ -37,6 +43,16 @@ class EventBridgeSimulator {
     this.lambdaService = null;
     this.sqsService = null;
     this.snsService = null;
+
+    // Feature modules
+    this.features = {
+      archives: new ArchiveFeature(this),
+      pipes: new PipeFeature(this),
+      scheduler: new SchedulerFeature(this),
+      integrations: new IntegrationFeature(this),
+      schemas: new SchemaFeature(this),
+      globalEndpoints: new GlobalEndpointFeature(this),
+    };
 
     // Create default event bus
     this._createDefaultBus();
@@ -70,7 +86,13 @@ class EventBridgeSimulator {
       }
       const rules = await this.store.read('eventbridge/rules');
       if (Array.isArray(rules)) {
-        rules.forEach(r => this.rules.set(r.Arn, r));
+        rules.forEach(r => {
+          this.rules.set(r.Arn, r);
+          // Reparseia padrões caso tenham sido carregados.
+          if (r.EventPattern && !r.ParsedPattern) {
+            try { r.ParsedPattern = JSON.parse(r.EventPattern); } catch { r.ParsedPattern = null; }
+          }
+        });
       }
       const targets = await this.store.read('eventbridge/targets');
       if (Array.isArray(targets)) {
@@ -79,6 +101,37 @@ class EventBridgeSimulator {
       this.logger.debug('EventBridge', `Loaded ${this.buses.size} buses, ${this.rules.size} rules`);
     } catch {
       this.logger.debug('EventBridge', 'No persisted data, starting fresh');
+    }
+
+    try {
+      await this.features.archives.load();
+    } catch (err) {
+      this.logger.debug('EventBridge', `Archives não carregados: ${err.message}`);
+    }
+    try {
+      await this.features.pipes.load();
+    } catch (err) {
+      this.logger.debug('EventBridge', `Pipes não carregados: ${err.message}`);
+    }
+    try {
+      await this.features.scheduler.load();
+    } catch (err) {
+      this.logger.debug('EventBridge', `Scheduler não carregados: ${err.message}`);
+    }
+    try {
+      await this.features.integrations.load();
+    } catch (err) {
+      this.logger.debug('EventBridge', `Integrações não carregadas: ${err.message}`);
+    }
+    try {
+      await this.features.schemas.load();
+    } catch (err) {
+      this.logger.debug('EventBridge', `Schema registry não carregado: ${err.message}`);
+    }
+    try {
+      await this.features.globalEndpoints.load();
+    } catch (err) {
+      this.logger.debug('EventBridge', `Global endpoints não carregados: ${err.message}`);
     }
   }
 
@@ -142,6 +195,19 @@ class EventBridgeSimulator {
     }
 
     this.buses.delete(Name);
+
+    try {
+      if (this.features?.archives?.deleteForBus) await this.features.archives.deleteForBus(Name);
+    } catch (err) {
+      this.logger.warn('EventBridge', `Falha ao limpar archives do bus: ${err.message}`);
+    }
+
+    try {
+      if (this.features?.pipes?.deleteForBus) await this.features.pipes.deleteForBus(Name);
+    } catch (err) {
+      this.logger.warn('EventBridge', `Falha ao limpar pipes do bus: ${err.message}`);
+    }
+
     await this._save();
 
     this.logger.info('EventBridge', `Deleted event bus: ${Name}`);
@@ -364,7 +430,15 @@ class EventBridgeSimulator {
         InputTransformer: target.InputTransformer || null,
         RoleArn: target.RoleArn || null,
         RetryPolicy: target.RetryPolicy || { MaximumRetryAttempts: 185, MaximumEventAgeInSeconds: 86400 },
-        DeadLetterConfig: target.DeadLetterConfig || null
+        DeadLetterConfig: target.DeadLetterConfig || null,
+        MessageGroupId: target.MessageGroupId || null,
+        KinesisParameters: target.KinesisParameters || null,
+        EcsParameters: target.EcsParameters || null,
+        BatchParameters: target.BatchParameters || null,
+        HttpParameters: target.HttpParameters || null,
+        RedshiftDataParameters: target.RedshiftDataParameters || null,
+        SageMakerPipelineParameters: target.SageMakerPipelineParameters || null,
+        AppSyncParameters: target.AppSyncParameters || null
       });
     }
 
@@ -464,9 +538,28 @@ class EventBridgeSimulator {
       };
 
       // Archive event
+      event.EventBusName = event.EventBusName || busName;
       this.eventArchive.push(event);
       if (this.eventArchive.length > 1000) {
         this.eventArchive.shift();
+      }
+
+      // Archive features
+      try {
+        if (this.features?.archives?.record) {
+          await this.features.archives.record(busName, event);
+        }
+      } catch (err) {
+        this.logger.warn('EventBridge', `Falha ao arquivar evento: ${err.message}`);
+      }
+
+      // Pipes com origem em EventBridge
+      try {
+        if (this.features?.pipes?.onEventBridgeEvent) {
+          await this.features.pipes.onEventBridgeEvent(busName, event);
+        }
+      } catch (err) {
+        this.logger.warn('EventBridge', `Falha ao processar pipe: ${err.message}`);
       }
 
       // Match and deliver to rules
@@ -497,9 +590,15 @@ class EventBridgeSimulator {
         const targets = this.targets.get(rule.Arn) || [];
         for (const target of targets) {
           try {
-            await this._deliverToTarget(target, event);
+            await this._deliverToTarget(target, event, { ruleArn: rule.Arn, ruleName: rule.Name, eventBusName: busName });
           } catch (err) {
             this.logger.warn('EventBridge', `Target delivery failed: ${err.message}`);
+            // DeadLetterConfig: AWS moves failed events to the DLQ SQS ARN
+            const dlqArn = target.DeadLetterConfig && target.DeadLetterConfig.Arn;
+            if (dlqArn && this.sqsService) {
+              try { await this._deliverToSQS(dlqArn, JSON.stringify(event), { _eventbridge_dlq_original_target: target.Arn }); }
+              catch (dlqErr) { this.logger.warn('EventBridge DLQ', `DLQ delivery also failed: ${dlqErr.message}`); }
+            }
           }
         }
       }
@@ -513,36 +612,81 @@ class EventBridgeSimulator {
    * @returns {boolean}
    */
   _matchesPattern(event, pattern) {
+    // AWS EventBridge $or (array of pattern objects, match any)
+    if (Array.isArray(pattern)) {
+      return pattern.some(subPattern => this._matchesPattern(event, subPattern));
+    }
+
     for (const [key, matchers] of Object.entries(pattern)) {
-      const eventValue = key === 'detail' ? event.detail : event[key];
+      if (key === '$or') {
+        if (!Array.isArray(matchers)) continue;
+        const orMatch = matchers.some(sub => this._matchesPattern(event, sub));
+        if (!orMatch) return false;
+        continue;
+      }
 
       if (key === 'detail' && typeof matchers === 'object' && !Array.isArray(matchers)) {
-        // Recursive detail matching
         if (!this._matchesPattern(event.detail || {}, matchers)) return false;
+        continue;
+      }
+
+      const eventValue = key === 'detail' ? event.detail : event[key];
+
+      // AWS: if matcher is array and field value is also array → any element matches any matcher
+      if (Array.isArray(matchers) && Array.isArray(eventValue)) {
+        const arrMatch = eventValue.some(v => matchers.some(m => this._singleMatcherMatches(v, m)));
+        if (!arrMatch) return false;
         continue;
       }
 
       if (!Array.isArray(matchers)) continue;
 
-      const matches = matchers.some(matcher => {
-        if (matcher === null) return eventValue === null;
-        if (typeof matcher === 'string') return eventValue === matcher;
-        if (typeof matcher === 'object') {
-          if (matcher.prefix) return String(eventValue).startsWith(matcher.prefix);
-          if (matcher['anything-but']) {
-            return !matcher['anything-but'].includes(eventValue);
-          }
-          if (matcher.exists !== undefined) {
-            return matcher.exists ? eventValue !== undefined : eventValue === undefined;
-          }
-          if (matcher.numeric) return this._checkNumeric(parseFloat(eventValue), matcher.numeric);
-        }
-        return false;
-      });
-
+      const matches = matchers.some(matcher => this._singleMatcherMatches(eventValue, matcher));
       if (!matches) return false;
     }
     return true;
+  }
+
+  _singleMatcherMatches(eventValue, matcher) {
+    if (matcher === null) return eventValue === null;
+    if (typeof matcher === 'string') {
+      if (matcher.endsWith('*')) {
+        const prefix = matcher.slice(0, -1);
+        return eventValue != null && String(eventValue).startsWith(prefix);
+      }
+      if (matcher.startsWith('*')) {
+        const suffix = matcher.slice(1);
+        return eventValue != null && String(eventValue).endsWith(suffix);
+      }
+      return eventValue === matcher;
+    }
+    if (typeof matcher === 'object') {
+      if (matcher.prefix) return String(eventValue).startsWith(matcher.prefix);
+      if (matcher.suffix) return String(eventValue).endsWith(matcher.suffix);
+      if (matcher.wildcard) {
+        const wc = matcher.wildcard;
+        let regex = '^';
+        for (let i = 0; i < wc.length; i++) {
+          const c = wc[i];
+          if (c === '*') regex += '.*';
+          else if (c === '?') regex += '.';
+          else regex += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+        regex += '$';
+        try { return new RegExp(regex).test(String(eventValue)); } catch (_e) { return false; }
+      }
+      if (matcher['anything-but']) {
+        const forbidden = matcher['anything-but'];
+        if (Array.isArray(forbidden)) return !forbidden.includes(eventValue);
+        return eventValue !== forbidden;
+      }
+      if (matcher.exists !== undefined) {
+        return matcher.exists ? eventValue !== undefined : eventValue === undefined;
+      }
+      if (matcher.numeric) return this._checkNumeric(parseFloat(eventValue), matcher.numeric);
+      if (matcher.ctype === 'string') return typeof eventValue === 'string';
+    }
+    return false;
   }
 
   /**
@@ -565,56 +709,164 @@ class EventBridgeSimulator {
   }
 
   /**
+   * Resolve SQS ARN or URL → SQS QueueUrl (formato aceito pelo SQS simulator)
+   */
+  _resolveSqsQueueUrl(arnOrUrlOrName) {
+    if (!arnOrUrlOrName) return null;
+    const sqs = this.sqsService && this.sqsService.simulator;
+    if (!sqs) return null;
+
+    if (typeof arnOrUrlOrName !== 'string') return null;
+    if (/^https?:\/\//i.test(arnOrUrlOrName) || arnOrUrlOrName.includes('/queue/')) {
+      return arnOrUrlOrName;
+    }
+    let name = arnOrUrlOrName;
+    const arnMatch = arnOrUrlOrName.match(/:queue:([^:]+)$|:sqs:[^:]*:[^:]*:([^:/]+)/);
+    if (arnMatch) name = arnMatch[1] || arnMatch[2];
+
+    const q = sqs.queues && sqs.queues.get(name);
+    return (q && q.url) || (sqs.endpoint ? `${sqs.endpoint}/queue/${name}` : null);
+  }
+
+  /**
+   * Deliver directly to SQS with ARN/URL resolution + AWS-style MessageAttributes
+   */
+  async _deliverToSQS(queueArnOrUrl, messageBody, extraAttributes = {}) {
+    if (!this.sqsService) throw new Error('SQS service not available');
+    const sqs = this.sqsService.simulator;
+    const queueUrl = this._resolveSqsQueueUrl(queueArnOrUrl);
+    if (!queueUrl) throw new Error(`Unable to resolve SQS queue: ${queueArnOrUrl}`);
+
+    const traceId = crypto.randomUUID();
+    const MessageAttributes = {
+      AWSTraceHeader: {
+        DataType: 'String',
+        StringValue: `Root=1-${Date.now().toString(16)}-${traceId.replace(/-/g, '')}`
+      },
+      ...Object.fromEntries(Object.entries(extraAttributes || {}).map(([k, v]) => [
+        k,
+        typeof v === 'string' ? { DataType: 'String', StringValue: v } : { DataType: 'String', StringValue: JSON.stringify(v) }
+      ]))
+    };
+
+    const result = sqs.sendMessage({
+      QueueUrl: queueUrl,
+      MessageBody: messageBody,
+      MessageAttributes
+    });
+
+    if (!result || result.error) throw new Error((result && result.error && result.error.message) || 'SQS sendMessage failed');
+    return result;
+  }
+
+  /**
    * Deliver event to target
    * @param {Object} target
    * @param {Object} event
+   * @param {Object} [ruleInfo]
    */
-  async _deliverToTarget(target, event) {
-    // Transform input
+  async _deliverToTarget(target, event, ruleInfo) {
+    // Apply Input / InputPath / InputTransformer (AWS precedence)
     let inputEvent = event;
     if (target.Input) {
       try { inputEvent = JSON.parse(target.Input); } catch { inputEvent = target.Input; }
     } else if (target.InputPath) {
       inputEvent = this._extractPath(event, target.InputPath);
     } else if (target.InputTransformer) {
-      inputEvent = this._transformInput(event, target.InputTransformer);
+      inputEvent = this._transformInput(event, target.InputTransformer, ruleInfo);
     }
 
     const arn = target.Arn;
 
     // Lambda target
-    if (arn.includes(':lambda:') || arn.includes('function:')) {
-      if (!this.lambdaService) return;
-      const match = arn.match(/function:([^:]+)/);
-      if (!match) return;
-      await this.lambdaService.simulator.invokeFunction(match[1], inputEvent);
-      this.logger.debug('EventBridge', `Delivered to Lambda: ${match[1]}`);
+    if (arn.includes(':lambda:') || arn.includes(':function:') || (arn.startsWith('arn:aws:lambda') || arn.startsWith('arn:aws-cn:lambda') || arn.startsWith('arn:aws-us-gov:lambda'))) {
+      if (!this.lambdaService) throw new Error('Lambda service not available');
+      let functionName = null;
+      const match = arn.match(/:function:([^:/]+)/);
+      if (match) {
+        functionName = match[1];
+      } else {
+        functionName = arn;
+      }
+      if (!functionName) throw new Error(`Could not resolve Lambda function from ARN: ${arn}`);
+      // AWS EventBridge invokes Lambda asynchronously with invocation-type=Event
+      await this.lambdaService.simulator.invokeFunction(functionName, inputEvent);
+      this.logger.debug('EventBridge', `Delivered to Lambda: ${functionName}`);
       return;
     }
 
     // SQS target
     if (arn.includes(':sqs:') || arn.includes(':queue:')) {
-      if (!this.sqsService) return;
-      await this.sqsService.simulator.sendMessage({
-        QueueUrl: arn,
-        MessageBody: JSON.stringify(inputEvent)
-      });
+      const isFifo = arn.endsWith('.fifo');
+      const msgBody = typeof inputEvent === 'string' ? inputEvent : JSON.stringify(inputEvent);
+      const extraAttrs = {};
+      if (ruleInfo && ruleInfo.ruleArn) extraAttrs['EventBridgeRuleArn'] = ruleInfo.ruleArn;
+      const sendParams = {
+        QueueUrl: this._resolveSqsQueueUrl(arn) || arn,
+        MessageBody: msgBody
+      };
+      if (isFifo) {
+        sendParams.MessageGroupId = target.MessageGroupId || `${ruleInfo ? ruleInfo.ruleArn : 'eventbridge'}-${target.Id || 'tgt'}`;
+        if (target.Id) extraAttrs['TargetId'] = target.Id;
+      }
+      const result = await this._deliverToSQS(sendParams.QueueUrl, sendParams.MessageBody, extraAttrs);
       this.logger.debug('EventBridge', `Delivered to SQS: ${arn}`);
       return;
     }
 
     // SNS target
     if (arn.includes(':sns:')) {
-      if (!this.snsService) return;
-      await this.snsService.simulator.publish({
+      if (!this.snsService) throw new Error('SNS service not available');
+      const message = typeof inputEvent === 'string' ? inputEvent : JSON.stringify(inputEvent);
+      const traceId = crypto.randomUUID();
+      const attrs = {
+        AWSTraceHeader: { DataType: 'String', StringValue: traceId }
+      };
+      if (ruleInfo && ruleInfo.ruleArn) {
+        attrs['EventBridgeRuleArn'] = { DataType: 'String', StringValue: ruleInfo.ruleArn };
+      }
+      const result = await this.snsService.simulator.publish({
         TopicArn: arn,
-        Message: JSON.stringify(inputEvent)
+        Message: message,
+        MessageAttributes: attrs
       });
+      if (!result || (result && result.error)) {
+        throw new Error((result && result.error && result.error.message) || 'SNS publish failed');
+      }
       this.logger.debug('EventBridge', `Delivered to SNS: ${arn}`);
       return;
     }
 
+    // API destination target
+    if (arn.includes(':api-destination/')) {
+      if (!this.features?.integrations?.deliverApiDestination) {
+        throw new Error('Integrations service not available');
+      }
+      const payload = typeof inputEvent === 'string' ? inputEvent : JSON.stringify(inputEvent);
+      await this.features.integrations.deliverApiDestination(arn, payload, target.HttpParameters);
+      this.logger.debug('EventBridge', `Delivered to API destination: ${arn}`);
+      return;
+    }
+
+    // EventBridge event bus target
+    if (arn.includes(':event-bus/')) {
+      const busName = String(arn).split(':event-bus/')[1];
+      if (!this.buses.has(busName)) throw new Error(`Event bus not found: ${busName}`);
+      const detail = typeof inputEvent === 'string' ? inputEvent : JSON.stringify(inputEvent);
+      await this.putEvents({
+        Entries: [{
+          EventBusName: busName,
+          Source: ruleInfo?.ruleName ? `aws.events.rule.${ruleInfo.ruleName}` : 'aws.events',
+          DetailType: 'EventBridge Target',
+          Detail: detail
+        }]
+      });
+      this.logger.debug('EventBridge', `Delivered to event bus: ${busName}`);
+      return;
+    }
+
     this.logger.warn('EventBridge', `Unsupported target ARN: ${arn}`);
+    throw new Error(`Unsupported target type for ARN: ${arn}`);
   }
 
   /**
@@ -624,30 +876,76 @@ class EventBridgeSimulator {
    * @returns {*}
    */
   _extractPath(obj, path) {
+    if (!path) return obj;
     if (path === '$') return obj;
-    const parts = path.replace(/^\$\./, '').split('.');
+    const cleaned = path.replace(/^\$\.?/, '');
+    if (!cleaned) return obj;
+
+    // Tokenize: suporta dotted keys e bracket array notation como resources[0], [0]
+    const tokens = [];
+    let buf = '';
+    for (let i = 0; i < cleaned.length; i++) {
+      const c = cleaned[i];
+      if (c === '.') {
+        if (buf) tokens.push({ type: 'key', value: buf });
+        buf = '';
+      } else if (c === '[') {
+        if (buf) tokens.push({ type: 'key', value: buf });
+        buf = '';
+      } else if (c === ']') {
+        if (buf.length > 0) {
+          const n = Number(buf);
+          tokens.push({ type: Number.isNaN(n) ? 'key' : 'index', value: Number.isNaN(n) ? buf : n });
+        }
+        buf = '';
+      } else {
+        buf += c;
+      }
+    }
+    if (buf) tokens.push({ type: 'key', value: buf });
+
     let current = obj;
-    for (const part of parts) {
+    for (const t of tokens) {
       if (current === null || current === undefined) return null;
-      current = current[part];
+      if (t.type === 'index') {
+        if (!Array.isArray(current)) return null;
+        current = current[t.value];
+      } else {
+        current = current[t.value];
+      }
     }
     return current;
   }
 
   /**
-   * Transform input using InputTransformer
+   * Transform input using InputTransformer (AWS style)
    * @param {Object} event
    * @param {Object} transformer
+   * @param {Object} [ruleInfo] optional rule info for <aws.events.rule-arn>, etc.
    * @returns {*}
    */
-  _transformInput(event, transformer) {
+  _transformInput(event, transformer, ruleInfo) {
     const { InputPathsMap, InputTemplate } = transformer;
-    let result = InputTemplate;
+    if (!InputTemplate) return event;
+    let result = String(InputTemplate);
 
-    if (InputPathsMap && InputTemplate) {
+    // AWS reserved placeholders
+    const reserved = {
+      'aws.events.event': JSON.stringify(event),
+      'aws.events.event.json': JSON.stringify(event),
+      'aws.events.rule-arn': (ruleInfo && ruleInfo.ruleArn) || '',
+      'aws.events.rule-name': (ruleInfo && ruleInfo.ruleName) || '',
+      'aws.events.eventbus-name': (ruleInfo && ruleInfo.eventBusName) || ''
+    };
+    for (const [k, v] of Object.entries(reserved)) {
+      result = result.split(`<${k}>`).join(typeof v === 'string' ? v : JSON.stringify(v));
+    }
+
+    if (InputPathsMap && typeof InputPathsMap === 'object') {
       for (const [key, path] of Object.entries(InputPathsMap)) {
         const value = this._extractPath(event, path);
-        result = result.replace(new RegExp(`<${key}>`, 'g'), JSON.stringify(value));
+        const safeValue = typeof value === 'string' ? value : JSON.stringify(value);
+        result = result.split(`<${key}>`).join(safeValue);
       }
     }
 
@@ -663,6 +961,26 @@ class EventBridgeSimulator {
     this.targets.clear();
     this.eventArchive = [];
     this._createDefaultBus();
+
+    try {
+      if (this.features?.archives?.reset) await this.features.archives.reset();
+    } catch {}
+    try {
+      if (this.features?.pipes?.reset) await this.features.pipes.reset();
+    } catch {}
+    try {
+      if (this.features?.scheduler?.reset) await this.features.scheduler.reset();
+    } catch {}
+    try {
+      if (this.features?.integrations?.reset) await this.features.integrations.reset();
+    } catch {}
+    try {
+      if (this.features?.schemas?.reset) await this.features.schemas.reset();
+    } catch {}
+    try {
+      if (this.features?.globalEndpoints?.reset) await this.features.globalEndpoints.reset();
+    } catch {}
+
     await this._save();
     this.logger.info('EventBridge', 'Data reset');
   }

@@ -1,3 +1,4 @@
+const { setupServiceMiddleware } = require('../../middleware');
 /**
  * SQS Server - Servidor HTTP para SQS
  */
@@ -10,6 +11,8 @@ const logger = require('../../utils/logger');
 
 class SQSServer {
   constructor(port, config, lambdaService) {
+    this.organizationsService = null;
+    this.stsService = null;
     this.port = port;
     this.config = config;
     this.lambdaService = lambdaService;
@@ -64,6 +67,14 @@ class SQSServer {
     // Endpoint principal
     this.app.use((req, res, next) => {
       logger.info(`SQS incoming: ${req.method} ${req.path} headers=${JSON.stringify(req.headers)} query=${JSON.stringify(req.query)} body=${JSON.stringify(req.body)}`);
+      next();
+    });
+
+    // IAM enforcement (applied conditionally via injectDependencies)
+    this.app.use((req, res, next) => {
+      if (this.iamMiddleware && !req.path.startsWith('/__admin')) {
+        return this.iamMiddleware(req, res, next);
+      }
       next();
     });
 
@@ -161,13 +172,16 @@ class SQSServer {
             MessageId: m.MessageId,
             ReceiptHandle: m.ReceiptHandle,
             MD5OfBody: m.MD5OfBody,
-            Body: m.Body
+            Body: m.Body,
+            Attributes: m.Attributes
           }))
         };
       case 'DeleteMessage':
         return {};
       case 'GetQueueUrl':
         return { QueueUrl: result.queueUrl };
+      case 'GetQueueAttributes':
+        return { Attributes: result.attributes };
       case 'ListQueues':
         return { QueueUrls: (result.queues || []).map(q => q.url) };
       default:
@@ -189,8 +203,9 @@ class SQSServer {
         return this.generateDeleteMessageResponse();
       case 'SetQueueAttributes':
         return this.generateSetQueueAttributesResponse();
+      case 'GetQueueAttributes':
+        return this.generateGetQueueAttributesResponse(result.attributes);
       case 'GetQueueUrl':
-
         return this.generateGetQueueUrlResponse(result.queueUrl);
       case 'ListQueues':
         return this.generateListQueuesResponse(result.queues);
@@ -206,6 +221,29 @@ class SQSServer {
 </SetQueueAttributesResponse>`;
   }
 
+  generateGetQueueAttributesResponse(attributes) {
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<GetQueueAttributesResponse xmlns="http://queue.amazonaws.com/doc/2012-11-05/">
+  <GetQueueAttributesResult>
+    <Attribute>`;
+    
+    for (const [key, value] of Object.entries(attributes)) {
+      xml += `
+      <Name>${key}</Name>
+      <Value>${this.escapeXml(value)}</Value>
+    </Attribute>
+    <Attribute>`;
+    }
+    
+    xml = xml.slice(0, -13);  // Remove last <Attribute>
+    
+    xml += `
+  </GetQueueAttributesResult>
+  <ResponseMetadata><RequestId>${crypto.randomUUID()}</RequestId></ResponseMetadata>
+</GetQueueAttributesResponse>`;
+    
+    return xml;
+  }
 
   generateCreateQueueResponse(queueUrl) {
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -270,7 +308,22 @@ class SQSServer {
       <MessageId>${msg.MessageId}</MessageId>
       <ReceiptHandle>${msg.ReceiptHandle}</ReceiptHandle>
       <MD5OfBody>${msg.MD5OfBody}</MD5OfBody>
-      <Body>${this.escapeXml(msg.Body)}</Body>
+      <Body>${this.escapeXml(msg.Body)}</Body>`;
+      
+      // Add message attributes if present
+      if (msg.Attributes && Object.keys(msg.Attributes).length > 0) {
+        for (const [attrKey, attrValue] of Object.entries(msg.Attributes)) {
+          if (attrValue !== null && attrValue !== undefined) {
+            xml += `
+      <Attribute>
+        <Name>${attrKey}</Name>
+        <Value>${this.escapeXml(String(attrValue))}</Value>
+      </Attribute>`;
+          }
+        }
+      }
+      
+      xml += `
     </Message>`;
     }
     

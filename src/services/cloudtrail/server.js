@@ -129,6 +129,11 @@ function createCloudTrailServer(simulator, logger) {
       return handleAdmin(req, res, simulator, logger);
     }
 
+    // ── JSON routes for React frontend ──────────────────────────────────────
+    if (url.startsWith('/json/cloudtrail')) {
+      return handleJsonRoutes(req, res, simulator, logger);
+    }
+
     // ── Internal route (cross-service) ──────────────────────────────────────
     if (url === '/__internal/record-event' && method === 'POST') {
       const body = await parseBody(req);
@@ -174,6 +179,69 @@ function createCloudTrailServer(simulator, logger) {
   });
 
   return server;
+}
+
+// ─── JSON routes for React frontend ──────────────────────────────────────────
+
+async function handleJsonRoutes(req, res, simulator, logger) {
+  const { method, url } = req;
+  const path = url.split('?')[0];
+
+  // GET /json/cloudtrail/trails
+  if (path === '/json/cloudtrail/trails' && method === 'GET') {
+    try {
+      const result = simulator.describeTrails({});
+      const trails = result.trailList || [];
+      sendJson(res, 200, trails);
+    } catch (err) {
+      logger.error('[CloudTrail] GET /json/cloudtrail/trails error:', err.message);
+      sendJson(res, 200, []);
+    }
+    return;
+  }
+
+  // POST /json/cloudtrail/trails
+  if (path === '/json/cloudtrail/trails' && method === 'POST') {
+    try {
+      const body = await parseBody(req);
+      const result = simulator.createTrail(body);
+      sendJson(res, 201, result);
+    } catch (err) {
+      logger.error('[CloudTrail] POST /json/cloudtrail/trails error:', err.message);
+      sendError(res, err);
+    }
+    return;
+  }
+
+  // DELETE /json/cloudtrail/trails/:trailName
+  if (path.startsWith('/json/cloudtrail/trails/') && method === 'DELETE') {
+    try {
+      const trailName = path.replace('/json/cloudtrail/trails/', '');
+      const result = simulator.deleteTrail({ Name: trailName });
+      sendJson(res, 200, result);
+    } catch (err) {
+      logger.error('[CloudTrail] DELETE /json/cloudtrail/trails error:', err.message);
+      sendError(res, err);
+    }
+    return;
+  }
+
+  // GET /json/cloudtrail/events
+  if (path === '/json/cloudtrail/events' && method === 'GET') {
+    try {
+      const urlObj = new URL(url, 'http://localhost');
+      const limit = parseInt(urlObj.searchParams.get('limit') || '50', 10);
+      const result = simulator.lookupEvents({ MaxResults: limit });
+      const events = result.Events || [];
+      sendJson(res, 200, events);
+    } catch (err) {
+      logger.error('[CloudTrail] GET /json/cloudtrail/events error:', err.message);
+      sendJson(res, 200, []);
+    }
+    return;
+  }
+
+  sendJson(res, 404, { message: `JSON route not found: ${path}` });
 }
 
 // ─── Admin handlers ───────────────────────────────────────────────────────────

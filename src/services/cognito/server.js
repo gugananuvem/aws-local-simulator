@@ -1,3 +1,4 @@
+const { setupServiceMiddleware } = require('../../middleware');
 /**
  * Cognito Server - Servidor HTTP para Cognito API
  */
@@ -8,6 +9,8 @@ const logger = require('../../utils/logger');
 
 class CognitoServer {
   constructor(port, config) {
+    this.organizationsService = null;
+    this.stsService = null;
     this.port = port;
     this.config = config;
     this.app = express();

@@ -38,6 +38,28 @@ class APIGatewayService {
   injectDependencies(server) {
     const ct = server.getService('cloudtrail');
     if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
+
+    const lambda = server.getService('lambda');
+    if (lambda) {
+      this.lambdaService = lambda;
+      if (this.simulator) this.simulator.setLambdaService(lambda);
+      if (this.server) this.server.lambdaService = lambda;
+    }
+    const sqs = server.getService('sqs');
+    if (sqs) {
+      if (this.simulator) this.simulator.setSqsService(sqs);
+      if (this.server) this.server.sqsService = sqs;
+    }
+    const sns = server.getService('sns');
+    if (sns) {
+      if (this.simulator) this.simulator.setSnsService(sns);
+      if (this.server) this.server.snsService = sns;
+    }
+    const eb = server.getService('eventbridge');
+    if (eb) {
+      if (this.simulator) this.simulator.setEventbridgeService(eb);
+      if (this.server) this.server.eventbridgeService = eb;
+    }
   }
 
   async start() {

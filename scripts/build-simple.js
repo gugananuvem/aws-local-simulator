@@ -31,20 +31,32 @@ const IGNORE_PATTERNS = [
     '*.tgz',
     'docs',
     '*.md',
-    '!README.md'
+    '!README.md',
+    'graphify-out',
+    'publish-protected.js',
+    'obfuscate.js',
+    'integrate-policy-enforcement.js',
+    'obfuscator-config.js',
+    'verify-obfuscation',
+    'build-simple.js'
 ];
 
 function shouldIgnore(filePath, fileName) {
     if (filePath.includes('node_modules')) return true;
-    
+
+    // Padrões de inclusão (!) têm prioridade sobre os de exclusão
     for (const pattern of IGNORE_PATTERNS) {
-        if (pattern.startsWith('!')) {
-            const includePattern = pattern.slice(1);
-            if (fileName === includePattern) return false;
-        } else if (fileName === pattern) {
-            return true;
-        } else if (pattern.includes('*')) {
-            const regex = new RegExp(pattern.replace('*', '.*'));
+        if (pattern.startsWith('!') && fileName === pattern.slice(1)) return false;
+    }
+
+    for (const pattern of IGNORE_PATTERNS) {
+        if (pattern.startsWith('!')) continue;
+        if (fileName === pattern) return true;
+        if (pattern.includes('*')) {
+            // Escapa especiais de regex (exceto *), converte * em .* e ancora o nome inteiro
+            const regex = new RegExp(
+                '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'
+            );
             if (regex.test(fileName)) return true;
         }
     }
@@ -172,6 +184,42 @@ __tests__/
 `;
 fs.writeFileSync(npmignorePath, npmignoreContent);
 console.log('   ✅ .npmignore criado');
+
+// Verifica se todos os require() relativos do dist resolvem em arquivo existente
+function findMissingRequires(dir) {
+    const missing = [];
+    const jsFiles = [];
+
+    (function walk(d) {
+        for (const f of fs.readdirSync(d)) {
+            const p = path.join(d, f);
+            if (fs.statSync(p).isDirectory()) walk(p);
+            else if (f.endsWith('.js')) jsFiles.push(p);
+        }
+    })(dir);
+
+    const re = /require\(\s*['"](\.[^'"]+)['"]\s*\)/g;
+    for (const file of jsFiles) {
+        const content = fs.readFileSync(file, 'utf8');
+        let m;
+        while ((m = re.exec(content)) !== null) {
+            const target = path.resolve(path.dirname(file), m[1]);
+            const candidates = [target, `${target}.js`, `${target}.json`, path.join(target, 'index.js')];
+            if (!candidates.some((c) => fs.existsSync(c))) {
+                missing.push(`${path.relative(process.cwd(), file)} -> ${m[1]}`);
+            }
+        }
+    }
+    return missing;
+}
+
+const missingRequires = findMissingRequires(path.join(distDir, 'src'));
+if (missingRequires.length > 0) {
+    console.error('\n❌ Build abortado: require() relativos não resolvem no dist:');
+    missingRequires.forEach((m) => console.error(`   - ${m}`));
+    process.exit(1);
+}
+console.log('   ✅ Integridade dos requires verificada');
 
 // Conta arquivos
 function countFiles(dir) {

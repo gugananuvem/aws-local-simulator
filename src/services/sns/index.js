@@ -41,6 +41,37 @@ class SNSService {
     if (sqs) this.simulator.setSqsService(sqs);
     const ct = server.getService('cloudtrail');
     if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
+
+    // IAM enforcement middleware integration
+    const iamService = server.getService('iam');
+    if (iamService && iamService.getSimulator()) {
+      const { createIAMEnforcementMiddleware } = require('../iam/middleware');
+      const iamSimulator = iamService.getSimulator();
+
+      const middleware = createIAMEnforcementMiddleware({
+        iamSimulator,
+        servicePrefix: 'sns',
+        extractAction: (req) => req.body?.Action || req.query?.Action || 'Unknown',
+        extractResource: (req) => {
+          const topicArn = req.body?.TopicArn || req.query?.TopicArn || '';
+          if (topicArn) {
+            return topicArn; // Already an ARN
+          }
+          const topicName = req.body?.Name || req.body?.TopicName || 'unknown';
+          return `arn:aws:sns:us-east-1:123456789012:${topicName}`;
+        },
+        formatError: (res, code, message) => {
+          res.status(403).set('Content-Type', 'text/xml').send(
+            `<ErrorResponse xmlns="http://sns.amazonaws.com/doc/2010-03-31/"><Error><Type>Sender</Type><Code>${code}</Code><Message>${message}</Message></Error></ErrorResponse>`
+          );
+        }
+      });
+
+      // Set middleware on the app so it's applied before routes
+      if (this.app) {
+        this.app.iamMiddleware = middleware;
+      }
+    }
   }
 
   async start() {

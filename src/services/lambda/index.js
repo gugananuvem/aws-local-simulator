@@ -39,6 +39,32 @@ class LambdaService {
 
     const cw = server.getService('cloudwatch');
     if (cw?.simulator) this.simulator.cloudwatchSimulator = cw.simulator;
+
+    // IAM enforcement middleware (only when IAM service is active)
+    const iamService = server.getService('iam');
+    if (iamService && iamService.getSimulator()) {
+      const { createIAMEnforcementMiddleware } = require('../iam/middleware');
+      const iamSimulator = iamService.getSimulator();
+      this.server.iamMiddleware = createIAMEnforcementMiddleware({
+        iamSimulator,
+        servicePrefix: 'lambda',
+        extractAction: (req) => {
+          if (req.path.includes('/invocations')) return 'InvokeFunction';
+          if (req.method === 'POST') return 'CreateFunction';
+          if (req.method === 'GET') return 'ListFunctions';
+          if (req.method === 'DELETE') return 'DeleteFunction';
+          if (req.method === 'PUT') return 'UpdateFunctionConfiguration';
+          return 'Unknown';
+        },
+        extractResource: (req) => {
+          const functionName = req.params?.functionName || req.path.split('/functions/')[1]?.split('/')[0] || 'unknown';
+          return `arn:aws:lambda:us-east-1:123456789012:function:${functionName}`;
+        },
+        formatError: (res, code, message) => {
+          res.status(403).json({ Message: message, Type: code });
+        }
+      });
+    }
   }
 
   async start() {

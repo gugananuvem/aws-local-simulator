@@ -33,6 +33,8 @@ coverage/
 
 # Dados locais
 .aws-local-simulator-data/
+.aws-test-data/
+graphify-out
 
 # Arquivos temporários
 *.tmp
@@ -43,10 +45,11 @@ coverage/
 *.sln
 *.sw?
 .kiro
+.kilo
 .env
 SECURITY.md
 .publish-protected.js
-.npmrc
+
 webpack.config.js
 obfuscator-config.js
 .vscode
@@ -56,3 +59,11 @@ tests/*
 .gitmodules
 dashboard-react
 .agent
+.npmrc
+.opencode
+.mcp.json
+.claude
+graphify-out
+.agents
+AGENTS.md
+#npx @dreamtree-org/graphify

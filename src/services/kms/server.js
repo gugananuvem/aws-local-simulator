@@ -1,3 +1,4 @@
+const { setupServiceMiddleware } = require('../../middleware');
 'use strict';
 
 const express = require('express');
@@ -5,6 +6,8 @@ const cors = require('cors');
 
 class KMSServer {
   constructor(simulator, logger, config) {
+    this.organizationsService = null;
+    this.stsService = null;
     this.simulator = simulator;
     this.logger = logger;
     this.config = config;

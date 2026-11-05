@@ -1,3 +1,4 @@
+const { setupServiceMiddleware } = require('../../middleware');
 /**
  * @fileoverview SNS HTTP Server — Query Protocol completo
  * Compatível com AWS SDK v3 SNS Client
@@ -42,6 +43,14 @@ function createSNSServer(simulator, config, logger) {
   app.use((req, _res, next) => {
     const action = req.body?.Action || req.query?.Action;
     if (action) logger.debug('SNS', `${req.method} ${req.path} Action=${action}`);
+    next();
+  });
+
+  // ── IAM enforcement (applied conditionally via injectDependencies) ──
+  app.use((req, res, next) => {
+    if (app.iamMiddleware && !req.path.startsWith('/__admin')) {
+      return app.iamMiddleware(req, res, next);
+    }
     next();
   });
 

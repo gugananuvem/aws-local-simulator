@@ -1,3 +1,4 @@
+const { setupServiceMiddleware } = require('../../middleware');
 /**
  * S3 Server - Servidor HTTP para S3
  */
@@ -9,6 +10,8 @@ const logger = require('../../utils/logger');
 
 class S3Server {
   constructor(port, config) {
+    this.organizationsService = null;
+    this.stsService = null;
     this.port = port;
     this.config = config;
     this.app = express();
@@ -19,6 +22,8 @@ class S3Server {
 
   setupMiddlewares() {
     this.app.use(cors());
+    // Rotas administrativas recebem JSON; precisa vir antes do raw (que captura tudo).
+    this.app.use('/__admin', express.json({ limit: '10mb' }));
     // Captura raw body como Buffer para qualquer content-type
     this.app.use(express.raw({ type: () => true, limit: '100mb' }));
     this.app.use(express.text({ limit: '100mb' }));
@@ -66,8 +71,17 @@ class S3Server {
   }
 
   setupRoutes() {
+    // IAM enforcement (applied conditionally via injectDependencies)
+    this.app.use((req, res, next) => {
+      if (this.iamMiddleware && !req.path.startsWith('/__admin')) {
+        return this.iamMiddleware(req, res, next);
+      }
+      next();
+    });
+
     // Admin endpoints devem vir antes das rotas S3 para evitar conflito com /:bucket
     this.setupAdminRoutes();
+    this.setupS3ExtendedAdminRoutes();
 
     // Website static serving: GET /website/{bucket}/[path]
     this.app.get('/website/:bucket', (req, res) => this._serveWebsite(req, res, ''));
@@ -86,6 +100,18 @@ class S3Server {
         let config = {};
         try { config = JSON.parse(req.body?.toString() || '{}'); } catch (_) {}
         const result = this.simulator.putWebsiteConfig(req.params.bucket, config);
+        if (result.error) {
+          return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
+        return res.status(200).send();
+      }
+      if (req.query.notification !== undefined) {
+        let config = {};
+        try {
+          const bodyStr = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : req.body || '{}';
+          config = JSON.parse(bodyStr);
+        } catch (_) {}
+        const result = this.simulator.putBucketNotificationConfiguration(req.params.bucket, config);
         if (result.error) {
           return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
         }
@@ -208,6 +234,13 @@ class S3Server {
         }
         return res.set('Content-Type', 'application/xml').send(this._generateWebsiteConfigXml(result.websiteConfiguration));
       }
+      if (req.query.notification !== undefined) {
+        const result = this.simulator.getBucketNotificationConfiguration(req.params.bucket);
+        if (result.error) {
+          return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
+        return res.set('Content-Type', 'application/xml').send(this._generateNotificationConfigXml(result.notificationConfiguration));
+      }
       const bucket = req.params.bucket;
       const prefix = req.query.prefix || '';
       const delimiter = req.query.delimiter;
@@ -229,7 +262,196 @@ class S3Server {
     });
     
     // Admin endpoints
-    // (já registrados no início de setupRoutes)
+    // (já registrados no início de setupRoutes, antes das rotas wildcard de objetos)
+  }
+
+  setupS3ExtendedAdminRoutes() {
+    // General purpose buckets
+    this.app.post('/__admin/s3/general-buckets', (req, res) => {
+      const result = this.simulator.createBucket(
+        req.body?.name || req.body?.Name || req.body?.bucketName,
+        req.body || {}
+      );
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(this.simulator._generalBucketToJson(result.bucket));
+    });
+
+    // Directory buckets
+    this.app.get('/__admin/s3/directory-buckets', (req, res) => res.json(this.simulator.listDirectoryBuckets()));
+    this.app.post('/__admin/s3/directory-buckets', (req, res) => {
+      const result = this.simulator.createDirectoryBucket(req.body?.name || req.body?.Name, req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.bucket);
+    });
+    this.app.get('/__admin/s3/directory-buckets/:name', (req, res) => {
+      const result = this.simulator.getDirectoryBucket(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.bucket);
+    });
+    this.app.delete('/__admin/s3/directory-buckets/:name', (req, res) => {
+      const result = this.simulator.deleteDirectoryBucket(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Directory bucket deleted' });
+    });
+
+    // Table buckets
+    this.app.get('/__admin/s3/table-buckets', (req, res) => res.json(this.simulator.listTableBuckets()));
+    this.app.post('/__admin/s3/table-buckets', (req, res) => {
+      const result = this.simulator.createTableBucket(req.body?.name || req.body?.Name, req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.bucket);
+    });
+    this.app.get('/__admin/s3/table-buckets/:name', (req, res) => {
+      const result = this.simulator.getTableBucket(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.bucket);
+    });
+    this.app.delete('/__admin/s3/table-buckets/:name', (req, res) => {
+      const result = this.simulator.deleteTableBucket(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Table bucket deleted' });
+    });
+
+    // Vector buckets
+    this.app.get('/__admin/s3/vector-buckets', (req, res) => res.json(this.simulator.listVectorBuckets()));
+    this.app.post('/__admin/s3/vector-buckets', (req, res) => {
+      const result = this.simulator.createVectorBucket(req.body?.name || req.body?.Name, req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.bucket);
+    });
+    this.app.get('/__admin/s3/vector-buckets/:name', (req, res) => {
+      const result = this.simulator.getVectorBucket(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.bucket);
+    });
+    this.app.delete('/__admin/s3/vector-buckets/:name', (req, res) => {
+      const result = this.simulator.deleteVectorBucket(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Vector bucket deleted' });
+    });
+
+    // Vector indexes
+    this.app.get('/__admin/s3/vector-buckets/:bucket/indexes', (req, res) => {
+      const result = this.simulator.listVectorIndexes(req.params.bucket);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.indexes);
+    });
+    this.app.post('/__admin/s3/vector-buckets/:bucket/indexes', (req, res) => {
+      const result = this.simulator.createVectorIndex(req.params.bucket, req.body?.name || req.body?.Name, req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.index);
+    });
+    this.app.get('/__admin/s3/vector-buckets/:bucket/indexes/:name', (req, res) => {
+      const result = this.simulator.getVectorIndex(req.params.bucket, req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.index);
+    });
+    this.app.delete('/__admin/s3/vector-buckets/:bucket/indexes/:name', (req, res) => {
+      const result = this.simulator.deleteVectorIndex(req.params.bucket, req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Vector index deleted' });
+    });
+
+    // Access Points
+    this.app.get('/__admin/s3/access-points', (req, res) => res.json(this.simulator.listAccessPoints()));
+    this.app.post('/__admin/s3/access-points', (req, res) => {
+      const result = this.simulator.createAccessPoint(req.body?.name || req.body?.Name, req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.accessPoint);
+    });
+    this.app.get('/__admin/s3/access-points/:name', (req, res) => {
+      const result = this.simulator.getAccessPoint(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.accessPoint);
+    });
+    this.app.delete('/__admin/s3/access-points/:name', (req, res) => {
+      const result = this.simulator.deleteAccessPoint(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Access point deleted' });
+    });
+    this.app.put('/__admin/s3/access-points/:name/policy', (req, res) => {
+      const result = this.simulator.putAccessPointPolicy(req.params.name, req.body?.PolicyDocument || req.body);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Access point policy updated' });
+    });
+    this.app.get('/__admin/s3/access-points/:name/policy', (req, res) => {
+      const result = this.simulator.getAccessPointPolicy(req.params.name);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.policy);
+    });
+
+    // File systems
+    this.app.get('/__admin/s3/file-systems', (req, res) => res.json(this.simulator.listFileSystems()));
+    this.app.post('/__admin/s3/file-systems', (req, res) => {
+      const result = this.simulator.createFileSystem(req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.fileSystem);
+    });
+    this.app.get('/__admin/s3/file-systems/:id', (req, res) => {
+      const result = this.simulator.getFileSystem(req.params.id);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.fileSystem);
+    });
+    this.app.delete('/__admin/s3/file-systems/:id', (req, res) => {
+      const result = this.simulator.deleteFileSystem(req.params.id);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'File system deleted' });
+    });
+
+    // Access Grants
+    this.app.get('/__admin/s3/access-grants', (req, res) => res.json(this.simulator.listAccessGrants()));
+    this.app.post('/__admin/s3/access-grants', (req, res) => {
+      const result = this.simulator.createAccessGrant(req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.accessGrant);
+    });
+    this.app.get('/__admin/s3/access-grants/:id', (req, res) => {
+      const result = this.simulator.getAccessGrant(req.params.id);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.accessGrant);
+    });
+    this.app.delete('/__admin/s3/access-grants/:id', (req, res) => {
+      const result = this.simulator.deleteAccessGrant(req.params.id);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Access grant deleted' });
+    });
+
+    // Storage Lens
+    this.app.get('/__admin/s3/storage-lens', (req, res) => res.json(this.simulator.listStorageLensConfigurations()));
+    this.app.post('/__admin/s3/storage-lens', (req, res) => {
+      const id = req.body?.Id || req.body?.id || `default-${Date.now()}`;
+      const result = this.simulator.createStorageLensConfiguration(id, req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.storageLensConfiguration);
+    });
+    this.app.get('/__admin/s3/storage-lens/:id', (req, res) => {
+      const result = this.simulator.getStorageLensConfiguration(req.params.id);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.storageLensConfiguration);
+    });
+    this.app.delete('/__admin/s3/storage-lens/:id', (req, res) => {
+      const result = this.simulator.deleteStorageLensConfiguration(req.params.id);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Storage Lens configuration deleted' });
+    });
+
+    // Batch Operations
+    this.app.get('/__admin/s3/batch-operations/jobs', (req, res) => res.json(this.simulator.listBatchJobs()));
+    this.app.post('/__admin/s3/batch-operations/jobs', (req, res) => {
+      const result = this.simulator.createBatchJob(req.body || {});
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.status(201).json(result.job);
+    });
+    this.app.get('/__admin/s3/batch-operations/jobs/:jobId', (req, res) => {
+      const result = this.simulator.getBatchJob(req.params.jobId);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json(result.job);
+    });
+    this.app.put('/__admin/s3/batch-operations/jobs/:jobId/cancel', (req, res) => {
+      const result = this.simulator.cancelBatchJob(req.params.jobId);
+      if (result.error) return res.status(result.status || 400).json(result.error);
+      res.json({ message: 'Job cancelled' });
+    });
   }
 
   setupAdminRoutes() {
@@ -263,6 +485,179 @@ class S3Server {
     
     this.app.get('/__admin/stats', (req, res) => {
       res.json(this.simulator.getStats());
+    });
+
+    // ─── Presigned URL Endpoints ──────────────────────────────────────────
+
+    /**
+     * POST /__admin/presigned-urls/get
+     * Generate a presigned GET URL for downloading an object
+     * Body: { bucket, key, expiresIn?, credentials? }
+     */
+    this.app.post('/__admin/presigned-urls/get', (req, res) => {
+      try {
+        const { bucket, key, expiresIn, credentials } = req.body || {};
+        
+        if (!bucket || !key) {
+          return res.status(400).json({ error: 'bucket and key are required' });
+        }
+
+        const result = this.simulator.generatePresignedGetUrl(bucket, key, { expiresIn, credentials });
+        
+        if (result.error) {
+          return res.status(result.status || 500).json(result.error);
+        }
+
+        res.json({
+          presignedUrl: result.presignedUrl,
+          expiresIn: expiresIn || 3600,
+          expiresAt: new Date(Date.now() + (expiresIn || 3600) * 1000).toISOString()
+        });
+      } catch (err) {
+        logger.error('Error generating presigned GET URL:', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    /**
+     * POST /__admin/presigned-urls/put
+     * Generate a presigned PUT URL for uploading an object
+     * Body: { bucket, key, expiresIn?, credentials?, contentType? }
+     */
+    this.app.post('/__admin/presigned-urls/put', (req, res) => {
+      try {
+        const { bucket, key, expiresIn, credentials, contentType } = req.body || {};
+        
+        if (!bucket || !key) {
+          return res.status(400).json({ error: 'bucket and key are required' });
+        }
+
+        const result = this.simulator.generatePresignedPutUrl(bucket, key, { expiresIn, credentials, contentType });
+        
+        if (result.error) {
+          return res.status(result.status || 500).json(result.error);
+        }
+
+        res.json({
+          presignedUrl: result.presignedUrl,
+          expiresIn: expiresIn || 3600,
+          expiresAt: new Date(Date.now() + (expiresIn || 3600) * 1000).toISOString()
+        });
+      } catch (err) {
+        logger.error('Error generating presigned PUT URL:', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    /**
+     * POST /__admin/presigned-urls/delete
+     * Generate a presigned DELETE URL for deleting an object
+     * Body: { bucket, key, expiresIn?, credentials? }
+     */
+    this.app.post('/__admin/presigned-urls/delete', (req, res) => {
+      try {
+        const { bucket, key, expiresIn, credentials } = req.body || {};
+        
+        if (!bucket || !key) {
+          return res.status(400).json({ error: 'bucket and key are required' });
+        }
+
+        const result = this.simulator.generatePresignedDeleteUrl(bucket, key, { expiresIn, credentials });
+        
+        if (result.error) {
+          return res.status(result.status || 500).json(result.error);
+        }
+
+        res.json({
+          presignedUrl: result.presignedUrl,
+          expiresIn: expiresIn || 3600,
+          expiresAt: new Date(Date.now() + (expiresIn || 3600) * 1000).toISOString()
+        });
+      } catch (err) {
+        logger.error('Error generating presigned DELETE URL:', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    /**
+     * POST /__admin/presigned-urls/head
+     * Generate a presigned HEAD URL for checking object metadata
+     * Body: { bucket, key, expiresIn?, credentials? }
+     */
+    this.app.post('/__admin/presigned-urls/head', (req, res) => {
+      try {
+        const { bucket, key, expiresIn, credentials } = req.body || {};
+        
+        if (!bucket || !key) {
+          return res.status(400).json({ error: 'bucket and key are required' });
+        }
+
+        const result = this.simulator.generatePresignedHeadUrl(bucket, key, { expiresIn, credentials });
+        
+        if (result.error) {
+          return res.status(result.status || 500).json(result.error);
+        }
+
+        res.json({
+          presignedUrl: result.presignedUrl,
+          expiresIn: expiresIn || 3600,
+          expiresAt: new Date(Date.now() + (expiresIn || 3600) * 1000).toISOString()
+        });
+      } catch (err) {
+        logger.error('Error generating presigned HEAD URL:', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    /**
+     * POST /__admin/presigned-urls/post-policy
+     * Generate a presigned POST policy for form uploads
+     * Body: { bucket, key, expiresIn?, credentials?, contentType?, conditions? }
+     */
+    this.app.post('/__admin/presigned-urls/post-policy', (req, res) => {
+      try {
+        const { bucket, key, expiresIn, credentials, contentType, conditions } = req.body || {};
+        
+        if (!bucket || !key) {
+          return res.status(400).json({ error: 'bucket and key are required' });
+        }
+
+        const result = this.simulator.generatePresignedPostPolicy(bucket, key, { expiresIn, credentials, contentType, conditions });
+        
+        if (result.error) {
+          return res.status(result.status || 500).json(result.error);
+        }
+
+        res.json({
+          ...result,
+          expiresIn: expiresIn || 3600,
+          expiresAt: new Date(Date.now() + (expiresIn || 3600) * 1000).toISOString()
+        });
+      } catch (err) {
+        logger.error('Error generating presigned POST policy:', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    /**
+     * POST /__admin/presigned-urls/validate
+     * Validate a presigned URL
+     * Body: { url, method?, credentials? }
+     */
+    this.app.post('/__admin/presigned-urls/validate', (req, res) => {
+      try {
+        const { url, method, credentials } = req.body || {};
+        
+        if (!url) {
+          return res.status(400).json({ error: 'url is required' });
+        }
+
+        const result = this.simulator.validatePresignedUrl(url, method || 'GET', credentials);
+        res.json(result);
+      } catch (err) {
+        logger.error('Error validating presigned URL:', err);
+        res.status(500).json({ error: err.message });
+      }
     });
   }
 
@@ -316,6 +711,34 @@ class S3Server {
   <IndexDocument><Suffix>${config.IndexDocument?.Suffix || 'index.html'}</Suffix></IndexDocument>
   <ErrorDocument><Key>${config.ErrorDocument?.Key || 'error.html'}</Key></ErrorDocument>
 </WebsiteConfiguration>`;
+  }
+
+  _generateNotificationConfigXml(config) {
+    const nc = config || { LambdaFunctionConfigurations: [], QueueConfigurations: [], TopicConfigurations: [] };
+    const lambdaXml = (nc.LambdaFunctionConfigurations || []).map(cfg => `
+  <CloudFunctionConfiguration>
+    <Id>${cfg.Id || ''}</Id>
+    ${(cfg.Events || []).map(e => `<Event>${e}</Event>`).join('')}
+    <CloudFunction>${cfg.LambdaFunctionArn}</CloudFunction>
+    ${cfg.Filter && cfg.Filter.Key ? `<Filter><S3Key>${(cfg.Filter.Key.FilterRules || []).map(r => `<FilterRule><Name>${r.Name}</Name><Value>${r.Value}</Value></FilterRule>`).join('')}</S3Key></Filter>` : ''}
+  </CloudFunctionConfiguration>`).join('');
+    const queueXml = (nc.QueueConfigurations || []).map(cfg => `
+  <QueueConfiguration>
+    <Id>${cfg.Id || ''}</Id>
+    ${(cfg.Events || []).map(e => `<Event>${e}</Event>`).join('')}
+    <Queue>${cfg.QueueArn}</Queue>
+    ${cfg.Filter && cfg.Filter.Key ? `<Filter><S3Key>${(cfg.Filter.Key.FilterRules || []).map(r => `<FilterRule><Name>${r.Name}</Name><Value>${r.Value}</Value></FilterRule>`).join('')}</S3Key></Filter>` : ''}
+  </QueueConfiguration>`).join('');
+    const topicXml = (nc.TopicConfigurations || []).map(cfg => `
+  <TopicConfiguration>
+    <Id>${cfg.Id || ''}</Id>
+    ${(cfg.Events || []).map(e => `<Event>${e}</Event>`).join('')}
+    <Topic>${cfg.TopicArn}</Topic>
+    ${cfg.Filter && cfg.Filter.Key ? `<Filter><S3Key>${(cfg.Filter.Key.FilterRules || []).map(r => `<FilterRule><Name>${r.Name}</Name><Value>${r.Value}</Value></FilterRule>`).join('')}</S3Key></Filter>` : ''}
+  </TopicConfiguration>`).join('');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<NotificationConfiguration>${lambdaXml}${queueXml}${topicXml}
+</NotificationConfiguration>`;
   }
 
   start() {

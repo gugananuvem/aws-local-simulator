@@ -11,6 +11,7 @@ const logger = require("./utils/logger");
 
 // Importa serviços
 const DynamoDBService = require("./services/dynamodb");
+const DAXService = require("./services/dax");
 const S3Service = require("./services/s3");
 const SQSService = require("./services/sqs");
 const LambdaService = require("./services/lambda");
@@ -29,6 +30,20 @@ const { SecretManagerService } = require("./services/secret-manager");
 const { ParameterStoreService } = require("./services/parameter-store");
 const { ConfigService } = require("./services/config");
 const { AthenaService } = require("./services/athena");
+const { AuroraService } = require("./services/aurora");
+const IAMService = require("./services/iam");
+const EC2Service = require("./services/ec2");
+const ALBService = require("./services/alb");
+const ASGService = require("./services/asg");
+const OpenSearchService = require("./services/opensearch");
+const KinesisDataStreamsService = require("./services/kinesis-data-streams");
+const KinesisFirehoseService = require("./services/kinesis-firehose");
+const KinesisAnalyticsService = require("./services/kinesis-analytics");
+const OrganizationsService = require("./services/organizations");
+const CloudFrontService = require("./services/cloudfront");
+const Route53Service = require("./services/route53");
+const ACMService = require("./services/acm");
+const { initializeCloudShell } = require("./services/cloudshell");
 
 class Server {
   constructor(config) {
@@ -98,25 +113,29 @@ class Server {
               other.depends.includes(def.name) &&
               this.servicesMap.has(other.name)
           );
+          const port = status.port || this.config.ports?.[def.name];
+          const endpoint = status.endpoint || (port ? `http://localhost:${port}` : null);
           return {
             name: def.name,
             running: true,
             enabled: true,
-            port: status.port || this.config.ports?.[def.name],
-            endpoint: status.endpoint || `http://localhost:${status.port || this.config.ports?.[def.name]}`,
+            port,
+            endpoint,
             dependencies: def.depends,
             category: def.category,
             canDisable,
             ...status,
           };
         }
+        const port = this.config.ports?.[def.name];
         return {
           name: def.name,
           running: false,
           enabled: false,
-          port: this.config.ports?.[def.name],
-          endpoint: `http://localhost:${this.config.ports?.[def.name]}`,
+          port,
+          endpoint: port ? `http://localhost:${port}` : null,
           dependencies: def.depends,
+          category: def.category,
           canDisable: true,
         };
       });
@@ -181,18 +200,43 @@ class Server {
       const port = this.config.adminPort || 9999;
       this.managementServer = this.managementApp.listen(port, () => {
         logger.info(`🔧 Management API rodando em http://localhost:${port}`);
+        this.cloudshell = initializeCloudShell(
+          this.managementApp,
+          this.managementServer,
+          () => this.getActiveServicesForCloudShell()
+        );
         resolve();
       });
       this.managementServer.on("error", reject);
     });
   }
 
+  getActiveServicesForCloudShell() {
+    const services = [];
+    try {
+      for (const [name, service] of this.servicesMap) {
+        try {
+          const status = typeof service.getStatus === 'function' ? service.getStatus() : {};
+          services.push({ name, port: status.port || this.config.ports?.[name] });
+        } catch (e) {
+          // Skip services that fail to report status
+          services.push({ name, port: this.config.ports?.[name] });
+        }
+      }
+    } catch (e) {
+      // Return empty if servicesMap iteration fails
+    }
+    return services;
+  }
+
   buildServiceRegistry() {
     return [
       //Armazenamento & BD
       { name: "dynamodb", class: DynamoDBService, depends: [], category: 'Armazenamento & Banco de Dados' },
+      { name: "dax", class: DAXService, depends: ["dynamodb"], category: 'Armazenamento & Banco de Dados' },
       { name: "s3", class: S3Service, depends: [], category: 'Armazenamento & Banco de Dados' },
       { name: "athena", class: AthenaService, depends: [], category: 'Armazenamento & Banco de Dados' },
+      { name: "aurora", class: AuroraService, depends: ['kms', 'secret-manager'], category: 'Armazenamento & Banco de Dados' },
 
       //Computação
       { name: "lambda", class: LambdaService, depends: [], category: 'Computação' },
@@ -200,6 +244,7 @@ class Server {
 
       { name: "cognito", class: CognitoService, depends: ["lambda"], category: 'Segurança & Identidade' },
       { name: "sts", class: STSService, depends: [], category: 'Segurança & Identidade' },
+      { name: "iam", class: IAMService, depends: ["sts"], category: 'Segurança & Identidade' },
       { name: "kms", class: KMSService, depends: [], category: 'Segurança & Identidade' },
       { name: "secret-manager", class: SecretManagerService, depends: [], category: 'Segurança & Identidade' },
       { name: "parameter-store", class: ParameterStoreService, depends: [], category: 'Segurança & Identidade' },
@@ -211,6 +256,21 @@ class Server {
 
       //Networking
       { name: "apigateway", class: APIGatewayService, depends: ["lambda", "cognito"], category: 'Networking' },
+      { name: "route53", class: Route53Service, depends: [], category: 'Networking' },
+      { name: "acm", class: ACMService, depends: [], category: 'Networking' },
+
+      //Computação em Nuvem
+      { name: "ec2", class: EC2Service, depends: [], category: 'Computação em Nuvem' },
+      { name: "alb", class: ALBService, depends: [], category: 'Computação em Nuvem' },
+      { name: "asg", class: ASGService, depends: ["ec2", "alb"], category: 'Computação em Nuvem' },
+
+      //Busca e Análise
+      { name: "opensearch", class: OpenSearchService, depends: [], category: 'Busca e Análise' },
+
+      //Streaming & Analytics
+      { name: "kinesis-data-streams", class: KinesisDataStreamsService, depends: [], category: 'Streaming & Analytics' },
+      { name: "kinesis-firehose", class: KinesisFirehoseService, depends: [], category: 'Streaming & Analytics' },
+      { name: "kinesis-analytics", class: KinesisAnalyticsService, depends: [], category: 'Streaming & Analytics' },
 
       //Observabilidade & Conformidade
       { name: "cloudwatch", class: CloudWatchService, depends: [], category: 'Observabilidade & Conformidade' },
@@ -218,6 +278,12 @@ class Server {
       { name: "xray", class: XRayService, depends: [], category: 'Observabilidade & Conformidade' },
       { name: "config", class: ConfigService, depends: [], category: 'Observabilidade & Conformidade' },
       { name: "cloudformation", class: CloudFormationService, depends: [], category: 'Observabilidade & Conformidade' },
+
+      //Governança & Conformidade
+      { name: "organizations", class: OrganizationsService, depends: ["iam"], category: 'Governança & Conformidade' },
+
+      //Content Delivery
+      { name: "cloudfront", class: CloudFrontService, depends: ["s3", "lambda"], category: 'Content Delivery' },
 
     ];
   }
@@ -270,6 +336,10 @@ class Server {
     logger.info("\n🛑 Parando AWS Local Simulator...\n");
 
     try {
+      if (this.cloudshell) {
+        this.cloudshell.shutdown();
+      }
+
       const stopPromises = [...this.services].reverse().map((service) => service.stop());
       await Promise.all(stopPromises);
 

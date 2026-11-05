@@ -17,6 +17,9 @@
 const { randomUUID } = require("crypto");
 const yaml = require("js-yaml");
 const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
+const HANDLERS = require("./resource-handlers");
+const { provisionStack, deprovisionStack } = require("./provisioner");
+const { TemplateContext, TemplateError, sortResources, validateReferences, collectReferences } = require("./template-engine");
 
 // ─── Erros tipados ───────────────────────────────────────────────────────────
 
@@ -53,6 +56,7 @@ const StackStatus = {
   DELETE_FAILED: "DELETE_FAILED",
   ROLLBACK_IN_PROGRESS: "ROLLBACK_IN_PROGRESS",
   ROLLBACK_COMPLETE: "ROLLBACK_COMPLETE",
+  UPDATE_ROLLBACK_COMPLETE: "UPDATE_ROLLBACK_COMPLETE",
 };
 
 const ChangeSetStatus = {
@@ -116,43 +120,51 @@ function parseTemplate(template) {
 }
 
 /**
- * Extrai recursos de um template e gera lista de stack resources
- */
-function extractResources(parsedTemplate, stackName) {
-  const resources = [];
-  const templateResources = parsedTemplate?.Resources || {};
-  for (const [logicalId, resource] of Object.entries(templateResources)) {
-    resources.push({
-      LogicalResourceId: logicalId,
-      PhysicalResourceId: `${stackName}-${logicalId}-${randomUUID().slice(0, 8)}`,
-      ResourceType: resource.Type || "AWS::CloudFormation::WaitConditionHandle",
-      ResourceStatus: "CREATE_COMPLETE",
-      Timestamp: now(),
-      DriftInformation: { StackResourceDriftStatus: "NOT_CHECKED" },
-    });
-  }
-  return resources;
-}
-
-/**
  * Resolve parâmetros do template
  */
-function resolveParameters(templateParams, inputParams) {
-  const resolved = {};
+function resolveParameters(templateParams, inputParams, previousParams = []) {
   const templateDefs = templateParams || {};
   const inputMap = {};
+  const previousMap = {};
+  for (const param of inputParams || []) inputMap[param.ParameterKey] = param;
+  for (const param of previousParams || []) previousMap[param.ParameterKey] = param.ParameterValue;
 
-  for (const param of inputParams || []) {
-    inputMap[param.ParameterKey] = param;
-  }
-
+  const missing = [];
+  const resolved = {};
   for (const [key, def] of Object.entries(templateDefs)) {
     const input = inputMap[key];
-    if (input) {
-      resolved[key] = input.UsePreviousValue ? def.Default || "" : input.ParameterValue || def.Default || "";
-    } else {
-      resolved[key] = def.Default || "";
+    let value;
+    if (input && input.UsePreviousValue && key in previousMap) value = previousMap[key];
+    else if (input && input.ParameterValue !== undefined) value = input.ParameterValue;
+    else if (!input && key in previousMap && !("Default" in def)) value = previousMap[key];
+    else if ("Default" in def) value = def.Default;
+    else missing.push(key);
+
+    if (value !== undefined) {
+      value = String(value);
+      if (Array.isArray(def.AllowedValues) && !def.AllowedValues.map(String).includes(value)) {
+        throw new CloudFormationError("ValidationError", `Parameter '${key}' must be one of AllowedValues`, 400);
+      }
+      if (def.AllowedPattern && !new RegExp(`^(?:${def.AllowedPattern})$`).test(value)) {
+        throw new CloudFormationError("ValidationError", `Parameter '${key}' must match pattern ${def.AllowedPattern}`, 400);
+      }
+      if (def.MinLength !== undefined && value.length < Number(def.MinLength)) {
+        throw new CloudFormationError("ValidationError", `Parameter '${key}' must be at least ${def.MinLength} characters`, 400);
+      }
+      if (def.MaxLength !== undefined && value.length > Number(def.MaxLength)) {
+        throw new CloudFormationError("ValidationError", `Parameter '${key}' must be at most ${def.MaxLength} characters`, 400);
+      }
+      if (String(def.Type || "String") === "Number") {
+        const n = Number(value);
+        if (Number.isNaN(n) || (def.MinValue !== undefined && n < Number(def.MinValue)) || (def.MaxValue !== undefined && n > Number(def.MaxValue))) {
+          throw new CloudFormationError("ValidationError", `Parameter '${key}' must be a number within its allowed range`, 400);
+        }
+      }
+      resolved[key] = value;
     }
+  }
+  if (missing.length) {
+    throw new CloudFormationError("ValidationError", `Parameters: [${missing.join(", ")}] must have values`, 400);
   }
 
   return Object.entries(resolved).map(([k, v]) => ({
@@ -161,24 +173,6 @@ function resolveParameters(templateParams, inputParams) {
     ResolvedValue: v,
   }));
 }
-
-/**
- * Calcula outputs do template (simples)
- */
-function resolveOutputs(parsedTemplate, stackName) {
-  const outputs = [];
-  const templateOutputs = parsedTemplate?.Outputs || {};
-  for (const [key, def] of Object.entries(templateOutputs)) {
-    outputs.push({
-      OutputKey: key,
-      OutputValue: def.Value || `${stackName}-${key}-output`,
-      Description: def.Description || "",
-      ExportName: def.Export?.Name || undefined,
-    });
-  }
-  return outputs;
-}
-
 // ─── Simulador ───────────────────────────────────────────────────────────────
 
 class CloudFormationSimulator {
@@ -201,16 +195,15 @@ class CloudFormationSimulator {
     /** @type {Map<string, Object>} changeSetArn → changeSet */
     this.changeSets = new Map();
 
+    /** @type {Map<string, Object[]>} stackId -> eventos (ordem cronológica) */
+    this.stackEvents = new Map();
+
     this.audit = new CloudTrailAudit("cloudformation.amazonaws.com");
 
     // Simuladores injetados via injectDependencies
-    this.s3Simulator = null;
-    this.sqsSimulator = null;
-    this.dynamoSimulator = null;
-    this.kmsSimulator = null;
-    this.secretsSimulator = null;
-    this.parameterStoreSimulator = null;
-    this.athenaSimulator = null;
+    // Simuladores por nome lógico (usados pelos resource handlers). Preenchido em CloudFormationService.injectDependencies.
+    this.sims = {};
+    this.env = { region: REGION, account: ACCOUNT, partition: "aws" };
   }
 
   // ─── Persistência ──────────────────────────────────────────────
@@ -222,6 +215,7 @@ class CloudFormationSimulator {
         if (data.stacks) this.stacks = new Map(Object.entries(data.stacks));
         if (data.stackResources) this.stackResources = new Map(Object.entries(data.stackResources));
         if (data.changeSets) this.changeSets = new Map(Object.entries(data.changeSets));
+        if (data.stackEvents) this.stackEvents = new Map(Object.entries(data.stackEvents));
         this.logger.info("[CloudFormation] Loaded persisted data");
       }
     } catch (_) {
@@ -235,6 +229,7 @@ class CloudFormationSimulator {
         stacks: Object.fromEntries(this.stacks),
         stackResources: Object.fromEntries(this.stackResources),
         changeSets: Object.fromEntries(this.changeSets),
+        stackEvents: Object.fromEntries(this.stackEvents),
       });
     } catch (err) {
       this.logger.warn(`[CloudFormation] Failed to persist data: ${err.message}`);
@@ -245,6 +240,7 @@ class CloudFormationSimulator {
     this.stacks.clear();
     this.stackResources.clear();
     this.changeSets.clear();
+    this.stackEvents.clear();
     try {
       await this.store.clear("cloudformation");
     } catch (_) {}
@@ -276,18 +272,19 @@ class CloudFormationSimulator {
     const stackId = randomUUID();
     const arn = stackArn(StackName, stackId);
     const resolvedParams = resolveParameters(template.Parameters, Parameters);
-    const outputs = resolveOutputs(template, StackName);
-    const resources = extractResources(template, StackName);
+
+    // Validação estática (síncrona, como no CloudFormation real)
+    this._preflight(template);
 
     const stack = {
       StackId: arn,
       StackName,
-      StackStatus: StackStatus.CREATE_COMPLETE,
-      StackStatusReason: "Stack created successfully",
+      StackStatus: StackStatus.CREATE_IN_PROGRESS,
+      StackStatusReason: "User Initiated",
       CreationTime: now(),
       LastUpdatedTime: now(),
       Parameters: resolvedParams,
-      Outputs: outputs,
+      Outputs: [],
       Capabilities,
       Tags,
       NotificationARNs,
@@ -301,13 +298,11 @@ class CloudFormationSimulator {
     };
 
     this.stacks.set(StackName, stack);
-    this.stackResources.set(StackName, resources);
+    this.stackResources.set(StackName, []);
 
-    this.logger.info(`[CloudFormation] Created stack: ${StackName} (${resources.length} resources)`);
-    await this.save();
+    this.logger.info(`[CloudFormation] Creating stack: ${StackName} (${Object.keys(template.Resources || {}).length} resources)`);
 
-    // Provisiona os recursos nos simuladores injetados
-    await this._provisionResources(StackName, template, resolvedParams);
+    await this._runCreate(stack, template);
 
     this.audit.record({
       eventName: "CreateStack",
@@ -319,167 +314,153 @@ class CloudFormationSimulator {
     return { StackId: arn };
   }
 
-  /**
-   * Provisiona recursos do template nos simuladores locais
-   */
-  async _provisionResources(stackName, template, resolvedParams) {
-    const resources = template?.Resources || {};
+  /** Validação estática do template: referências, condições, dependências circulares. */
+  _preflight(template) {
+    try {
+      validateReferences(template);
+      sortResources(template.Resources || {});
+    } catch (err) {
+      if (err instanceof TemplateError) throw new CloudFormationError("ValidationError", err.message, 400);
+      throw err;
+    }
+  }
 
-    // Helper para resolver !Ref de parâmetros
-    const resolveRef = (value) => {
-      if (!value) return value;
-      if (typeof value === "object" && value.Ref) {
-        const param = resolvedParams.find((p) => p.ParameterKey === value.Ref);
-        return param ? param.ParameterValue : value.Ref;
-      }
-      if (typeof value === "object" && value["Fn::Sub"]) {
-        return value["Fn::Sub"].replace(/\$\{([^}]+)\}/g, (_, key) => {
-          const param = resolvedParams.find((p) => p.ParameterKey === key);
-          return param ? param.ParameterValue : key;
-        });
-      }
-      return value;
-    };
-
-    const stackResourceList = this.stackResources.get(stackName) || [];
-
-    for (const [logicalId, resource] of Object.entries(resources)) {
-      try {
-        const props = resource.Properties || {};
-        let physicalId = null;
-
-        switch (resource.Type) {
-          case "AWS::S3::Bucket": {
-            if (!this.s3Simulator) break;
-            const bucketName = resolveRef(props.BucketName) || `${stackName}-${logicalId}`.toLowerCase();
-            this.s3Simulator.createBucket(bucketName);
-            physicalId = bucketName;
-            this.logger.info(`[CloudFormation] Provisionado S3 bucket: ${bucketName}`);
-            break;
-          }
-
-          case "AWS::SQS::Queue": {
-            if (!this.sqsSimulator) break;
-            const queueName = resolveRef(props.QueueName) || `${stackName}-${logicalId}`;
-            this.sqsSimulator.createQueue(queueName);
-            physicalId = queueName;
-            this.logger.info(`[CloudFormation] Provisionada SQS queue: ${queueName}`);
-            break;
-          }
-
-          case "AWS::DynamoDB::Table": {
-            if (!this.dynamoSimulator) break;
-            const tableName = resolveRef(props.TableName) || `${stackName}-${logicalId}`;
-            const attrDefs = (props.AttributeDefinitions || []).map((a) => ({
-              AttributeName: resolveRef(a.AttributeName),
-              AttributeType: a.AttributeType,
-            }));
-            const keySchema = (props.KeySchema || []).map((k) => ({
-              AttributeName: resolveRef(k.AttributeName),
-              KeyType: k.KeyType,
-            }));
-
-            // ⭐ NOVO: Processar GlobalSecondaryIndexes
-            const gsis = (props.GlobalSecondaryIndexes || []).map((gsi) => ({
-              IndexName: gsi.IndexName,
-              KeySchema: (gsi.KeySchema || []).map((k) => ({
-                AttributeName: resolveRef(k.AttributeName),
-                KeyType: k.KeyType,
-              })),
-              Projection: gsi.Projection || { ProjectionType: "ALL" },
-              // Opcional: ProvisionedThroughput (se não for PAY_PER_REQUEST)
-              ...(props.BillingMode !== "PAY_PER_REQUEST" && gsi.ProvisionedThroughput
-                ? {
-                    ProvisionedThroughput: {
-                      ReadCapacityUnits: gsi.ProvisionedThroughput?.ReadCapacityUnits || 5,
-                      WriteCapacityUnits: gsi.ProvisionedThroughput?.WriteCapacityUnits || 5,
-                    },
-                  }
-                : {}),
-            }));
-
-            await this.dynamoSimulator.createTable({
-              TableName: tableName,
-              AttributeDefinitions: attrDefs,
-              KeySchema: keySchema,
-              GlobalSecondaryIndexes: gsis, // ⭐ NOVO: passa os GSIs
-              BillingMode: props.BillingMode || "PAY_PER_REQUEST",
-              Tags: props.Tags || [],
-            });
-            physicalId = tableName;
-            this.logger.info(`[CloudFormation] Provisionada DynamoDB table: ${tableName} com ${gsis.length} GSIs`);
-            break;
-          }
-
-          case "AWS::Athena::WorkGroup": {
-            if (!this.athenaSimulator) break;
-            const wgName = resolveRef(props.Name) || `${stackName}-${logicalId}`;
-            await this.athenaSimulator.createWorkGroup({
-              Name: wgName,
-              Description: resolveRef(props.Description) || "",
-              Configuration: props.WorkGroupConfiguration || {},
-            });
-            physicalId = wgName;
-            this.logger.info(`[CloudFormation] Provisionado Athena WorkGroup: ${wgName}`);
-            break;
-          }
-
-          case "AWS::KMS::Key": {
-            if (!this.kmsSimulator) break;
-            const result = await this.kmsSimulator.createKey({
-              Description: resolveRef(props.Description) || `${stackName}-${logicalId}`,
-              KeyUsage: props.KeyUsage || "ENCRYPT_DECRYPT",
-              KeySpec: props.KeySpec || "SYMMETRIC_DEFAULT",
-              Tags: props.Tags || [],
-            });
-            physicalId = result.KeyMetadata.KeyId;
-            this.logger.info(`[CloudFormation] Provisionada KMS key: ${physicalId}`);
-            break;
-          }
-
-          case "AWS::SecretsManager::Secret": {
-            if (!this.secretsSimulator) break;
-            const secretName = resolveRef(props.Name) || `${stackName}-${logicalId}`;
-            await this.secretsSimulator.createSecret({
-              Name: secretName,
-              Description: resolveRef(props.Description) || "",
-              SecretString: resolveRef(props.SecretString) || "{}",
-              Tags: props.Tags || [],
-            });
-            physicalId = secretName;
-            this.logger.info(`[CloudFormation] Provisionado Secret: ${secretName}`);
-            break;
-          }
-
-          case "AWS::SSM::Parameter": {
-            if (!this.parameterStoreSimulator) break;
-            const paramName = resolveRef(props.Name) || `/${stackName}/${logicalId}`;
-            await this.parameterStoreSimulator.putParameter({
-              Name: paramName,
-              Value: resolveRef(props.Value) || "",
-              Type: props.Type || "String",
-              Description: resolveRef(props.Description) || "",
-              Tags: props.Tags || [],
-              Overwrite: true,
-            });
-            physicalId = paramName;
-            this.logger.info(`[CloudFormation] Provisionado SSM Parameter: ${paramName}`);
-            break;
-          }
-
-          default:
-            this.logger.debug(`[CloudFormation] Tipo não provisionado localmente: ${resource.Type} (${logicalId})`);
-        }
-
-        // Atualiza o PhysicalResourceId com o nome real do recurso
-        if (physicalId) {
-          const entry = stackResourceList.find((r) => r.LogicalResourceId === logicalId);
-          if (entry) entry.PhysicalResourceId = physicalId;
-        }
-      } catch (err) {
-        this.logger.warn(`[CloudFormation] Erro ao provisionar ${logicalId} (${resource.Type}): ${err.message}`);
+  /** Exports (Outputs com Export.Name) de todas as stacks, exceto `excludeStack`. */
+  _collectExports(excludeStack) {
+    const exportsMap = new Map();
+    for (const [name, stack] of this.stacks) {
+      if (name === excludeStack) continue;
+      for (const o of stack.Outputs || []) {
+        if (o.ExportName) exportsMap.set(o.ExportName, o.OutputValue);
       }
     }
+    return exportsMap;
+  }
+
+  _deployArgs(stack, template, previousResources) {
+    return {
+      template,
+      stackName: stack.StackName,
+      stackId: stack.StackId,
+      env: this.env,
+      parameters: stack.Parameters,
+      exports: this._collectExports(stack.StackName),
+      handlers: HANDLERS,
+      sims: this.sims,
+      previousResources,
+      onEvent: this._onEvent(stack),
+    };
+  }
+
+  // ─── Eventos (DescribeStackEvents) ─────────────────────────────
+
+  /** Registra um evento. Para o evento da própria stack, logicalId = StackName. */
+  _recordEvent(stack, { logicalId, physicalId, type, status, reason }) {
+    const events = this.stackEvents.get(stack.StackId) || [];
+    events.push({
+      StackId: stack.StackId,
+      EventId: randomUUID(),
+      StackName: stack.StackName,
+      LogicalResourceId: logicalId,
+      PhysicalResourceId: physicalId || "",
+      ResourceType: type,
+      Timestamp: now(),
+      ResourceStatus: status,
+      ...(reason ? { ResourceStatusReason: reason } : {}),
+    });
+    if (events.length > 1000) events.splice(0, events.length - 1000);
+    this.stackEvents.set(stack.StackId, events);
+  }
+
+  _onEvent(stack) {
+    return (e) => this._recordEvent(stack, e);
+  }
+
+  /** Evento de nível de stack (AWS::CloudFormation::Stack). */
+  _stackEvent(stack, status, reason) {
+    this._recordEvent(stack, { logicalId: stack.StackName, physicalId: stack.StackId, type: "AWS::CloudFormation::Stack", status, reason });
+  }
+
+  /**
+   * Provisiona uma stack nova e atualiza o seu status (com rollback em caso de falha).
+   */
+  async _runCreate(stack, template) {
+    this._stackEvent(stack, StackStatus.CREATE_IN_PROGRESS, "User Initiated");
+    const result = await provisionStack(this._deployArgs(stack, template, [])).catch((err) => ({
+      resources: [],
+      outputs: [],
+      errors: [{ logicalId: "Template", type: "Template", message: err.message, code: err.code }],
+    }));
+
+    if (!result.errors.length) {
+      stack.StackStatus = StackStatus.CREATE_COMPLETE;
+      stack.StackStatusReason = "Stack created successfully";
+      stack.Outputs = result.outputs;
+      this.stackResources.set(stack.StackName, result.resources);
+    } else {
+      const reason = result.errors.map((e) => `${e.logicalId} (${e.type}): ${e.message}`).join("; ");
+      const keepResources = stack.DisableRollback || stack.OnFailure === "DO_NOTHING";
+      this._stackEvent(stack, keepResources ? StackStatus.CREATE_FAILED : StackStatus.ROLLBACK_IN_PROGRESS, reason);
+      if (keepResources) {
+        stack.StackStatus = StackStatus.CREATE_FAILED;
+        this.stackResources.set(stack.StackName, result.resources);
+      } else {
+        const created = result.resources.filter((r) => r.ResourceStatus === "CREATE_COMPLETE");
+        await deprovisionStack({ resources: created, handlers: HANDLERS, sims: this.sims, env: this.env, stackName: stack.StackName, onEvent: this._onEvent(stack) });
+        for (const r of result.resources) if (r.ResourceStatus === "CREATE_COMPLETE") r.ResourceStatus = "DELETE_COMPLETE";
+        this.stackResources.set(stack.StackName, result.resources);
+        stack.StackStatus = StackStatus.ROLLBACK_COMPLETE;
+        if (stack.OnFailure === "DELETE") {
+          stack.StackStatus = StackStatus.DELETE_COMPLETE;
+          this.stacks.delete(stack.StackName);
+          this.stackResources.delete(stack.StackName);
+        }
+      }
+      stack.StackStatusReason = reason;
+      this.logger.warn(`[CloudFormation] Stack ${stack.StackName} falhou: ${reason}`);
+    }
+    stack.LastUpdatedTime = now();
+    this._stackEvent(stack, stack.StackStatus, stack.StackStatusReason);
+    await this.save();
+  }
+
+  /**
+   * Aplica um template novo sobre uma stack existente (UpdateStack / ExecuteChangeSet):
+   * cria recursos novos, atualiza (ou substitui) alterados e remove os retirados do template.
+   * Em caso de falha reverte os recursos criados e mantém o estado anterior (UPDATE_ROLLBACK_COMPLETE).
+   */
+  async _runUpdate(stack, template, { templateBody, parameters, reasonOk = "Stack updated successfully" }) {
+    const previous = this.stackResources.get(stack.StackName) || [];
+    stack.StackStatus = StackStatus.UPDATE_IN_PROGRESS;
+    this._stackEvent(stack, StackStatus.UPDATE_IN_PROGRESS, "User Initiated");
+    const previousParams = stack.Parameters;
+    stack.Parameters = parameters;
+
+    const result = await provisionStack(this._deployArgs(stack, template, previous)).catch((err) => ({
+      resources: [],
+      outputs: [],
+      errors: [{ logicalId: "Template", type: "Template", message: err.message, code: err.code }],
+    }));
+
+    if (!result.errors.length) {
+      stack.StackStatus = StackStatus.UPDATE_COMPLETE;
+      stack.StackStatusReason = reasonOk;
+      stack.TemplateBody = templateBody;
+      stack.Outputs = result.outputs;
+      this.stackResources.set(stack.StackName, result.resources);
+    } else {
+      this._stackEvent(stack, "UPDATE_ROLLBACK_IN_PROGRESS", result.errors.map((e) => `${e.logicalId} (${e.type}): ${e.message}`).join("; "));
+      const previousIds = new Set(previous.map((r) => r.LogicalResourceId));
+      const createdNow = result.resources.filter((r) => r.ResourceStatus === "CREATE_COMPLETE" && !previousIds.has(r.LogicalResourceId));
+      await deprovisionStack({ resources: createdNow, handlers: HANDLERS, sims: this.sims, env: this.env, stackName: stack.StackName, onEvent: this._onEvent(stack) });
+      stack.Parameters = previousParams;
+      stack.StackStatus = StackStatus.UPDATE_ROLLBACK_COMPLETE;
+      stack.StackStatusReason = result.errors.map((e) => `${e.logicalId} (${e.type}): ${e.message}`).join("; ");
+      this.logger.warn(`[CloudFormation] Update de ${stack.StackName} revertido: ${stack.StackStatusReason}`);
+    }
+    stack.LastUpdatedTime = now();
+    this._stackEvent(stack, stack.StackStatus, stack.StackStatusReason);
+    await this.save();
   }
 
   /**
@@ -491,25 +472,23 @@ class CloudFormationSimulator {
     const templateBody = UsePreviousTemplate ? stack.TemplateBody : TemplateBody || stack.TemplateBody;
 
     const template = parseTemplate(templateBody);
-    const resolvedParams = resolveParameters(template.Parameters, Parameters.length ? Parameters : stack.Parameters.map((p) => ({ ParameterKey: p.ParameterKey, UsePreviousValue: true })));
-    const outputs = resolveOutputs(template, StackName);
-    const resources = extractResources(template, StackName);
+    const resolvedParams = resolveParameters(template.Parameters, Parameters.length ? Parameters : [], stack.Parameters);
+    this._preflight(template);
 
-    stack.StackStatus = StackStatus.UPDATE_COMPLETE;
-    stack.StackStatusReason = "Stack updated successfully";
-    stack.LastUpdatedTime = now();
-    stack.TemplateBody = templateBody;
-    stack.Parameters = resolvedParams;
-    stack.Outputs = outputs;
     if (Tags) stack.Tags = Tags;
     if (RoleARN) stack.RoleARN = RoleARN;
     if (NotificationARNs) stack.NotificationARNs = NotificationARNs;
     if (Capabilities.length) stack.Capabilities = Capabilities;
 
-    this.stackResources.set(StackName, resources);
+    this.logger.info(`[CloudFormation] Updating stack: ${StackName}`);
+    await this._runUpdate(stack, template, { templateBody, parameters: resolvedParams });
 
-    this.logger.info(`[CloudFormation] Updated stack: ${StackName}`);
-    await this.save();
+    this.audit.record({
+      eventName: "UpdateStack",
+      readOnly: false,
+      resources: [{ ARN: stack.StackId, type: "AWS::CloudFormation::Stack" }],
+      requestParameters: { stackName: StackName },
+    });
 
     return { StackId: stack.StackId };
   }
@@ -529,9 +508,38 @@ class CloudFormationSimulator {
       throw new CloudFormationError("ValidationError", `Stack [${StackName}] cannot be deleted while TerminationProtection is enabled`, 400);
     }
 
-    // Captura recursos antes de remover do map
-    const resources = this.stackResources.get(StackName) || [];
+    // Exports em uso por outras stacks bloqueiam a exclusão
+    const myExports = new Set((stack.Outputs || []).filter((o) => o.ExportName).map((o) => o.ExportName));
+    if (myExports.size) {
+      for (const [otherName, other] of this.stacks) {
+        if (otherName === StackName) continue;
+        const text = other.TemplateBody || "";
+        for (const exp of myExports) {
+          if (text.includes(exp) && /ImportValue/.test(text)) {
+            throw new CloudFormationError("ValidationError", `Export ${exp} cannot be deleted as it is in use by ${otherName}`, 400);
+          }
+        }
+      }
+    }
 
+    const resources = this.stackResources.get(StackName) || [];
+    const retain = new Set(RetainResources);
+    const toDelete = resources.filter((r) => !retain.has(r.LogicalResourceId));
+
+    stack.StackStatus = StackStatus.DELETE_IN_PROGRESS;
+    this._stackEvent(stack, StackStatus.DELETE_IN_PROGRESS, "User Initiated");
+    const { errors } = await deprovisionStack({ resources: toDelete, handlers: HANDLERS, sims: this.sims, env: this.env, stackName: StackName, onEvent: this._onEvent(stack) });
+
+    if (errors.length) {
+      stack.StackStatus = StackStatus.DELETE_FAILED;
+      stack.StackStatusReason = errors.map((e) => `${e.logicalId} (${e.type}): ${e.message}`).join("; ");
+      this._stackEvent(stack, StackStatus.DELETE_FAILED, stack.StackStatusReason);
+      this.logger.warn(`[CloudFormation] Falha ao deletar ${StackName}: ${stack.StackStatusReason}`);
+      await this.save();
+      return {};
+    }
+
+    this._stackEvent(stack, StackStatus.DELETE_COMPLETE);
     this.stacks.delete(StackName);
     this.stackResources.delete(StackName);
 
@@ -540,76 +548,16 @@ class CloudFormationSimulator {
       if (cs.StackName === StackName) this.changeSets.delete(key);
     }
 
-    // Deprovisiona os recursos nos simuladores
-    await this._deprovisionResources(resources);
-
     this.logger.info(`[CloudFormation] Deleted stack: ${StackName}`);
+    this.audit.record({
+      eventName: "DeleteStack",
+      readOnly: false,
+      resources: [{ ARN: stack.StackId, type: "AWS::CloudFormation::Stack" }],
+      requestParameters: { stackName: StackName },
+    });
     await this.save();
 
     return {};
-  }
-
-  async _deprovisionResources(resources) {
-    for (const resource of resources) {
-      const { ResourceType, PhysicalResourceId } = resource;
-      try {
-        switch (ResourceType) {
-          case "AWS::S3::Bucket":
-            if (this.s3Simulator && PhysicalResourceId) {
-              this.s3Simulator.deleteBucket(PhysicalResourceId);
-              this.logger.info(`[CloudFormation] Removido S3 bucket: ${PhysicalResourceId}`);
-            }
-            break;
-
-          case "AWS::SQS::Queue":
-            if (this.sqsSimulator && PhysicalResourceId) {
-              this.sqsSimulator.deleteQueue(PhysicalResourceId);
-              this.logger.info(`[CloudFormation] Removida SQS queue: ${PhysicalResourceId}`);
-            }
-            break;
-
-          case "AWS::DynamoDB::Table":
-            if (this.dynamoSimulator && PhysicalResourceId) {
-              await this.dynamoSimulator.deleteTable({ TableName: PhysicalResourceId });
-              this.logger.info(`[CloudFormation] Removida DynamoDB table: ${PhysicalResourceId}`);
-            }
-            break;
-
-          case "AWS::KMS::Key":
-            if (this.kmsSimulator && PhysicalResourceId) {
-              await this.kmsSimulator.scheduleKeyDeletion({ KeyId: PhysicalResourceId, PendingWindowInDays: 7 });
-              this.logger.info(`[CloudFormation] Agendada exclusão KMS key: ${PhysicalResourceId}`);
-            }
-            break;
-
-          case "AWS::SecretsManager::Secret":
-            if (this.secretsSimulator && PhysicalResourceId) {
-              await this.secretsSimulator.deleteSecret({ SecretId: PhysicalResourceId, ForceDeleteWithoutRecovery: true });
-              this.logger.info(`[CloudFormation] Removido Secret: ${PhysicalResourceId}`);
-            }
-            break;
-
-          case "AWS::SSM::Parameter":
-            if (this.parameterStoreSimulator && PhysicalResourceId) {
-              await this.parameterStoreSimulator.deleteParameter({ Name: PhysicalResourceId });
-              this.logger.info(`[CloudFormation] Removido SSM Parameter: ${PhysicalResourceId}`);
-            }
-            break;
-
-          case "AWS::Athena::WorkGroup":
-            if (this.athenaSimulator && PhysicalResourceId) {
-              await this.athenaSimulator.deleteWorkGroup({ WorkGroup: PhysicalResourceId, RecursiveDeleteOption: true });
-              this.logger.info(`[CloudFormation] Removido Athena WorkGroup: ${PhysicalResourceId}`);
-            }
-            break;
-
-          default:
-            this.logger.debug(`[CloudFormation] Tipo não desprovisionado: ${ResourceType}`);
-        }
-      } catch (err) {
-        this.logger.warn(`[CloudFormation] Erro ao remover ${ResourceType} (${PhysicalResourceId}): ${err.message}`);
-      }
-    }
   }
 
   /**
@@ -708,7 +656,7 @@ class CloudFormationSimulator {
       filtered = resources.filter((r) => r.LogicalResourceId === LogicalResourceId);
     }
     return {
-      StackResources: filtered.map((r) => ({ ...r, StackName, StackId: this.stacks.get(StackName)?.StackId })),
+      StackResources: filtered.map(({ _meta, ...r }) => ({ ...r, StackName, StackId: this.stacks.get(StackName)?.StackId })),
     };
   }
 
@@ -724,7 +672,7 @@ class CloudFormationSimulator {
       startIdx = parseInt(Buffer.from(NextToken, "base64").toString("utf8"), 10) || 0;
     }
 
-    const page = resources.slice(startIdx, startIdx + 100);
+    const page = resources.slice(startIdx, startIdx + 100).map(({ _meta, ...r }) => r);
     const hasMore = startIdx + 100 < resources.length;
     const newNextToken = hasMore ? Buffer.from(String(startIdx + 100)).toString("base64") : undefined;
 
@@ -754,11 +702,11 @@ class CloudFormationSimulator {
     const templateBody = UsePreviousTemplate ? existingStack?.TemplateBody || "{}" : TemplateBody || "{}";
 
     const template = parseTemplate(templateBody);
-    const newResources = extractResources(template, StackName);
-    const currentResources = this.stackResources.get(StackName) || [];
+    this._preflight(template);
+    const resolvedParams = resolveParameters(template.Parameters, Parameters, existingStack?.Parameters);
 
     // Calcula changes (adições, remoções, modificações)
-    const changes = this._computeChanges(currentResources, newResources);
+    const changes = this._computeChanges(existingStack, template, resolvedParams);
 
     const changeSet = {
       ChangeSetId: csArn,
@@ -805,49 +753,50 @@ class CloudFormationSimulator {
     }
 
     const template = parseTemplate(changeSet.TemplateBody);
-    const resources = extractResources(template, StackName);
-    const resolvedParams = resolveParameters(template.Parameters, changeSet.Parameters);
-    const outputs = resolveOutputs(template, StackName);
+    let stack;
 
     if (changeSet.ChangeSetType === "CREATE") {
-      // Cria a stack
+      if (this.stacks.has(StackName)) throw Errors.AlreadyExists(StackName);
       const stackId = randomUUID();
-      const arn = stackArn(StackName, stackId);
-      const stack = {
-        StackId: changeSet.StackId || arn,
+      const arn = changeSet.StackId || stackArn(StackName, stackId);
+      stack = {
+        StackId: arn,
         StackName,
-        StackStatus: StackStatus.CREATE_COMPLETE,
-        StackStatusReason: "Stack created via ChangeSet",
+        StackStatus: StackStatus.CREATE_IN_PROGRESS,
+        StackStatusReason: "User Initiated",
         CreationTime: now(),
         LastUpdatedTime: now(),
-        Parameters: resolvedParams,
-        Outputs: outputs,
+        Parameters: resolveParameters(template.Parameters, changeSet.Parameters),
+        Outputs: [],
         Capabilities: changeSet.Capabilities,
         Tags: changeSet.Tags,
         NotificationARNs: [],
         TemplateBody: changeSet.TemplateBody,
         EnableTerminationProtection: false,
+        DisableRollback: false,
+        OnFailure: "ROLLBACK",
         DriftInformation: { StackDriftStatus: "NOT_CHECKED" },
       };
       this.stacks.set(StackName, stack);
+      this.stackResources.set(StackName, []);
+      await this._runCreate(stack, template);
     } else {
-      // Atualiza stack existente
-      const stack = this.stacks.get(StackName);
-      if (stack) {
-        stack.StackStatus = StackStatus.UPDATE_COMPLETE;
-        stack.StackStatusReason = "Stack updated via ChangeSet";
-        stack.LastUpdatedTime = now();
-        stack.TemplateBody = changeSet.TemplateBody;
-        stack.Parameters = resolvedParams;
-        stack.Outputs = outputs;
-      }
+      stack = this._getStack(StackName);
+      const parameters = resolveParameters(template.Parameters, changeSet.Parameters, stack.Parameters);
+      if (changeSet.Tags?.length) stack.Tags = changeSet.Tags;
+      await this._runUpdate(stack, template, {
+        templateBody: changeSet.TemplateBody,
+        parameters,
+        reasonOk: "Stack updated via ChangeSet",
+      });
     }
 
-    this.stackResources.set(StackName, resources);
-    changeSet.ExecutionStatus = "EXECUTE_COMPLETE";
-    changeSet.Status = "UPDATE_COMPLETE";
+    const failed = [StackStatus.CREATE_FAILED, StackStatus.ROLLBACK_COMPLETE, StackStatus.UPDATE_ROLLBACK_COMPLETE].includes(stack.StackStatus);
+    changeSet.ExecutionStatus = failed ? "EXECUTE_FAILED" : "EXECUTE_COMPLETE";
+    changeSet.Status = failed ? "FAILED" : "CREATE_COMPLETE";
+    if (failed) changeSet.StatusReason = stack.StackStatusReason;
 
-    this.logger.info(`[CloudFormation] Executed ChangeSet: ${ChangeSetName} on ${StackName}`);
+    this.logger.info(`[CloudFormation] Executed ChangeSet: ${ChangeSetName} on ${StackName} -> ${stack.StackStatus}`);
     await this.save();
 
     return {};
@@ -942,71 +891,143 @@ class CloudFormationSimulator {
     };
   }
 
-  _computeChanges(currentResources, newResources) {
+  /** Recursos ativos (Condition verdadeira) de um template, com seus ids. */
+  _activeResources(template, parameters) {
+    const ctx = new TemplateContext({ template, stackName: "", stackId: "", region: this.env.region, account: this.env.account, parameters, handlers: HANDLERS });
+    ctx.evaluateConditions();
+    const active = {};
+    for (const [id, def] of Object.entries(template.Resources || {})) {
+      if (def.Condition === undefined || ctx.condition(def.Condition)) active[id] = def;
+    }
+    return active;
+  }
+
+  /** Assinatura de uma definição de recurso, incluindo os valores de parâmetros que ela referencia. */
+  _signature(def, parameters) {
+    const refs = collectReferences(def.Properties);
+    const paramValues = {};
+    for (const p of parameters) if (refs.has(p.ParameterKey)) paramValues[p.ParameterKey] = p.ParameterValue;
+    return { type: def.Type, props: def.Properties || {}, params: paramValues };
+  }
+
+  /**
+   * Diff entre a stack atual e o template novo:
+   * Add / Remove / Modify (com Replacement e Details por propriedade).
+   */
+  _computeChanges(stack, newTemplate, newParams) {
+    const oldTemplate = stack ? parseTemplate(stack.TemplateBody) : { Resources: {} };
+    const oldParams = stack?.Parameters || [];
+    const oldRes = this._activeResources(oldTemplate, oldParams);
+    const newRes = this._activeResources(newTemplate, newParams);
+    const currentRecords = new Map((stack ? this.stackResources.get(stack.StackName) || [] : []).map((r) => [r.LogicalResourceId, r]));
     const changes = [];
-    const currentMap = new Map(currentResources.map((r) => [r.LogicalResourceId, r]));
-    const newMap = new Map(newResources.map((r) => [r.LogicalResourceId, r]));
 
-    // Adições
-    for (const [id, res] of newMap.entries()) {
-      if (!currentMap.has(id)) {
-        changes.push({
-          Type: "Resource",
-          ResourceChange: {
-            Action: "Add",
-            LogicalResourceId: id,
-            ResourceType: res.ResourceType,
-            Replacement: "False",
-            Scope: [],
-            Details: [],
-          },
-        });
+    const change = (action, id, def, extra = {}) => ({
+      Type: "Resource",
+      ResourceChange: {
+        Action: action,
+        LogicalResourceId: id,
+        ResourceType: def.Type,
+        Replacement: "False",
+        Scope: [],
+        Details: [],
+        ...extra,
+      },
+    });
+
+    for (const [id, def] of Object.entries(newRes)) {
+      if (!oldRes[id]) changes.push(change("Add", id, def));
+    }
+    for (const [id, def] of Object.entries(oldRes)) {
+      if (!newRes[id]) {
+        changes.push(change("Remove", id, def, { PhysicalResourceId: currentRecords.get(id)?.PhysicalResourceId }));
       }
     }
+    for (const [id, def] of Object.entries(newRes)) {
+      const old = oldRes[id];
+      if (!old) continue;
+      const physicalId = currentRecords.get(id)?.PhysicalResourceId;
 
-    // Remoções
-    for (const [id, res] of currentMap.entries()) {
-      if (!newMap.has(id)) {
-        changes.push({
-          Type: "Resource",
-          ResourceChange: {
-            Action: "Remove",
-            LogicalResourceId: id,
-            PhysicalResourceId: res.PhysicalResourceId,
-            ResourceType: res.ResourceType,
-            Replacement: "False",
-            Scope: [],
-            Details: [],
-          },
+      if (old.Type !== def.Type) {
+        changes.push(change("Modify", id, def, { PhysicalResourceId: physicalId, Replacement: "True", Scope: ["Properties"] }));
+        continue;
+      }
+      const a = this._signature(old, oldParams);
+      const b = this._signature(def, newParams);
+      if (JSON.stringify(a) === JSON.stringify(b)) continue;
+
+      const names = new Set([...Object.keys(a.props), ...Object.keys(b.props)]);
+      const handler = HANDLERS[def.Type];
+      const inPlace = new Set(handler?.inPlace || []);
+      const details = [];
+      for (const name of names) {
+        // Propriedade alterada por valor direto ou por mudança de parâmetro referenciado
+        const sameRaw = JSON.stringify(a.props[name]) === JSON.stringify(b.props[name]);
+        const refsParams = [...collectReferences(b.props[name])].filter((r) => r in b.params);
+        const paramChanged = refsParams.some((r) => a.params[r] !== b.params[r]);
+        if (sameRaw && !paramChanged) continue;
+        details.push({
+          Target: { Attribute: "Properties", Name: name, RequiresRecreation: !handler || inPlace.has(name) ? "Never" : "Always" },
+          Evaluation: "Static",
+          ChangeSource: sameRaw ? "ParameterReference" : "DirectModification",
         });
       }
-    }
-
-    // Modificações (mesmo ID, tipo pode mudar)
-    for (const [id, res] of newMap.entries()) {
-      if (currentMap.has(id)) {
-        const current = currentMap.get(id);
-        if (current.ResourceType !== res.ResourceType) {
-          changes.push({
-            Type: "Resource",
-            ResourceChange: {
-              Action: "Modify",
-              LogicalResourceId: id,
-              PhysicalResourceId: current.PhysicalResourceId,
-              ResourceType: res.ResourceType,
-              Replacement: "True",
-              Scope: ["Properties"],
-              Details: [],
-            },
-          });
-        }
-      }
+      const replacement = details.some((d) => d.Target.RequiresRecreation === "Always");
+      changes.push(change("Modify", id, def, {
+        PhysicalResourceId: physicalId,
+        Replacement: replacement ? "True" : "False",
+        Scope: ["Properties"],
+        Details: details,
+      }));
     }
 
     return changes;
   }
 
   // ─── Admin ────────────────────────────────────────────────────
+
+  /**
+   * DescribeStackEvents: mais recentes primeiro, paginado (100 por página).
+   * Aceita nome da stack ou StackId (inclusive de stacks já removidas).
+   */
+  describeStackEvents({ StackName, NextToken } = {}) {
+    if (!StackName) throw Errors.InvalidAction("StackName is required");
+
+    let stackId;
+    if (this.stacks.has(StackName)) stackId = this.stacks.get(StackName).StackId;
+    else if (this.stackEvents.has(StackName)) stackId = StackName;
+    else stackId = this._getStack(StackName).StackId;
+
+    const all = [...(this.stackEvents.get(stackId) || [])].reverse();
+    const pageSize = 100;
+    let start = 0;
+    if (NextToken) start = parseInt(Buffer.from(NextToken, "base64").toString("utf8"), 10) || 0;
+
+    return {
+      StackEvents: all.slice(start, start + pageSize),
+      NextToken: start + pageSize < all.length ? Buffer.from(String(start + pageSize)).toString("base64") : undefined,
+    };
+  }
+
+  /**
+   * ListExports: exports (Outputs com Export.Name) de todas as stacks ativas.
+   */
+  listExports({ NextToken } = {}) {
+    const all = [];
+    for (const stack of this.stacks.values()) {
+      for (const o of stack.Outputs || []) {
+        if (o.ExportName) all.push({ ExportingStackId: stack.StackId, Name: o.ExportName, Value: o.OutputValue });
+      }
+    }
+    const pageSize = 100;
+    let start = 0;
+    if (NextToken) start = parseInt(Buffer.from(NextToken, "base64").toString("utf8"), 10) || 0;
+
+    return {
+      Exports: all.slice(start, start + pageSize),
+      NextToken: start + pageSize < all.length ? Buffer.from(String(start + pageSize)).toString("base64") : undefined,
+    };
+  }
 
   getStats() {
     return {

@@ -42,10 +42,9 @@ class CloudTrailService {
 
   async start() {
     if (this.isRunning) return;
-    const app = createCloudTrailServer(this.simulator, this.logger);
+    this._server = createCloudTrailServer(this.simulator, this.logger);
     return new Promise((resolve, reject) => {
-      this._server = http.createServer(app);
-      this._server.listen(this.port, () => {
+      this._server.listen(this.port, '0.0.0.0', () => {
         this.isRunning = true;
         this.logger.debug(`CloudTrail rodando na porta ${this.port}`);
         resolve();

@@ -47,6 +47,24 @@ class EventBridgeService {
     if (this.isRunning) return;
     await this.store.ensureDir();
     await this.simulator.load();
+
+    // Inicia features com runtime
+    try {
+      if (this.simulator.features?.scheduler?.start) {
+        this.simulator.features.scheduler.start();
+      }
+    } catch (err) {
+      this.logger.warn('EventBridge', `Scheduler não iniciado: ${err.message}`);
+    }
+
+    try {
+      if (this.simulator.features?.pipes?.start) {
+        this.simulator.features.pipes.start();
+      }
+    } catch (err) {
+      this.logger.warn('EventBridge', `Pipes polling não iniciado: ${err.message}`);
+    }
+
     return new Promise((resolve, reject) => {
       this.server = http.createServer(this.app);
       this.server.on('error', reject);
@@ -60,6 +78,23 @@ class EventBridgeService {
 
   async stop() {
     if (!this.isRunning || !this.server) return;
+
+    try {
+      if (this.simulator.features?.scheduler?.stop) {
+        this.simulator.features.scheduler.stop();
+      }
+    } catch (err) {
+      this.logger.warn('EventBridge', `Erro ao parar scheduler: ${err.message}`);
+    }
+
+    try {
+      if (this.simulator.features?.pipes?.reset) {
+        // reset apenas limpa em memória; não apaga dados
+      }
+    } catch (err) {
+      // ignore
+    }
+
     return new Promise((resolve, reject) => {
       this.server.close((err) => {
         if (err) return reject(err);

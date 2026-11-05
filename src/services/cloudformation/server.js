@@ -1,3 +1,4 @@
+const { setupServiceMiddleware } = require('../../middleware');
 'use strict';
 
 /**
@@ -403,6 +404,22 @@ async function dispatch(action, body, simulator, res, logger) {
         NextToken: body.NextToken,
       });
       res.type('application/xml').send(wrapResponse('ListChangeSets', result));
+      return;
+    }
+
+    // ── Events / Exports ────────────────────────────────────────────
+    case 'DescribeStackEvents': {
+      const result = simulator.describeStackEvents({
+        StackName: body.StackName,
+        NextToken: body.NextToken,
+      });
+      res.type('application/xml').send(wrapResponse('DescribeStackEvents', result));
+      return;
+    }
+
+    case 'ListExports': {
+      const result = simulator.listExports({ NextToken: body.NextToken });
+      res.type('application/xml').send(wrapResponse('ListExports', result));
       return;
     }
 

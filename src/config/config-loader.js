@@ -87,6 +87,18 @@ class ConfigLoader {
       throw new Error('dataDir não configurado');
     }
     
+    // Valida lambdas por processo (codePath) - apenas avisos, nunca derruba o boot
+    if (Array.isArray(config.lambdas)) {
+      for (const fn of config.lambdas) {
+        if (!fn || !fn.codePath) continue;
+        if (fn.runtimeEndpoint) {
+          logger.warn(`⚠️ Lambda '${fn.name}': 'runtimeEndpoint' e 'codePath' definidos; 'runtimeEndpoint' (HTTP) tem precedência.`);
+        } else if (!fn.handler) {
+          logger.warn(`⚠️ Lambda '${fn.name}': 'codePath' definido sem 'handler' (esperado 'modulo.funcao').`);
+        }
+      }
+    }
+
     // Valida portas
     for (const [service, port] of Object.entries(config.ports)) {
       if (config.services[service] && (port < 1 || port > 65535)) {

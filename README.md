@@ -6,69 +6,92 @@
 
 Simulador local completo para serviços AWS. Desenvolva e teste suas aplicações AWS localmente sem custos!
 
-## 🚀 Serviços Suportados
+## 🚀 Começar Rápido
 
-| Serviço | Status | Porta Padrão | Descrição |
-|---------|--------|--------------|-----------|
-| DynamoDB | ✅ | 8000 | Banco de dados NoSQL |
-| S3 | ✅ | 4566 | Armazenamento de objetos |
-| SQS | ✅ | 9324 | Filas de mensagens |
-| Lambda | ✅ | 3001 | Funções serverless |
-| Cognito | ✅ | 9229 | Autenticação e autorização |
-| API Gateway | ✅ | 4567 | APIs REST e HTTP |
-| STS | ✅ | 9326 | Credenciais temporárias |
-| SNS | ✅ | 9911 | Notificações pub/sub |
-| EventBridge | ✅ | 4010 | Barramento de eventos |
-| KMS | ✅ | 4000 | Gerenciamento de chaves |
-| Secrets Manager | ✅ | 4001 | Gerenciamento de segredos |
-| Parameter Store | ✅ | 4002 | Armazenamento de parâmetros |
-| CloudWatch | ✅ | 4011 | Logs, métricas e alarmes |
-| CloudTrail | ✅ | 4012 | Auditoria de API calls |
-| AWS Config | ✅ | 4013 | Conformidade e configuração |
-| CloudFormation | ✅ | 4580 | Infraestrutura como código |
-| Athena | ✅ | 4599 | Consultas SQL em dados no S3 |
-| X-Ray | ✅ | 4015 | Rastreamento distribuído |
-| ECS/Fargate | 🚧 | 8080 | Orquestração de containers (em desenvolvimento) |
+1. **Instalação**: `npm install --save-dev @gugananuvem/aws-local-simulator`
+2. **Iniciar**: `npx aws-local-simulator start`
+3. **Configurar**: Crie `aws-local-simulator.json`
+4. **Conectar**: Use SDK AWS apontando para localhost
 
-## 📦 Instalação
+📚 **[Guia de Instalação Completo](docs/setup/installation.md)**
 
-```bash
-npm install --save-dev @gugananuvem/aws-local-simulator
-```
+## 🔌 27+ Serviços Suportados
 
-## 🚀 Uso Rápido
+### Armazenamento & Dados
+| Serviço | Porta | Link |
+|---------|-------|------|
+| **S3** | 4566 | [Documentação](docs/services/S3.md) |
+| **DynamoDB** | 8000 | [Documentação](docs/services/DynamoDB.md) |
+| **OpenSearch** | 9200 | [Documentação](docs/services/OpenSearch.md) |
+| **Athena** | 4599 | [Documentação](docs/services/Athena.md) |
 
-### 1. Crie um arquivo de configuração `aws-local-simulator.json`:
+### Computação
+| Serviço | Porta | Link |
+|---------|-------|------|
+| **Lambda** | 3001 | [Documentação](docs/services/Lambda.md) |
+| **EC2** | 4020 | [Documentação](docs/services/EC2.md) |
+| **ALB** | 4021 | [Documentação](docs/services/ALB.md) |
+| **ASG** | 4022 | [Documentação](docs/services/ASG.md) |
+
+### Mensageria & Eventos
+| Serviço | Porta | Link |
+|---------|-------|------|
+| **SQS** | 9324 | [Documentação](docs/services/SQS.md) |
+| **SNS** | 9911 | [Documentação](docs/services/SNS.md) |
+| **Kinesis** | 4568+ | [Documentação](docs/services/Kinesis.md) |
+| **EventBridge** | 4010 | [Documentação](docs/services/EventBridge.md) |
+
+### Rede & Segurança
+| Serviço | Porta | Link |
+|---------|-------|------|
+| **Route53** ⭐ | 4024 | [Documentação](docs/services/Route53.md) |
+| **ACM** ⭐ | 4025 | [Documentação](docs/services/ACM.md) |
+| **IAM** | 4003 | [Documentação](docs/services/IAM.md) |
+| **Cognito** | 9229 | [Documentação](docs/services/Cognito.md) |
+
+### Infraestrutura & Observabilidade
+| Serviço | Porta | Link |
+|---------|-------|------|
+| **CloudFormation** | 4582 | [Documentação](docs/services/CloudFormation.md) |
+| **Organizations** | 4581 | [Documentação](docs/services/Organizations.md) |
+| **Control Tower** | 4581 | [Documentação](docs/services/Organizations.md) |
+| **CloudWatch** | 4011 | [Documentação](docs/services/CloudWatch.md) |
+| **AWS Config** | 4013 | [Documentação](docs/services/Config.md) |
+| **API Gateway** | 4567 | [Documentação](docs/services/API_Gateway.md) |
+
+**[Ver lista completa de portas →](docs/setup/ports.md)**
+
+## 📚 Documentação por Serviço
+
+Cada serviço tem documentação própria com:
+- 📖 Visão geral e features
+- 🚀 Quick Start com exemplos
+- 📝 Exemplos completos de uso
+- 🧪 Guia de testes
+
+**Acesse**: `docs/services/<SERVIÇO>.md`
+
+Exemplo: [docs/services/VPC.md](docs/services/VPC.md), [docs/services/Lambda.md](docs/services/Lambda.md)
+
+## 🔧 Configuração
+
+### Arquivo de Configuração
 
 ```json
 {
   "services": {
-    "dynamodb": true,
     "s3": true,
-    "sqs": true,
+    "dynamodb": true,
     "lambda": true,
-    "cognito": true,
-    "apigateway": true,
-    "sts": true,
-    "sns": true,
-    "eventbridge": true,
-    "kms": true,
-    "secret-manager": true,
-    "parameter-store": true,
-    "cloudwatch": true,
-    "cloudtrail": true,
-    "cloudformation": true,
-    "xray": true,
-    "config": true,
-    "athena": true
+    "ec2": true,
+    "sqs": true,
+    "cognito": true
   },
   "lambdas": [
     {
       "name": "my-function",
-      "handler": "./src/handlers/users.js",
-      "env": {
-        "TABLE_NAME": "users-table"
-      }
+      "handler": "./src/handlers/index.js",
+      "env": { "TABLE_NAME": "users-table" }
     }
   ],
   "dynamodb": {
@@ -80,92 +103,217 @@ npm install --save-dev @gugananuvem/aws-local-simulator
       }
     ]
   },
-  "s3": {
-    "buckets": [
-      { "name": "my-bucket", "region": "us-east-1" }
-    ]
-  },
-  "sqs": {
-    "queues": ["my-queue", "dead-letter-queue"]
-  },
-  "cognito": {
-    "userPools": [
-      {
-        "PoolName": "my-user-pool",
-        "AutoVerifiedAttributes": ["email"]
-      }
-    ]
+  "ports": {
+    "s3": 4566,
+    "lambda": 3001,
+    "ec2": 4020
   }
 }
 ```
 
-### 2. Inicie o simulador:
+### Lambda com runtime externo (poliglota: Python, Java, .NET, Ruby, Go)
+
+Por padrão o simulador executa handlers **JavaScript** (via `require()`/`import()`).
+Também é possível rodar handlers em **outras linguagens** encaminhando a invocação
+por **HTTP** para um "runtime server" já em execução. O simulador faz um `POST` com
+o `event` e o `context`; o processo externo executa o handler e devolve o resultado.
+
+Lambdas JS continuam funcionando exatamente como antes. O caminho externo só é
+ativado quando a configuração indica um runtime externo.
+
+#### Declarando uma lambda externa
+
+```json
+{
+  "lambdas": [
+    {
+      "name": "rag-chat-handler",
+      "runtime": "python3.12",
+      "runtimeEndpoint": "http://localhost:5001/invoke",
+      "handler": "chat_handler.lambda_handler",
+      "timeout": 60,
+      "env": { "TABLE_NAME": "blog-table" }
+    }
+  ]
+}
+```
+
+Campos relevantes:
+
+- `runtimeEndpoint` (novo): URL do runtime server que recebe o `POST`. Quando
+  presente, ativa o caminho externo **independentemente** do valor de `runtime`.
+- `runtime`: se casar com `python*`, `java*`, `dotnet*`, `ruby*` ou `go*`, a lambda
+  é tratada como externa mesmo sem `runtimeEndpoint` (nesse caso usa o endpoint
+  default — veja abaixo).
+- `handler`: apenas metadado do nome do handler-alvo (ex.: `chat_handler.lambda_handler`).
+  Para runtimes externos **não** há arquivo `.js` em disco.
+
+**Precedência de ativação:** `runtimeEndpoint` explícito → `codePath` (processo, veja abaixo) → `runtime` externo
+(usa o default configurável) → caminho JS atual.
+
+#### Endpoint default configurável
+
+Se uma lambda tiver runtime externo mas não informar `runtimeEndpoint`, o simulador
+usa o endpoint global:
+
+```json
+{
+  "lambda": {
+    "externalRuntime": {
+      "defaultEndpoint": "http://localhost:5001/invoke"
+    }
+  }
+}
+```
+
+Se **nenhum** endpoint for resolvível, a lambda é registrada como **não invocável**
+(log de erro claro) e o boot dos demais serviços **não** é interrompido.
+
+#### Contrato HTTP do runtime server
+
+O processo externo deve expor:
+
+```
+POST {runtimeEndpoint}
+Content-Type: application/json
+
+Request body:
+{
+  "event":   <objeto do evento Lambda>,
+  "context": {
+    "awsRequestId":       "...",
+    "functionName":       "...",
+    "functionVersion":    "$LATEST",
+    "invokedFunctionArn": "arn:aws:lambda:local:000000000000:function:...",
+    "memoryLimitInMB":    "1024",
+    "logGroupName":       "/aws/lambda/...",
+    "logStreamName":      "...",
+    "deadlineMs":         1700000000000
+  }
+}
+```
+
+O `context` contém apenas campos de dados (funções como `getRemainingTimeInMillis`
+não são enviadas); `deadlineMs` é o timestamp (epoch ms) até o qual a invocação deve
+terminar.
+
+Resposta:
+
+```
+Response 200: o corpo é o RESULTADO da Lambda (JSON).
+  - Para integração com API Gateway HTTP API, tipicamente:
+    { "statusCode": 200, "headers": { ... }, "body": "..." }
+
+Response >= 400: erro de execução. Idealmente:
+  { "errorType": "...", "errorMessage": "...", "stackTrace": [ ... ] }
+```
+
+Timeout (baseado em `timeout` da lambda) e respostas `>= 400` viram **falha de
+invocação** com mensagem clara (`Task timed out after N seconds` ou o `errorMessage`
+retornado). O simulador não quebra nesses casos.
+
+#### Convenção de logs do runtime externo
+
+Os logs do handler externo saem no processo da outra linguagem, não no Node. Para
+que o CloudWatch simulado continue útil, o runtime server pode responder com um
+**envelope** (apenas no modo externo):
+
+```json
+{ "result": <resultado-da-lambda>, "logs": ["linha 1", "linha 2"] }
+```
+
+Quando o corpo da resposta for um objeto contendo **ambas** as chaves `result` e
+`logs` (array de strings), o simulador trata `result` como o retorno real da Lambda
+e anexa `logs` aos logs enviados ao CloudWatch. Caso contrário, o corpo é usado
+diretamente como resultado. O caminho JS não é afetado por essa convenção.
+
+#### Criação dinâmica via Admin API
+
+`POST /__admin/functions` aceita lambdas externas: informe `runtime` externo e/ou
+`runtimeEndpoint` (sem `code`) e a função é registrada como proxy HTTP, sem gravar
+arquivo `.js`. `PUT` (update) também reconstrói o proxy ao receber `runtimeEndpoint`.
+Também aceita `codePath`/`command` (modo processo, abaixo).
+
+#### Execução por processo (`codePath`) — sem servidor HTTP
+
+Em vez de subir um runtime server, aponte para a pasta do seu programa e o handler.
+O simulador **spawna um processo por invocação**, envia `{ handler, event, context }`
+em JSON pelo **stdin** e lê o resultado do stdout.
+
+```json
+{
+  "name": "rag-chat-handler",
+  "runtime": "python3.12",
+  "handler": "chat_handler.lambda_handler",
+  "codePath": "./lambdas/rag-chat",
+  "command": "python",
+  "timeout": 60,
+  "env": { "TABLE_NAME": "blog-table" }
+}
+```
+
+- `codePath`: pasta do programa (relativa ao `process.cwd()`, com fallback para o
+  `dataDir`). Vira o `cwd` do processo e entra no `PYTHONPATH`.
+- `handler`: `modulo.funcao`, como na AWS (`chat_handler.lambda_handler` →
+  `chat_handler.py`; em Node, `index.handler` → `index.js|cjs|mjs`).
+- `command` (opcional): sobrescreve o interpretador (`python`, `python3`, `py`, caminho
+  de um venv...). Padrões: `python*` → `python` (Windows) / `python3` (Linux/macOS);
+  `nodejs*` → o próprio Node do simulador. Os dois usam bootstraps embutidos
+  (`src/services/lambda/runtimes/python/bootstrap.py` e `.../node/bootstrap.js`) com
+  suporte a handlers sync e async. O `context` expõe `aws_request_id`, `function_name`,
+  `function_version`, `invoked_function_arn`, `memory_limit_in_mb`, `log_group_name`,
+  `log_stream_name` e `get_remaining_time_in_millis()` (Python) /
+  `getRemainingTimeInMillis()` (Node, campos em camelCase).
+- `env` é mesclado sobre `process.env` do simulador e passado ao processo.
+
+**Modo `command` genérico (Java, .NET, Go, ...):** quando `command` contém o placeholder
+`{handler}` (ou o `runtime` não é `python*`/`nodejs*`), ele é um template de comando,
+ex.: `"java -jar app.jar {handler}"`. O template é dividido em argumentos (aspas
+suportadas) e executado **sem shell**; o evento nunca entra na linha de comando, só no
+stdin. Contrato do programa:
+
+- stdin: o JSON `{ "handler", "event", "context": { awsRequestId, functionName, ..., deadlineMs } }`.
+- stdout: o resultado como JSON. Para misturar logs e resultado, o simulador define a
+  variável `AWS_LOCAL_SIM_MARKER`; escreva o resultado entre
+  `<MARKER>:RESULT:BEGIN` e `<MARKER>:RESULT:END` (erros: `<MARKER>:ERROR:BEGIN`/`END`
+  com `{ errorType, errorMessage, stackTrace }`). **Sem marcadores**, todo o stdout é
+  tratado como o resultado JSON (se não for JSON válido, vira string); nesse caso envie
+  logs para o stderr.
+- Em executáveis Windows `.cmd`/`.bat` não há shell: use um `.exe` ou chame o interpretador.
+
+**Logs e erros:** nos bootstraps o resultado sai entre marcadores únicos por invocação
+(`AWS_LOCAL_SIM_MARKER`), então `print()`/`console.log` do usuário não corrompem o JSON.
+Todo o stdout/stderr restante vira `logs` e segue o mesmo caminho do envelope HTTP até o
+CloudWatch simulado. Exceções do handler viram erro de invocação com `errorMessage`
+(além de `errorType`/`stackTrace` no erro). Saída com código ≠ 0 sem resultado inclui o
+tail do stderr. Interpretador inexistente gera erro `ENOENT` citando o comando.
+Timeout mata o processo (e filhos, inclusive no Windows via `taskkill /T`) com
+`Task timed out after N seconds`.
+
+**Validação no registro:** `codePath` inexistente, arquivo do handler ausente (Python/Node)
+ou `command` ausente em runtimes estrangeiros registram a lambda como **não invocável**
+(erro claro no log), sem derrubar os demais serviços. Interpretador fora do PATH gera apenas
+aviso e falha com `ENOENT` na invocação.
+
+**Precedência:** `runtimeEndpoint` (HTTP) → `codePath` (processo) → `defaultEndpoint`
+(HTTP) → caminho JS.
+
+> Custo: cada invocação cria um novo processo (e, em Python, reimporta o módulo). Isso é
+> simples e isolado, mas mais lento que um runtime server persistente; para cargas pesadas
+> prefira `runtimeEndpoint`.
+
+### Variáveis de Ambiente
 
 ```bash
-# Via CLI
-npx aws-local-simulator start
-
-# Ou via código
-const { AWSLocalSimulator } = require('aws-local-simulator');
-const simulator = new AWSLocalSimulator();
-await simulator.start();
+AWS_LOCAL_SIMULATOR_S3=true
+AWS_LOCAL_SIMULATOR_S3_PORT=4566
+AWS_LOCAL_SIMULATOR_DYNAMODB=true
+AWS_LOCAL_SIMULATOR_DYNAMODB_PORT=8000
+AWS_LOCAL_SIMULATOR_LAMBDA=true
+AWS_LOCAL_SIMULATOR_LAMBDA_PORT=3001
 ```
 
-### 3. Configure seu código para usar os serviços locais:
-
-```javascript
-const { dynamoDB, s3, sqs, cognito } = require('aws-local-simulator/aws-config');
-
-await dynamoDB.send(new PutCommand({
-  TableName: 'users-table',
-  Item: { id: '123', name: 'John' }
-}));
-```
-
-## 🔧 Configuração por Variáveis de Ambiente
-
-| Variável | Descrição | Padrão |
-|---------|----------|-------|
-| AWS_LOCAL_SIMULATOR_DYNAMODB | Habilita DynamoDB | true |
-| AWS_LOCAL_SIMULATOR_S3 | Habilita S3 | true |
-| AWS_LOCAL_SIMULATOR_SQS | Habilita SQS | true |
-| AWS_LOCAL_SIMULATOR_LAMBDA | Habilita Lambda | true |
-| AWS_LOCAL_SIMULATOR_COGNITO | Habilita Cognito | false |
-| AWS_LOCAL_SIMULATOR_APIGATEWAY | Habilita API Gateway | false |
-| AWS_LOCAL_SIMULATOR_STS | Habilita STS | true |
-| AWS_LOCAL_SIMULATOR_SNS | Habilita SNS | false |
-| AWS_LOCAL_SIMULATOR_EVENTBRIDGE | Habilita EventBridge | false |
-| AWS_LOCAL_SIMULATOR_KMS | Habilita KMS | false |
-| AWS_LOCAL_SIMULATOR_SECRET_MANAGER | Habilita Secrets Manager | false |
-| AWS_LOCAL_SIMULATOR_PARAMETER_STORE | Habilita Parameter Store | false |
-| AWS_LOCAL_SIMULATOR_CLOUDWATCH | Habilita CloudWatch | false |
-| AWS_LOCAL_SIMULATOR_CLOUDTRAIL | Habilita CloudTrail | false |
-| AWS_LOCAL_SIMULATOR_CLOUDFORMATION | Habilita CloudFormation | false |
-| AWS_LOCAL_SIMULATOR_ATHENA | Habilita Athena | false |
-| AWS_LOCAL_SIMULATOR_XRAY | Habilita X-Ray | false |
-| AWS_LOCAL_SIMULATOR_CONFIG | Habilita AWS Config | false |
-| AWS_LOCAL_SIMULATOR_ECS | Habilita ECS/Fargate | false |
-| AWS_LOCAL_SIMULATOR_DYNAMODB_PORT | Porta DynamoDB | 8000 |
-| AWS_LOCAL_SIMULATOR_S3_PORT | Porta S3 | 4566 |
-| AWS_LOCAL_SIMULATOR_SQS_PORT | Porta SQS | 9324 |
-| AWS_LOCAL_SIMULATOR_LAMBDA_PORT | Porta Lambda | 3001 |
-| AWS_LOCAL_SIMULATOR_COGNITO_PORT | Porta Cognito | 9229 |
-| AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT | Porta API Gateway | 4567 |
-| AWS_LOCAL_SIMULATOR_STS_PORT | Porta STS | 9326 |
-| AWS_LOCAL_SIMULATOR_SNS_PORT | Porta SNS | 9911 |
-| AWS_LOCAL_SIMULATOR_EVENTBRIDGE_PORT | Porta EventBridge | 4010 |
-| AWS_LOCAL_SIMULATOR_KMS_PORT | Porta KMS | 4000 |
-| AWS_LOCAL_SIMULATOR_SECRET_MANAGER_PORT | Porta Secrets Manager | 4001 |
-| AWS_LOCAL_SIMULATOR_PARAMETER_STORE_PORT | Porta Parameter Store | 4002 |
-| AWS_LOCAL_SIMULATOR_CLOUDWATCH_PORT | Porta CloudWatch | 4011 |
-| AWS_LOCAL_SIMULATOR_CLOUDTRAIL_PORT | Porta CloudTrail | 4012 |
-| AWS_LOCAL_SIMULATOR_CONFIG_PORT | Porta AWS Config | 4013 |
-| AWS_LOCAL_SIMULATOR_XRAY_PORT | Porta X-Ray | 4015 |
-| AWS_LOCAL_SIMULATOR_CLOUDFORMATION_PORT | Porta CloudFormation | 4580 |
-| AWS_LOCAL_SIMULATOR_ATHENA_PORT | Porta Athena | 4599 |
-| AWS_LOCAL_SIMULATOR_ECS_PORT | Porta ECS | 8080 |
-| AWS_LOCAL_SIMULATOR_DATA | Diretório de dados | ./aws-local-simulator-data |
-| AWS_LOCAL_SIMULATOR_LOG | Nível de log | info |
+[Todas as variáveis de ambiente →](docs/setup/environment.md)
 
 ## 📝 Comandos CLI
 
@@ -173,7 +321,7 @@ await dynamoDB.send(new PutCommand({
 # Iniciar simulador
 npx aws-local-simulator start [configPath]
 
-# Parar simulador
+# Parar
 npx aws-local-simulator stop
 
 # Reiniciar
@@ -188,647 +336,697 @@ npx aws-local-simulator status
 
 ## 🖥️ Management API
 
-O simulador expõe uma API de gerenciamento em tempo de execução na porta `9999` (configurável via `adminPort`). Ela permite habilitar e desabilitar serviços individualmente sem reiniciar o processo.
-
-### Endpoints da Management API
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| GET | `/__admin/services` | Lista todos os 19 serviços com status |
-| GET | `/__admin/services/:name` | Status de um serviço específico |
-| POST | `/__admin/services/:name/enable` | Habilita um serviço parado |
-| POST | `/__admin/services/:name/disable` | Desabilita um serviço em execução |
-
-### Exemplos
+O simulador expõe Management API na porta `9999` para controlar serviços em tempo de execução:
 
 ```bash
-# Listar todos os serviços
+# Listar serviços
 curl http://localhost:9999/__admin/services
 
-# Habilitar DynamoDB
+# Habilitar/desabilitar
 curl -X POST http://localhost:9999/__admin/services/dynamodb/enable
-
-# Desabilitar SQS
 curl -X POST http://localhost:9999/__admin/services/sqs/disable
-
-# Status de um serviço
-curl http://localhost:9999/__admin/services/lambda
 ```
 
-### Configuração da porta admin
+[Documentação da Management API →](docs/guides/management-api.md)
 
-```json
-{
-  "adminPort": 9999
-}
-```
+## 📚 Guias Temáticos
 
-Ou via variável de ambiente:
+- **[Integração Multi-Serviço](docs/guides/integration.md)** - Usar múltiplos serviços juntos
+- **[Testes e Verificação](docs/guides/testing.md)** - Testar aplicações localmente
+- **[Segurança e IAM](docs/guides/security.md)** - Policy enforcement e controle de acesso
+- **[Troubleshooting](docs/guides/troubleshooting.md)** - Resolver problemas comuns
+- **[Proxy Setup](docs/setup/proxy.md)** - Configurar proxy entre serviços
+
+## 🔌 Configuração de Portas
+
+Cada serviço usa uma porta padrão diferente:
+
+| Serviço | Porta Padrão |
+|---------|-------------|
+| S3 | 4566 |
+| DynamoDB | 8000 |
+| Lambda | 3001 |
+| EC2 (inclui VPC, ALB, ASG) | 4020-4022 |
+| API Gateway | 4567 |
+| Kinesis | 4568-4570 |
+| Athena | 4599 |
+| CloudFormation | 4582 |
+| Organizations/Control Tower | 4581 |
+| AWS Config | 4013 |
+
+[Configuração completa de portas →](docs/setup/ports.md)
+
+## 💡 Exemplos Rápidos
+
+### S3
 ```bash
-AWS_LOCAL_SIMULATOR_ADMIN_PORT=9999 npx aws-local-simulator start
-```
-
-> A Management API nunca persiste alterações em disco — todo o estado é mantido em memória. Para uso em desenvolvimento local apenas.
-
-## 🔌 Endpoints
-
-| Serviço | Endpoint | Admin |
-|---------|----------|-------|
-| DynamoDB | http://localhost:8000 | http://localhost:8000/__admin/tables |
-| S3 | http://localhost:4566 | http://localhost:4566/__admin/buckets |
-| S3 Website | http://localhost:4566/website/{bucket}/ | — |
-| SQS | http://localhost:9324 | http://localhost:9324/__admin/queues |
-| Lambda | http://localhost:3001 | http://localhost:3001/__admin/functions |
-| Cognito | http://localhost:9229 | http://localhost:9229/__admin/userpools |
-| API Gateway | http://localhost:4567 | http://localhost:4567/__admin/apis |
-| STS | http://localhost:9326 | — |
-| SNS | http://localhost:9911 | http://localhost:9911/__admin/health |
-| EventBridge | http://localhost:4010 | — |
-| KMS | http://localhost:4000 | — |
-| Secrets Manager | http://localhost:4001 | — |
-| Parameter Store | http://localhost:4002 | — |
-| CloudWatch | http://localhost:4011 | — |
-| CloudTrail | http://localhost:4012 | — |
-| AWS Config | http://localhost:4013 | — |
-| X-Ray | http://localhost:4015 | — |
-| CloudFormation | http://localhost:4580 | http://localhost:4580/__admin/stacks |
-| Athena | http://localhost:4599 | http://localhost:4599/__admin/health |
-| ECS | http://localhost:8080 | http://localhost:8080/__admin/clusters |
-| Management API | http://localhost:9999 | http://localhost:9999/__admin/services |
-
-## 🧪 Testando com AWS CLI
-
-```bash
-# DynamoDB
-aws dynamodb list-tables --endpoint-url http://localhost:8000
-
-# S3
 aws s3 ls --endpoint-url http://localhost:4566
+aws s3 mb s3://my-bucket --endpoint-url http://localhost:4566
+```
 
-# SQS
-aws sqs list-queues --endpoint-url http://localhost:9324
+### DynamoDB
+```bash
+aws dynamodb list-tables --endpoint-url http://localhost:8000
+aws dynamodb scan --table-name users --endpoint-url http://localhost:8000
+```
 
-# Lambda
-aws lambda invoke \
-  --function-name my-function \
-  --payload '{"key":"value"}' \
-  --endpoint-url http://localhost:3001 \
-  output.json
+### Lambda
+```bash
+aws lambda list-functions --endpoint-url http://localhost:3001
+aws lambda invoke --function-name my-func output.json --endpoint-url http://localhost:3001
+```
 
-# Cognito
-aws cognito-idp list-user-pools --max-results 10 --endpoint-url http://localhost:9229
+### VPC (parte do serviço EC2)
 
-# Cognito cadastrar um usuario pelo adminstrador
-aws cognito-idp admin-create-user \
-  --user-pool-id us-east-xxxx\
-  --username usuario@email.com \
-  --user-attributes \
-    Name=email,Value=usuario@email.com \
-    Name=email_verified,Value=false \
-    Name=name,Value="nome usuario" \
-    Name=custom:role,Value="user" \
-    temporary-password "Teste@123456" \
-  --message-action SUPPRESS \
-  --endpoint-url http://localhost:9229
+> ℹ️ **A VPC não é um serviço AWS separado**: todas as ações de VPC (`describe-vpcs`,
+> `create-vpc`, subnets, route tables, internet gateways, VPC endpoints) fazem parte da API do
+> **EC2**. Por isso elas são atendidas na porta **4020** (`http://localhost:4020`) e não existe
+> mais uma porta dedicada `4014`. All VPC actions are handled on port `4020` (EC2).
 
-# Cognito excluir um usuario
-aws cognito-idp admin-delete-user \
-  --user-pool-id us-east-xxxx \
-  --username usuario@email.com
-  --endpoint-url http://localhost:9229
+**Usando AWS CLI (recomendado):**
+```bash
+aws ec2 describe-vpcs --endpoint-url http://localhost:4020
+aws ec2 create-vpc --cidr-block 10.0.0.0/16 --endpoint-url http://localhost:4020
+```
 
-# Cognito Registrar usuário
-aws cognito-idp sign-up \
-  --client-id $CLIENT_ID \
-  --username usuario@email.com \
-  --password "Teste@123456" \
-  --user-attributes Name=email,Value=usuario@email.com Name=name,Value="nome usuario"
-  --endpoint-url http://localhost:9229
+**Criar VPC Endpoint DynamoDB (AWS CLI):**
+```bash
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-xxxxx \
+  --service-name com.amazonaws.us-east-1.dynamodb \
+  --vpc-endpoint-type Gateway \
+  --route-table-ids rtb-xxxxx \
+  --endpoint-url http://localhost:4020
+```
 
-# 2. Confirmar usuário administrativamente
-aws cognito-idp admin-confirm-sign-up \
-  --user-pool-id us-east-xxxx \
-  --username usuario@email.com
-  --endpoint-url http://localhost:9229
+**Criar VPC Endpoint S3 (AWS CLI):**
+```bash
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-xxxxx \
+  --service-name com.amazonaws.us-east-1.s3 \
+  --vpc-endpoint-type Gateway \
+  --route-table-ids rtb-xxxxx \
+  --endpoint-url http://localhost:4020
+```
 
-# O código chega no e-mail do usuário. Algo como: "Your confirmation code is 123456"
-aws cognito-idp confirm-sign-up \
-  --client-id 3n4b5urk1ft4fl3mg5e62d9ado \
-  --username usuario@email.com \
-  --confirmation-code 123456
-  --endpoint-url http://localhost:9229
-  
-# STS
-aws sts get-caller-identity --endpoint-url http://localhost:9326
-aws sts assume-role \
-  --role-arn "arn:aws:iam::123456789012:role/my-role" \
-  --role-session-name "my-session" \
-  --endpoint-url http://localhost:9326
+**Criar VPC Endpoint SQS (AWS CLI):**
+```bash
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-xxxxx \
+  --service-name com.amazonaws.us-east-1.sqs \
+  --vpc-endpoint-type Interface \
+  --subnet-ids subnet-xxxxx \
+  --endpoint-url http://localhost:4020
+```
 
-# SNS
-aws sns list-topics --endpoint-url http://localhost:9911
+**Criar VPC Endpoint SNS (AWS CLI):**
+```bash
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-xxxxx \
+  --service-name com.amazonaws.us-east-1.sns \
+  --vpc-endpoint-type Interface \
+  --subnet-ids subnet-xxxxx \
+  --endpoint-url http://localhost:4020
+```
 
-# EventBridge
-aws events list-event-buses --endpoint-url http://localhost:4010
-
-# KMS
-aws kms list-keys --endpoint-url http://localhost:4000
-
-# Secrets Manager
-aws secretsmanager list-secrets --endpoint-url http://localhost:4001
-
-# Criar secret
-aws secretsmanager create-secret \
-  --name "local/app/db-credentials" \
-  --description "Credenciais do banco" \
-  --secret-string '{"username":"admin","password":"secret123"}' \
-  --endpoint-url http://localhost:4001
-
-# Ler secret
-aws secretsmanager get-secret-value \
-  --secret-id "local/app/db-credentials" \
-  --endpoint-url http://localhost:4001
-
-# Parameter Store
-aws ssm describe-parameters --endpoint-url http://localhost:4002
-
-# Criar parâmetro String
-aws ssm put-parameter \
-  --name "/local/app/config" \
-  --value '{"timeout":30,"maxRetries":3}' \
-  --type String \
-  --endpoint-url http://localhost:4002
-
-# Criar parâmetro SecureString
-aws ssm put-parameter \
-  --name "/local/app/api-key" \
-  --value "my-secret-api-key" \
-  --type SecureString \
-  --endpoint-url http://localhost:4002
-
-# Ler parâmetro
-aws ssm get-parameter \
-  --name "/local/app/config" \
-  --endpoint-url http://localhost:4002
-
-# CloudWatch
-aws cloudwatch list-metrics --endpoint-url http://localhost:4011
-aws logs describe-log-groups --endpoint-url http://localhost:4011
-
-# CloudTrail
-aws cloudtrail describe-trails --endpoint-url http://localhost:4012
-
-# CloudFormation
-aws cloudformation list-stacks --endpoint-url http://localhost:4580
-
-# X-Ray
-aws xray get-trace-summaries \
-  --start-time $(date -d '1 hour ago' +%s) \
-  --end-time $(date +%s) \
-  --endpoint-url http://localhost:4015
-
-# AWS Config
-aws configservice describe-configuration-recorders --endpoint-url http://localhost:4013
-
-# API Gateway
-aws apigateway get-rest-apis --endpoint-url http://localhost:4567
-
-# Cloudformation
-aws cloudformation create-stack \
-  --stack-name test-stack \
-  --template-body file://templates/test-stack.yaml \
-  --parameters \
-    ParameterKey=Environment,ParameterValue=local \
-    ParameterKey=BucketName,ParameterValue=meu-bucket \
-    ParameterKey=QueueName,ParameterValue=minha-fila \
-    ParameterKey=TableName,ParameterValue=minha-tabela \
-  --endpoint-url http://localhost:4580
-
-# Ver Cloudformation resultado 
-aws cloudformation describe-stacks \
-  --stack-name test-stack \
-  --endpoint-url http://localhost:4580  
-
-# Athena
+### Athena
+```bash
 # Criar workgroup
 aws athena create-work-group \
   --name my-workgroup \
-  --configuration ResultConfiguration={OutputLocation=s3://meu-bucket/athena-results/} \
+  --configuration ResultConfiguration={OutputLocation=s3://my-bucket/results/} \
   --endpoint-url http://localhost:4599
-
-# Listar workgroups
-aws athena list-work-groups --endpoint-url http://localhost:4599
 
 # Executar query
 aws athena start-query-execution \
   --query-string "SELECT * FROM my_table LIMIT 10" \
   --query-execution-context Database=default \
-  --result-configuration OutputLocation=s3://meu-bucket/athena-results/ \
+  --result-configuration OutputLocation=s3://my-bucket/results/ \
   --endpoint-url http://localhost:4599
-
-# Verificar status da query
-aws athena get-query-execution \
-  --query-execution-id <id-retornado> \
-  --endpoint-url http://localhost:4599
-
-# Buscar resultados
-aws athena get-query-results \
-  --query-execution-id <id-retornado> \
-  --endpoint-url http://localhost:4599
-
-# Criar named query
-aws athena create-named-query \
-  --name "my-saved-query" \
-  --database default \
-  --query-string "SELECT id, value FROM my_table WHERE status = 'active'" \
-  --endpoint-url http://localhost:4599
-
-# Listar named queries
-aws athena list-named-queries --endpoint-url http://localhost:4599
 ```
 
-## ⚙️ Configuração S3
-
-### Buckets simples
-
-```json
-{
-  "s3": {
-    "buckets": [
-      "my-bucket"
-    ]
-  }
-}
-```
-
-### Buckets com região e website estático
-
-```json
-{
-  "s3": {
-    "buckets": [
-      { "name": "my-bucket", "region": "us-east-1" },
-      {
-        "name": "my-site-bucket",
-        "region": "us-east-1",
-        "websiteConfiguration": {
-          "IndexDocument": { "Suffix": "index.html" },
-          "ErrorDocument": { "Key": "error.html" }
-        }
-      }
-    ]
-  }
-}
-```
-
-Quando `websiteConfiguration` está presente, o bucket serve arquivos estáticos.
-
-### URL do website estático
-
-```
-http://localhost:4566/website/{bucket-name}/
-http://localhost:4566/website/{bucket-name}/caminho/pagina.html
-```
-
-Exemplos:
-```
-http://localhost:4566/website/my-site-bucket/           → serve index.html
-http://localhost:4566/website/my-site-bucket/about.html → serve about.html
-http://localhost:4566/website/my-site-bucket/app/       → serve app/index.html
-```
-
-### Gerenciar website config via AWS CLI
-
+### AWS Config
 ```bash
-# Habilitar website em um bucket existente
-aws s3api put-bucket-website \
-  --bucket my-site-bucket \
-  --website-configuration '{"IndexDocument":{"Suffix":"index.html"},"ErrorDocument":{"Key":"error.html"}}' \
-  --endpoint-url http://localhost:4566
+# Listar configuration recorders
+aws configservice describe-configuration-recorders \
+  --endpoint-url http://localhost:4013
 
-# Ver configuração de website
-aws s3api get-bucket-website \
-  --bucket my-site-bucket \
-  --endpoint-url http://localhost:4566
+# Descrever resources
+aws configservice describe-config-resources \
+  --endpoint-url http://localhost:4013
 
-# Remover website
-aws s3api delete-bucket-website \
-  --bucket my-site-bucket \
-  --endpoint-url http://localhost:4566
+# Descrever compliance
+aws configservice describe-compliance-by-config-rule \
+  --endpoint-url http://localhost:4013
 ```
 
-## ⚙️ Configuração de Lambdas
-
-Lambdas são registradas por **nome** e invocadas via API de invocação (igual à AWS real). O roteamento HTTP é feito pelo API Gateway.
-
-```json
-{
-  "lambdas": [
-    {
-      "name": "my-user-function",
-      "handler": "./src/handlers/my-user-function.js",
-      "env": {
-        "TABLE_NAME": "users-table",
-        "BUCKET_NAME": "my-bucket"
-      }
-    }
-  ]
-}
-```
-
-## ⚙️ Configuração SQS com Lambda Trigger
-
-Para disparar uma Lambda automaticamente quando uma mensagem chega na fila, use o formato de objeto na lista de filas com `lambdaName`:
-
-```json
-{
-  "lambdas": [
-    {
-      "name": "process-orders",
-      "handler": "./src/handlers/process-orders.js"
-    }
-  ],
-  "sqs": {
-    "queues": [
-      "simple-queue",
-      {
-        "name": "orders-queue",
-        "lambdaName": "process-orders",
-        "batchSize": 5
-      }
-    ]
-  }
-}
-```
-
-- Filas simples (string) são criadas sem trigger
-- Filas com objeto aceitam `lambdaName` (nome da Lambda registrada) e `batchSize` (padrão: 10)
-- Quando uma mensagem é enviada para `orders-queue`, a Lambda `process-orders` é invocada automaticamente com o evento no formato SQS padrão da AWS
-
-O handler recebe o evento no formato padrão AWS SQS:
-
-```javascript
-exports.handler = async (event) => {
-  for (const record of event.Records) {
-    const body = JSON.parse(record.body);
-    console.log('Mensagem recebida:', body);
-    // processar...
-  }
-
-  // Retornar batchItemFailures para reprocessar mensagens específicas
-  return { batchItemFailures: [] };
-};
-```
-
-## ⚙️ Configuração API GATEWAY
-
-O valor do **lambdaName** deve igual ao nome Lambda que está registrada com o valor **name**. Ex: "my-user-function".
-
-```json
-{
-  "apigateway": {
-    "apis": [
-      {
-        "name": "Users API",
-        "description": "API para gerenciamento de usuários",
-        "endpoints": [
-          {
-            "path": "/user",
-            "method": "GET",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda"
-          },
-          {
-            "path": "/user",
-            "method": "POST",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda"
-          },
-          {
-            "path": "/user/{id}",
-            "method": "GET",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda"
-          },
-          {
-            "path": "/user/{id}",
-            "method": "DELETE",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda"
-          },
-          {
-            "path": "/user/{id}",
-            "method": "ANY",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### Método ANY
-
-Use `"method": "ANY"` para registrar um endpoint que aceita todos os verbos HTTP (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) — equivalente ao `ANY` do AWS API Gateway real.
-
-```json
-{
-  "path": "/webhook",
-  "method": "ANY",
-  "lambdaName": "my-webhook-handler",
-  "integrationType": "lambda"
-}
-```
-
-### API Key
-
-O API Gateway suporta validação de API Key via header `x-api-key`. Para proteger um endpoint, declare as `apiKeys` na configuração e use `"apiKeyRequired": true` no endpoint:
-
-```json
-{
-  "apigateway": {
-    "apiKeys": [
-      {
-        "name": "my-app-key",
-        "value": "minha-chave-secreta-123"
-      }
-    ],
-    "apis": [
-      {
-        "name": "Protected API",
-        "endpoints": [
-          {
-            "path": "/protected",
-            "method": "GET",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda",
-            "apiKeyRequired": true
-          },
-          {
-            "path": "/public",
-            "method": "GET",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Ao chamar um endpoint protegido, envie o header:
-
+### AWS Organizations
 ```bash
-curl http://localhost:4567/protected \
-  -H "x-api-key: minha-chave-secreta-123"
+# Listar roots
+aws organizations list-roots \
+  --endpoint-url http://localhost:4581
 
-# Sem a key → 403 Forbidden
-curl http://localhost:4567/protected
+# Listar accounts
+aws organizations list-accounts \
+  --endpoint-url http://localhost:4581
+
+# Criar account
+aws organizations create-account \
+  --email "newaccount@example.com" \
+  --account-name "New Account" \
+  --endpoint-url http://localhost:4581
 ```
 
-> **Nota:** A validação de API Key só está ativa no fluxo de proxy (`/:apiId/:stageName/*`). Endpoints declarados diretamente no `aws-local-simulator.json` via `setupConfigRoutes` não aplicam a validação de API Key no momento.
-
-### Cognito Authorizer
-
-O API Gateway suporta autenticação via Cognito User Pools. Configure um `authorizer` na API e marque os endpoints protegidos com `"authorizerRequired": true`:
-
-```json
-{
-  "cognito": {
-    "userPools": [
-      {
-        "PoolName": "my-user-pool",
-        "UserPoolId": "us-east-XXXXX",
-        "ClientId": "XXXXXX",
-        "AutoVerifiedAttributes": ["email"]
-      }
-    ]
-  },
-  "apigateway": {
-    "apis": [
-      {
-        "name": "My API",
-        "authorizer": {
-          "type": "COGNITO_USER_POOLS",
-          "userPoolId": "us-east-XXXXX"
-        },
-        "endpoints": [
-          {
-            "path": "/profile",
-            "method": "GET",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda",
-            "authorizerRequired": true
-          },
-          {
-            "path": "/public",
-            "method": "GET",
-            "lambdaName": "my-user-function",
-            "integrationType": "lambda"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-O simulador valida o JWT do Cognito local no header `Authorization: Bearer <token>`. Se o token for inválido ou ausente, retorna `401 Unauthorized`.
-
+### Control Tower
 ```bash
-# 1. Autenticar e obter o token
-TOKEN=$(curl -s -X POST http://localhost:9229/ \
-  -H "Content-Type: application/x-amz-json-1.1" \
-  -H "X-Amz-Target: AWSCognitoIdentityProviderService.InitiateAuth" \
+# Listar guardrails habilitados
+aws controltower list-enabled-guardrails \
+  --endpoint-url http://localhost:4581
+
+# Listar registered OUs
+aws controltower list-organizational-units \
+  --endpoint-url http://localhost:4581
+```
+
+### Route53 ⭐ NEW
+
+**Nota Importante:**
+- O simulador processa AWS CLI através da API REST internamente
+- Use `--endpoint-url http://localhost:4024` para todas as operações Route53
+- **No Windows PowerShell:** Parâmetros JSON inline com single quotes não funcionam devido à interpretação diferente de quotes. Use file-based JSON como mostrado nos exemplos (arquivo separado com `file://`)
+- **No Linux/macOS:** Ambos inline e file-based JSON funcionam normalmente
+
+#### Criar Hosted Zone
+
+Usando AWS CLI (recomendado):
+```bash
+aws route53 create-hosted-zone \
+  --name example.com \
+  --caller-reference $(date +%s) \
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X POST http://localhost:4024/2013-04-01/hostedzone \
+  -H "Content-Type: application/json" \
   -d '{
-    "AuthFlow": "USER_PASSWORD_AUTH",
-    "ClientId": "XXXXXX",
-    "AuthParameters": {
-      "USERNAME": "usuario@email.com",
-      "PASSWORD": "Senha@123"
+    "Name": "example.com.",
+    "CallerReference": "unique-ref-001",
+    "HostedZoneConfig": {
+      "Comment": "Main hosted zone",
+      "PrivateZone": false
     }
-  }' | jq -r '.AuthenticationResult.IdToken')
-
-# 2. Chamar endpoint protegido com o token
-curl http://localhost:4567/profile \
-  -H "Authorization: Bearer $TOKEN"
-
-# Sem token → 401 Unauthorized
-curl http://localhost:4567/profile
+  }'
 ```
 
-O token decodificado fica disponível no Lambda em `event.requestContext.authorizer.claims`:
+#### Listar Hosted Zones
 
-```javascript
-exports.handler = async (event) => {
-  const claims = event.requestContext.authorizer?.claims;
-  const userId = claims?.sub;
-  const email = claims?.email;
-
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ userId, email })
-  };
-};
-```
-
-O handler deve exportar uma função padrão:
-
-```javascript
-exports.handler = async (event, context) => {
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ message: 'Hello from Lambda!' })
-  };
-};
-```
-
-## 📁 Estrutura de Dados
-
-Os dados são persistidos em:
-
-```text
-.aws-local-simulator-data/
-├── dynamodb/
-├── s3/
-├── sqs/
-├── cognito/
-├── apigateway/
-├── ecs/
-├── kms/
-├── secret-manager/
-├── parameter-store/
-├── cloudwatch/
-├── cloudtrail/
-├── cloudformation/
-├── athena/
-├── xray/
-└── config/
-```
-
-## 🐛 Debug
-
+Usando AWS CLI (recomendado):
 ```bash
-AWS_LOCAL_SIMULATOR_LOG=verbose npx aws-local-simulator start
+aws route53 list-hosted-zones \
+  --endpoint-url http://localhost:4024
 ```
+
+Alternativa: Direto pela API REST
+```bash
+curl http://localhost:4024/2013-04-01/hostedzone
+```
+
+#### Obter Hosted Zone
+
+Usando AWS CLI (recomendado):
+```bash
+aws route53 get-hosted-zone \
+  --id zone-id \
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl http://localhost:4024/2013-04-01/hostedzone/zone-id
+```
+
+#### Criar Resource Record (A record)
+
+Usando AWS CLI com file-based JSON (recomendado para Windows):
+```bash
+# Linux/macOS - inline JSON
+aws route53 change-resource-record-sets \
+  --hosted-zone-id zone-id \
+  --change-batch '{
+    "Changes": [{
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "www.example.com",
+        "Type": "A",
+        "TTL": 300,
+        "ResourceRecords": [{"Value": "192.0.2.1"}]
+      }
+    }]
+  }' \
+  --endpoint-url http://localhost:4024
+
+# Windows - use file-based approach
+$batch = @{
+  Changes = @(@{
+    Action = "CREATE"
+    ResourceRecordSet = @{
+      Name = "www.example.com"
+      Type = "A"
+      TTL = 300
+      ResourceRecords = @(@{ Value = "192.0.2.1" })
+    }
+  })
+} | ConvertTo-Json -Depth 10
+$batch | Out-File -FilePath change-batch.json
+aws route53 change-resource-record-sets `
+  --hosted-zone-id zone-id `
+  --change-batch file://./change-batch.json `
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X POST http://localhost:4024/2013-04-01/hostedzone/zone-id/rrset \
+  -H "Content-Type: application/json" \
+  -d '{
+    "Name": "www.example.com",
+    "Type": "A",
+    "TTL": 300,
+    "ResourceRecords": [
+      {"Value": "192.0.2.1"}
+    ]
+  }'
+```
+
+#### Criar Resource Record com Weighted Routing
+
+Usando AWS CLI com file-based JSON (recomendado para Windows):
+```bash
+# Linux/macOS - inline JSON
+aws route53 change-resource-record-sets \
+  --hosted-zone-id zone-id \
+  --change-batch '{
+    "Changes": [{
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "api.example.com",
+        "Type": "A",
+        "TTL": 60,
+        "SetIdentifier": "api-primary",
+        "Weight": 70,
+        "ResourceRecords": [{"Value": "192.0.2.10"}]
+      }
+    }]
+  }' \
+  --endpoint-url http://localhost:4024
+
+# Windows - use file-based approach
+$batch = @{
+  Changes = @(@{
+    Action = "CREATE"
+    ResourceRecordSet = @{
+      Name = "api.example.com"
+      Type = "A"
+      TTL = 60
+      SetIdentifier = "api-primary"
+      Weight = 70
+      ResourceRecords = @(@{ Value = "192.0.2.10" })
+    }
+  })
+} | ConvertTo-Json -Depth 10
+$batch | Out-File -FilePath change-batch.json
+aws route53 change-resource-record-sets `
+  --hosted-zone-id zone-id `
+  --change-batch file://./change-batch.json `
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X POST http://localhost:4024/2013-04-01/hostedzone/zone-id/rrset \
+  -H "Content-Type: application/json" \
+  -d '{
+    "Name": "api.example.com",
+    "Type": "A",
+    "TTL": 60,
+    "SetIdentifier": "api-primary",
+    "Weight": 70,
+    "ResourceRecords": [
+      {"Value": "192.0.2.10"}
+    ]
+  }'
+```
+
+#### Criar Health Check
+
+Usando AWS CLI com file-based JSON (recomendado para Windows):
+```bash
+# Linux/macOS - inline JSON
+aws route53 create-health-check \
+  --caller-reference $(date +%s) \
+  --health-check-config '{
+    "Type": "HTTP",
+    "Protocol": "HTTP",
+    "IPAddress": "192.0.2.10",
+    "Port": 80,
+    "ResourcePath": "/health",
+    "RequestInterval": 30,
+    "FailureThreshold": 3,
+    "MeasureLatency": true
+  }' \
+  --endpoint-url http://localhost:4024
+
+# Windows - use file-based approach
+$config = @{
+  Type = "HTTP"
+  Protocol = "HTTP"
+  IPAddress = "192.0.2.10"
+  Port = 80
+  ResourcePath = "/health"
+  RequestInterval = 30
+  FailureThreshold = 3
+  MeasureLatency = $true
+} | ConvertTo-Json -Depth 10
+$config | Out-File -FilePath health-check-config.json
+aws route53 create-health-check `
+  --caller-reference ([DateTime]::Now.Ticks) `
+  --health-check-config file://./health-check-config.json `
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X POST http://localhost:4024/2013-04-01/healthcheck \
+  -H "Content-Type: application/json" \
+  -d '{
+    "HealthCheckConfig": {
+      "Type": "HTTP",
+      "Protocol": "HTTP",
+      "IPAddress": "192.0.2.10",
+      "Port": 80,
+      "ResourcePath": "/health",
+      "RequestInterval": 30,
+      "FailureThreshold": 3,
+      "MeasureLatency": true
+    }
+  }'
+```
+
+#### Listar Health Checks
+
+Usando AWS CLI (recomendado):
+```bash
+aws route53 list-health-checks \
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl http://localhost:4024/2013-04-01/healthcheck
+```
+
+#### Listar Resource Records
+
+Usando AWS CLI (recomendado):
+```bash
+aws route53 list-resource-record-sets \
+  --hosted-zone-id zone-id \
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl http://localhost:4024/2013-04-01/hostedzone/zone-id/rrset
+```
+
+#### Resolver DNS Query (Weighted) - Custom Endpoint
+
+Esta operação é um endpoint customizado do simulador sem equivalente direto em AWS CLI:
+```bash
+curl "http://localhost:4024/2013-04-01/resolve/api.example.com/A?queryType=weighted"
+```
+
+#### Deletar Resource Record
+
+Usando AWS CLI com file-based JSON (recomendado para Windows):
+```bash
+# Linux/macOS - inline JSON
+aws route53 change-resource-record-sets \
+  --hosted-zone-id zone-id \
+  --change-batch '{
+    "Changes": [{
+      "Action": "DELETE",
+      "ResourceRecordSet": {
+        "Name": "www.example.com",
+        "Type": "A",
+        "TTL": 300,
+        "ResourceRecords": [{"Value": "192.0.2.1"}]
+      }
+    }]
+  }' \
+  --endpoint-url http://localhost:4024
+
+# Windows - use file-based approach
+$batch = @{
+  Changes = @(@{
+    Action = "DELETE"
+    ResourceRecordSet = @{
+      Name = "www.example.com"
+      Type = "A"
+      TTL = 300
+      ResourceRecords = @(@{ Value = "192.0.2.1" })
+    }
+  })
+} | ConvertTo-Json -Depth 10
+$batch | Out-File -FilePath change-batch.json
+aws route53 change-resource-record-sets `
+  --hosted-zone-id zone-id `
+  --change-batch file://./change-batch.json `
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X DELETE http://localhost:4024/2013-04-01/hostedzone/zone-id/rrset/www.example.com/A
+```
+
+#### Deletar Health Check
+
+Usando AWS CLI (recomendado):
+```bash
+aws route53 delete-health-check \
+  --health-check-id health-check-id \
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X DELETE http://localhost:4024/2013-04-01/healthcheck/health-check-id
+```
+
+#### Deletar Hosted Zone
+
+Usando AWS CLI (recomendado):
+```bash
+aws route53 delete-hosted-zone \
+  --id zone-id \
+  --endpoint-url http://localhost:4024
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X DELETE http://localhost:4024/2013-04-01/hostedzone/zone-id
+```
+
+### ACM (AWS Certificate Manager) ⭐ NEW
+
+**Nota:** O simulador processa AWS CLI através da API REST internamente. Use `--endpoint-url http://localhost:4025` para todas as operações ACM.
+
+#### Solicitar Certificado
+
+Usando AWS CLI (recomendado):
+```bash
+aws acm request-certificate \
+  --domain-name example.com \
+  --subject-alternative-names "*.example.com" "www.example.com" \
+  --validation-method DNS \
+  --certificate-type AMAZON_ISSUED \
+  --endpoint-url http://localhost:4025
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X POST http://localhost:4025/acm/request-certificate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "DomainName": "example.com",
+    "SubjectAlternativeNames": ["*.example.com", "www.example.com"],
+    "ValidationMethod": "DNS",
+    "CertificateType": "AMAZON_ISSUED"
+  }'
+```
+
+#### Listar Certificados
+
+Usando AWS CLI (recomendado):
+```bash
+aws acm list-certificates \
+  --endpoint-url http://localhost:4025
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl http://localhost:4025/acm/list-certificates
+```
+
+#### Listar Certificados com Filtro (Status)
+
+Usando AWS CLI (recomendado):
+```bash
+aws acm list-certificates \
+  --certificate-statuses ISSUED \
+  --endpoint-url http://localhost:4025
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl "http://localhost:4025/acm/list-certificates?Status=ISSUED"
+```
+
+#### Descrever Certificado
+
+Usando AWS CLI (recomendado):
+```bash
+aws acm describe-certificate \
+  --certificate-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012 \
+  --endpoint-url http://localhost:4025
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl http://localhost:4025/acm/describe-certificate/arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
+```
+
+#### Validar Domínio (DNS validation) - Custom Endpoint
+
+Esta operação é um endpoint customizado do simulador sem equivalente direto em AWS CLI:
+```bash
+curl -X POST http://localhost:4025/acm/validate-domain \
+  -H "Content-Type: application/json" \
+  -d '{
+    "CertificateArn": "arn:aws:acm:...",
+    "DomainName": "example.com"
+  }'
+```
+
+#### Adicionar Tags ao Certificado
+
+Usando AWS CLI (recomendado):
+```bash
+aws acm add-tags-to-certificate \
+  --certificate-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012 \
+  --tags Key=Environment,Value=production Key=Team,Value=platform \
+  --endpoint-url http://localhost:4025
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X POST http://localhost:4025/acm/add-tags-to-certificate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "CertificateArn": "arn:aws:acm:...",
+    "Tags": [
+      {"Key": "Environment", "Value": "production"},
+      {"Key": "Team", "Value": "platform"}
+    ]
+  }'
+```
+
+#### Renovar Certificado
+
+Usando AWS CLI (recomendado):
+```bash
+aws acm renew-certificate \
+  --certificate-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012 \
+  --endpoint-url http://localhost:4025
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X POST http://localhost:4025/acm/renew-certificate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "CertificateArn": "arn:aws:acm:..."
+  }'
+```
+
+#### Listar Certificados por Domínio - Custom Endpoint
+
+Esta operação é um endpoint customizado do simulador sem equivalente direto em AWS CLI:
+```bash
+curl http://localhost:4025/acm/certificate-by-domain/example.com
+```
+
+#### Estatísticas de Certificados - Custom Endpoint
+
+Esta operação é um endpoint customizado do simulador sem equivalente direto em AWS CLI:
+```bash
+curl http://localhost:4025/acm/stats
+```
+
+#### Deletar Certificado
+
+Usando AWS CLI (recomendado):
+```bash
+aws acm delete-certificate \
+  --certificate-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012 \
+  --endpoint-url http://localhost:4025
+```
+
+Alternativa: Direto pela API REST
+```bash
+curl -X DELETE http://localhost:4025/acm/delete-certificate/arn:aws:acm:...
+```
+
+[Exemplos completos por serviço →](docs/services/)
+
+## 📖 Glossário
+
+| Termo | Descrição |
+|-------|-----------|
+| **VPC** | Virtual Private Cloud - rede isolada |
+| **Subnet** | Segmento de VPC em uma availability zone |
+| **Security Group** | Firewall virtual para instâncias |
+| **Route Table** | Define rotas de rede dentro da VPC |
+| **IAM** | Identity and Access Management - controle de acesso |
+| **Lambda** | Computação serverless - execute funções sem gerenciar servidores |
+| **DynamoDB** | Banco de dados NoSQL gerenciado |
+| **SQS** | Simple Queue Service - fila de mensagens |
+| **Kinesis** | Streaming de dados em tempo real |
+| **Athena** | Consultas SQL interativas em dados armazenados no S3 |
+| **AWS Config** | Rastreie configurações de recursos e conformidade |
+| **AWS Organizations** | Gerenciar múltiplas contas AWS e aplicar políticas |
+| **Control Tower** | Configurar e governar ambientes multi-conta em larga escala |
+| **CloudFormation** | Infrastructure as Code - provisione recursos via templates |
 
 ## 🤝 Contribuindo
 
-1. Fork o projeto
-2. Crie sua feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
-4. Push para a branch (`git push origin feature/AmazingFeature`)
-5. Abra um Pull Request
+Veja [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## 📄 Licença
 
-MIT © Luiz Gustavo Ribeiro
+MIT - Licença completa em [LICENSE](LICENSE)
 
-## ⚠️ Limitações
+## 📞 Suporte
 
-- ECS/Fargate em desenvolvimento
-- WebSocket APIs em desenvolvimento
-- Para uso em desenvolvimento e testes apenas
+- 📚 [Documentação Completa](docs/)
+- 🐛 [Reportar Issues](https://github.com/gugananuvem/aws-local-simulator/issues)
+- 💬 [Discussões](https://github.com/gugananuvem/aws-local-simulator/discussions)
+
+---
+
+**Versão**: 1.0.0  
+**Última atualização**: Outubro 2024
+

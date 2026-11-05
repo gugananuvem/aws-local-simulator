@@ -1,3 +1,4 @@
+const { setupServiceMiddleware } = require('../../middleware');
 /**
  * DynamoDB Server - Servidor HTTP para DynamoDB
  */
@@ -9,6 +10,8 @@ const logger = require('../../utils/logger');
 
 class DynamoDBServer {
   constructor(port, config) {
+    this.organizationsService = null;
+    this.stsService = null;
     this.port = port;
     this.config = config;
     this.app = express();
@@ -65,7 +68,9 @@ class DynamoDBServer {
         logger.error('DynamoDB Error:', error);
         res.status(400).json({
           __type: error.code || 'InternalServerError',
-          message: error.message
+          message: error.message,
+          ...(error.cancellationReasons ? { CancellationReasons: error.cancellationReasons } : {}),
+          ...(error.item ? { Item: error.item } : {})
         });
       }
     });

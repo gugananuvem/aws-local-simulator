@@ -7,6 +7,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const { createAwsProtocol } = require('./server-aws-protocol');
 
 /**
  * Create EventBridge Express application
@@ -28,6 +29,10 @@ function createEventBridgeServer(simulator, config, logger) {
     logger.debug('EventBridge', `${req.method} ${req.path}`);
     next();
   });
+
+  // AWS JSON protocol via X-Amz-Target
+  const awsProtocol = createAwsProtocol(simulator, logger);
+  app.post('/', awsProtocol);
 
   // ==================== Event Buses ====================
 
@@ -56,6 +61,46 @@ function createEventBridgeServer(simulator, config, logger) {
     try {
       const result = simulator.describeEventBus({ Name: req.params.name });
       res.json(result);
+    } catch (err) { sendError(res, err); }
+  });
+
+  // ==================== JSON routes for React frontend ====================
+
+  app.post('/json/eventbridge/rules', async (req, res) => {
+    try {
+      const result = await simulator.putRule(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+
+  app.delete('/json/eventbridge/rules/:name', async (req, res) => {
+    try {
+      await simulator.deleteRule({
+        Name: req.params.name,
+        EventBusName: req.query.eventBusName,
+        Force: req.query.force === 'true'
+      });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+
+  app.get('/json/eventbridge/rules', (req, res) => {
+    try {
+      const result = simulator.listRules({
+        EventBusName: req.query.EventBusName || 'default',
+        NamePrefix: req.query.NamePrefix,
+        Limit: req.query.Limit ? parseInt(req.query.Limit) : undefined
+      });
+      // Return just the array, not the wrapper object
+      res.json(result.Rules || []);
+    } catch (err) { sendError(res, err); }
+  });
+
+  app.get('/json/eventbridge/buses', (req, res) => {
+    try {
+      const result = simulator.listEventBuses();
+      // Return just the array, not the wrapper object
+      res.json(result.EventBuses || []);
     } catch (err) { sendError(res, err); }
   });
 
@@ -153,6 +198,282 @@ function createEventBridgeServer(simulator, config, logger) {
     } catch (err) { sendError(res, err); }
   });
 
+  // ==================== Pipes (REST/JSON) ====================
+
+  app.get('/pipes', (req, res) => {
+    try {
+      res.json(simulator.features.pipes.listPipes(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/pipes', async (req, res) => {
+    try {
+      const result = await simulator.features.pipes.createPipe(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/pipes/:name', (req, res) => {
+    try {
+      res.json(simulator.features.pipes.describePipe({ Name: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.put('/pipes/:name', async (req, res) => {
+    try {
+      const result = await simulator.features.pipes.updatePipe({ Name: req.params.name, ...req.body });
+      res.json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.delete('/pipes/:name', async (req, res) => {
+    try {
+      await simulator.features.pipes.deletePipe({ Name: req.params.name });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/pipes/:name/start', async (req, res) => {
+    try {
+      res.json(await simulator.features.pipes.startPipe({ Name: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/pipes/:name/stop', async (req, res) => {
+    try {
+      res.json(await simulator.features.pipes.stopPipe({ Name: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+
+  // ==================== Scheduler (REST/JSON) ====================
+
+  app.get('/schedules', (req, res) => {
+    try {
+      res.json(simulator.features.scheduler.listSchedules(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/schedules', async (req, res) => {
+    try {
+      const result = await simulator.features.scheduler.createSchedule(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/schedules/:name', (req, res) => {
+    try {
+      res.json(simulator.features.scheduler.getSchedule({ Name: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.put('/schedules/:name', async (req, res) => {
+    try {
+      const result = await simulator.features.scheduler.updateSchedule({ Name: req.params.name, ...req.body });
+      res.json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.delete('/schedules/:name', async (req, res) => {
+    try {
+      await simulator.features.scheduler.deleteSchedule({ Name: req.params.name });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+
+  app.get('/schedule-groups', (req, res) => {
+    try {
+      res.json(simulator.features.scheduler.listScheduleGroups(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/schedule-groups', async (req, res) => {
+    try {
+      const result = await simulator.features.scheduler.createScheduleGroup(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.delete('/schedule-groups/:name', async (req, res) => {
+    try {
+      await simulator.features.scheduler.deleteScheduleGroup({ Name: req.params.name });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+
+  // ==================== Archives & Replays ====================
+
+  app.get('/archives', (req, res) => {
+    try {
+      res.json(simulator.features.archives.listArchives(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/archives', async (req, res) => {
+    try {
+      const result = await simulator.features.archives.createArchive(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/archives/:name', (req, res) => {
+    try {
+      res.json(simulator.features.archives.describeArchive({ ArchiveName: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.delete('/archives/:name', async (req, res) => {
+    try {
+      await simulator.features.archives.deleteArchive({ ArchiveName: req.params.name });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+  app.put('/archives/:name', async (req, res) => {
+    try {
+      res.json(await simulator.features.archives.updateArchive({ ArchiveName: req.params.name, ...req.body }));
+    } catch (err) { sendError(res, err); }
+  });
+
+  app.get('/replays', (req, res) => {
+    try {
+      res.json(simulator.features.archives.listReplays(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/replays', async (req, res) => {
+    try {
+      const result = await simulator.features.archives.startReplay(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/replays/:name', (req, res) => {
+    try {
+      res.json(simulator.features.archives.describeReplay({ ReplayName: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/replays/:name/cancel', async (req, res) => {
+    try {
+      res.json(await simulator.features.archives.cancelReplay({ ReplayName: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+
+  // ==================== Connections & API destinations ====================
+
+  app.get('/connections', (req, res) => {
+    try {
+      res.json(simulator.features.integrations.listConnections(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/connections', async (req, res) => {
+    try {
+      const result = await simulator.features.integrations.createConnection(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/connections/:name', (req, res) => {
+    try {
+      res.json(simulator.features.integrations.describeConnection({ Name: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.put('/connections/:name', async (req, res) => {
+    try {
+      res.json(await simulator.features.integrations.updateConnection({ Name: req.params.name, ...req.body }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.delete('/connections/:name', async (req, res) => {
+    try {
+      await simulator.features.integrations.deleteConnection({ Name: req.params.name });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+
+  app.get('/api-destinations', (req, res) => {
+    try {
+      res.json(simulator.features.integrations.listApiDestinations(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/api-destinations', async (req, res) => {
+    try {
+      const result = await simulator.features.integrations.createApiDestination(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/api-destinations/:name', (req, res) => {
+    try {
+      res.json(simulator.features.integrations.describeApiDestination({ Name: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.put('/api-destinations/:name', async (req, res) => {
+    try {
+      res.json(await simulator.features.integrations.updateApiDestination({ Name: req.params.name, ...req.body }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.delete('/api-destinations/:name', async (req, res) => {
+    try {
+      await simulator.features.integrations.deleteApiDestination({ Name: req.params.name });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+
+  // ==================== Schema registry ====================
+
+  app.get('/schemas/registries', (req, res) => {
+    try {
+      res.json(simulator.features.schemas.listRegistries(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/schemas/registries', async (req, res) => {
+    try {
+      const result = await simulator.features.schemas.createRegistry(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/schemas', (req, res) => {
+    try {
+      res.json(simulator.features.schemas.listSchemas(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/schemas', async (req, res) => {
+    try {
+      const result = await simulator.features.schemas.createSchema(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/schemas/:name', (req, res) => {
+    try {
+      res.json(simulator.features.schemas.describeSchema({ SchemaName: req.params.name, RegistryName: req.query.RegistryName }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.put('/schemas/:name', async (req, res) => {
+    try {
+      res.json(await simulator.features.schemas.updateSchema({ SchemaName: req.params.name, RegistryName: req.query.RegistryName, ...req.body }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.delete('/schemas/:name', async (req, res) => {
+    try {
+      await simulator.features.schemas.deleteSchema({ SchemaName: req.params.name, RegistryName: req.query.RegistryName });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/schemas/:name/versions', (req, res) => {
+    try {
+      res.json(simulator.features.schemas.listSchemaVersions({ SchemaName: req.params.name, RegistryName: req.query.RegistryName, ...req.query }));
+    } catch (err) { sendError(res, err); }
+  });
+
+  // ==================== Global endpoints ====================
+
+  app.get('/endpoints', (req, res) => {
+    try {
+      res.json(simulator.features.globalEndpoints.listEndpoints(req.query));
+    } catch (err) { sendError(res, err); }
+  });
+  app.post('/endpoints', async (req, res) => {
+    try {
+      const result = await simulator.features.globalEndpoints.createEndpoint(req.body);
+      res.status(201).json(result);
+    } catch (err) { sendError(res, err); }
+  });
+  app.get('/endpoints/:name', (req, res) => {
+    try {
+      res.json(simulator.features.globalEndpoints.describeEndpoint({ Name: req.params.name }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.put('/endpoints/:name', async (req, res) => {
+    try {
+      res.json(await simulator.features.globalEndpoints.updateEndpoint({ Name: req.params.name, ...req.body }));
+    } catch (err) { sendError(res, err); }
+  });
+  app.delete('/endpoints/:name', async (req, res) => {
+    try {
+      await simulator.features.globalEndpoints.deleteEndpoint({ Name: req.params.name });
+      res.status(200).json({});
+    } catch (err) { sendError(res, err); }
+  });
+
   // ==================== Admin ====================
 
   app.get('/__admin/health', (_req, res) => {
@@ -162,6 +483,9 @@ function createEventBridgeServer(simulator, config, logger) {
       buses: simulator.buses.size,
       rules: simulator.rules.size,
       recentEvents: simulator.eventArchive.length,
+      pipes: simulator.features?.pipes?.getStats ? simulator.features.pipes.getStats() : undefined,
+      schedules: simulator.features?.scheduler?.getStats ? simulator.features.scheduler.getStats() : undefined,
+      archives: simulator.features?.archives?.getStats ? simulator.features.archives.getStats() : undefined,
       timestamp: new Date().toISOString()
     });
   });

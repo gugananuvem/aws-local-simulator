@@ -6,18 +6,23 @@
     "lambda": true,
     "cognito": true,
     "apigateway": true,
-    "sts": false,
+    "sts": true,
     "sns": true,
-    "eventbridge": false,
+    "eventbridge": true,
     "kms": true,
     "secret-manager": true,
     "parameter-store": true,
     "cloudwatch": true,
     "cloudtrail": true,
     "cloudformation": true,
+    "cloudfront": true,
     "xray": false,
     "config": true,
-    "athena": true
+    "athena": false,
+    "vpc": true,
+    "route53": true,
+    "acm": true,
+    "iam":true
   },
   "global": {
     "timeout": 30,
@@ -143,5 +148,36 @@
       "name": "users-api",
       "handler": "./handlers/users.js"
     }
-  ]
+  ],
+  "vpc": {
+    "vpcs": [
+      {
+        "CidrBlock": "10.0.0.0/16",
+        "Tags": [
+          { "Key": "Name", "Value": "main-vpc" }
+        ],
+        "EnableDnsHostnames": true,
+        "EnableDnsSupport": true
+      }
+    ]
+  },
+  "route53": {
+    "hostedZones": [
+      {
+        "Name": "example.com.",
+        "Comment": "Example hosted zone",
+        "PrivateZone": false
+      }
+    ]
+  },
+  "acm": {
+    "certificates": [
+      {
+        "DomainName": "example.com",
+        "SubjectAlternativeNames": ["*.example.com", "www.example.com"],
+        "ValidationMethod": "DNS",
+        "CertificateType": "AMAZON_ISSUED"
+      }
+    ]
+  }
 }
