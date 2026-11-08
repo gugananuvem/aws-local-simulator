@@ -15,49 +15,81 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 
 📚 **[Guia de Instalação Completo](docs/setup/installation.md)**
 
-## 🔌 27+ Serviços Suportados
+## 🔌 32 Serviços Suportados
 
-### Armazenamento & Dados
-| Serviço | Porta | Link |
-|---------|-------|------|
-| **S3** | 4566 | [Documentação](docs/services/S3.md) |
-| **DynamoDB** | 8000 | [Documentação](docs/services/DynamoDB.md) |
-| **OpenSearch** | 9200 | [Documentação](docs/services/OpenSearch.md) |
-| **Athena** | 4599 | [Documentação](docs/services/Athena.md) |
+A coluna **Padrão** indica se o serviço sobe sem configuração (`services.<nome>: true` em `default-config.js`).
+Os marcados com ⚙️ precisam ser habilitados em `services` no `aws-local-simulator.json`. Qualquer porta pode ser
+alterada em `ports`.
+
+### Armazenamento & Banco de Dados
+| Serviço | Chave em `services` | Porta | Padrão | Link |
+|---------|---------------------|-------|--------|------|
+| **S3** | `s3` | 4566 | ✅ | [Documentação](docs/services/S3.md) |
+| **DynamoDB** | `dynamodb` | 8000 | ✅ | [Documentação](docs/services/DynamoDB.md) |
+| **DAX** | `dax` | 8111 | ✅ (depende do DynamoDB) | - |
+| **Aurora** (SQLite local) | `aurora` | 4510 | ⚙️ (depende de KMS e Secrets Manager) | - |
+| **Athena** | `athena` | 4599 | ⚙️ | [Documentação](docs/services/Athena.md) |
+| **OpenSearch** | `opensearch` | 9200 | ✅ | [Documentação](docs/services/OpenSearch.md) |
 
 ### Computação
-| Serviço | Porta | Link |
-|---------|-------|------|
-| **Lambda** | 3001 | [Documentação](docs/services/Lambda.md) |
-| **EC2** | 4020 | [Documentação](docs/services/EC2.md) |
-| **ALB** | 4021 | [Documentação](docs/services/ALB.md) |
-| **ASG** | 4022 | [Documentação](docs/services/ASG.md) |
+| Serviço | Chave em `services` | Porta | Padrão | Link |
+|---------|---------------------|-------|--------|------|
+| **Lambda** (JS, Python, Java, .NET, Ruby, Go) | `lambda` | 3001 | ✅ | [Documentação](docs/services/Lambda.md) |
+| **EC2** (inclui VPC, Subnets, Route Tables, IGW) | `ec2` | 4020 | ✅ | [EC2](docs/services/EC2.md) / [VPC](docs/services/VPC.md) |
+| **ALB** | `alb` | 4021 | ✅ | [Documentação](docs/services/ALB.md) |
+| **ASG** | `asg` | 4022 | ✅ (depende de EC2 e ALB) | [Documentação](docs/services/ASG.md) |
+
+> ECS existe no código (`src/services/ecs`), mas está **desativado** no registro de serviços (porta 8080).
 
 ### Mensageria & Eventos
-| Serviço | Porta | Link |
-|---------|-------|------|
-| **SQS** | 9324 | [Documentação](docs/services/SQS.md) |
-| **SNS** | 9911 | [Documentação](docs/services/SNS.md) |
-| **Kinesis** | 4568+ | [Documentação](docs/services/Kinesis.md) |
-| **EventBridge** | 4010 | [Documentação](docs/services/EventBridge.md) |
+| Serviço | Chave em `services` | Porta | Padrão | Link |
+|---------|---------------------|-------|--------|------|
+| **SQS** | `sqs` | 9324 | ✅ | [Documentação](docs/services/SQS.md) |
+| **SNS** | `sns` | 9911 | ✅ | [Documentação](docs/services/SNS.md) |
+| **EventBridge** | `eventbridge` | 4010 | ✅ | [Documentação](docs/services/EventBridge.md) |
+| **Kinesis Data Streams** | `kinesis-data-streams` | 4568 | ✅ | [Documentação](docs/services/Kinesis.md) |
+| **Kinesis Firehose** | `kinesis-firehose` | 4569 | ✅ | [Documentação](docs/services/Kinesis.md) |
+| **Kinesis Analytics** | `kinesis-analytics` | 4570 | ✅ | [Documentação](docs/services/Kinesis.md) |
 
-### Rede & Segurança
-| Serviço | Porta | Link |
-|---------|-------|------|
-| **Route53** ⭐ | 4024 | [Documentação](docs/services/Route53.md) |
-| **ACM** ⭐ | 4025 | [Documentação](docs/services/ACM.md) |
-| **IAM** | 4003 | [Documentação](docs/services/IAM.md) |
-| **Cognito** | 9229 | [Documentação](docs/services/Cognito.md) |
+### Rede & Entrega de Conteúdo
+| Serviço | Chave em `services` | Porta | Padrão | Link |
+|---------|---------------------|-------|--------|------|
+| **API Gateway** | `apigateway` | 4567 | ✅ (depende de Lambda e Cognito) | [Documentação](docs/services/API_Gateway.md) |
+| **Route53** | `route53` | 4024 | ✅ | - |
+| **ACM** | `acm` | 4025 | ✅ | - |
+| **CloudFront** | `cloudfront` | 4017 | ⚙️ (depende de S3 e Lambda) | - |
 
-### Infraestrutura & Observabilidade
-| Serviço | Porta | Link |
-|---------|-------|------|
-| **CloudFormation** | 4582 | [Documentação](docs/services/CloudFormation.md) |
-| **Organizations** | 4581 | [Documentação](docs/services/Organizations.md) |
-| **Control Tower** | 4581 | [Documentação](docs/services/Organizations.md) |
-| **CloudWatch** | 4011 | [Documentação](docs/services/CloudWatch.md) |
-| **AWS Config** | 4013 | [Documentação](docs/services/Config.md) |
-| **API Gateway** | 4567 | [Documentação](docs/services/API_Gateway.md) |
+### Segurança & Identidade
+| Serviço | Chave em `services` | Porta | Padrão | Link |
+|---------|---------------------|-------|--------|------|
+| **IAM** | `iam` | 4003 | ⚙️ (depende de STS) | [Documentação](docs/services/IAM.md) |
+| **STS** | `sts` | 9326 | ✅ | - |
+| **Cognito** | `cognito` | 9229 | ✅ (depende de Lambda) | [Documentação](docs/services/Cognito.md) |
+| **KMS** | `kms` | 4000 | ✅ | - |
+| **Secrets Manager** | `secret-manager` | 4001 | ✅ | - |
+| **Parameter Store (SSM)** | `parameter-store` | 4002 | ✅ | - |
+
+### Observabilidade, Infraestrutura & Governança
+| Serviço | Chave em `services` | Porta | Padrão | Link |
+|---------|---------------------|-------|--------|------|
+| **CloudWatch** | `cloudwatch` | 4011 | ⚙️ | [Documentação](docs/services/CloudWatch.md) |
+| **CloudTrail** | `cloudtrail` | 4012 | ⚙️ | - |
+| **AWS Config** | `config` | 4013 | ⚙️ | [Documentação](docs/services/Config.md) |
+| **X-Ray** | `xray` | 4015 | ⚙️ | - |
+| **CloudFormation** | `cloudformation` | 4582 | ⚙️ | [Documentação](docs/services/CloudFormation.md) |
+| **Organizations** (inclui Control Tower) | `organizations` | 4581 | ✅ (depende de IAM) | [Documentação](docs/services/Organizations.md) |
+
+### Recursos embutidos (sem serviço próprio)
+| Recurso | Onde roda | Observação |
+|---------|-----------|------------|
+| **VPC** | EC2 (porta 4020) | Mesmo endpoint do EC2 |
+| **Control Tower** | Organizations (porta 4581) | Guardrails e landing zone |
+| **CloudShell** | Management API (porta 9999) | Terminal web em `http://localhost:9999/cloudshell`; exige `node-pty` (desativado se não carregar) |
+| **Management API** | porta 9999 | Endpoints `/__admin/services` (listar, ligar com `/enable` e desligar com `/disable`) |
+
+> Algumas portas (CloudWatch, CloudTrail, Config, X-Ray, CloudFront, Aurora) não estão em `ports` do
+> `default-config.js`; o serviço usa o valor padrão da tabela, que pode ser sobrescrito em `ports`.
+> Consulte o status real com `GET http://localhost:9999/__admin/services`.
 
 **[Ver lista completa de portas →](docs/setup/ports.md)**
 
