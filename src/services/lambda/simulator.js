@@ -5,6 +5,21 @@ const HandlerLoader = require("./handler-loader");
 const logger = require("../../utils/logger");
 const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
 const { buildProcessSpec, makeProcessHandler } = require("./runtimes/process-runner");
+const { PersistentWorker, normalizePersistentOptions } = require("./runtimes/persistent-worker");
+
+/**
+ * AWS_LOCAL_SIMULATOR_LAMBDA_DEBUG="nome:porta[,nome2:porta2]" liga o debug
+ * (e o modo persistente) de lambdas por processo sem editar o config.
+ */
+function debugPortFromEnv(name) {
+  const raw = process.env.AWS_LOCAL_SIMULATOR_LAMBDA_DEBUG;
+  if (!raw) return null;
+  for (const item of String(raw).split(",")) {
+    const i = item.lastIndexOf(":");
+    if (i > 0 && item.slice(0, i).trim() === name) return Number(item.slice(i + 1).trim());
+  }
+  return null;
+}
 
 class LambdaSimulator {
   constructor(config) {
@@ -262,6 +277,45 @@ class LambdaSimulator {
     for (const w of built.warnings) logger.warn(`⚠️ Lambda por processo '${name}': ${w}`);
     entry.processMode = built.spec.mode;
     entry.processSpec = built.spec;
+
+    // ---- Modo persistente / debug (opcional; padrão = um processo por invocação) ----
+    const optsConfig = { ...lambdaConfig };
+    const envPort = debugPortFromEnv(name);
+    if (envPort !== null && !optsConfig.debug) {
+      optsConfig.debug = { port: envPort };
+      logger.info(`🐞 Lambda '${name}': debug ativado por AWS_LOCAL_SIMULATOR_LAMBDA_DEBUG (porta ${envPort})`);
+    }
+    const opts = normalizePersistentOptions(optsConfig);
+    for (const w of opts.warnings) logger.warn(`⚠️ Lambda por processo '${name}': ${w}`);
+    entry.persistent = opts.persistent;
+    entry.debug = opts.debug;
+    entry.watch = lambdaConfig.watch === true;
+
+    if (opts.persistent) {
+      let invalid = opts.error;
+      if (!invalid && built.spec.mode !== "python") {
+        invalid = `modo persistente só é suportado para runtime python (modo '${built.spec.mode}' não suportado)`;
+      }
+      if (invalid) {
+        logger.error(`❌ Lambda por processo '${name}' (runtime: ${runtime}) mal configurada: ${invalid}. Registrada como NÃO invocável.`);
+        entry.invalidReason = invalid;
+        this.lambdas.set(name, entry);
+        return entry;
+      }
+      const worker = new PersistentWorker({ name, spec: built.spec, entry, debug: opts.debug, watch: entry.watch });
+      entry.worker = worker;
+      entry.invocable = true;
+      entry.handler = async (event, context) =>
+        worker.invoke(event, this.serializeContext(context), context.__externalLogs);
+      this.lambdas.set(name, entry);
+      if (opts.debug) {
+        logger.info(`🐞 Lambda '${name}': debugpy em ${opts.debug.host}:${opts.debug.port} (anexe o debugger)`);
+        if (opts.debug.ignoreTimeout) logger.info(`   ↳ timeout ignorado enquanto o debug estiver ativo (debug.ignoreTimeout)`);
+      }
+      logger.debug(`✅ Lambda persistente registrada: ${name} -> ${codePath} (${built.spec.mode}, runtime: ${runtime})`);
+      return entry;
+    }
+
     entry.invocable = true;
     entry.handler = makeProcessHandler({
       spec: built.spec,
@@ -270,6 +324,41 @@ class LambdaSimulator {
     });
     this.lambdas.set(name, entry);
     logger.debug(`✅ Lambda por processo registrada: ${name} -> ${codePath} (${built.spec.mode}, runtime: ${runtime})`);
+    return entry;
+  }
+
+  /** Sobe o worker já no registro (cold start pago no boot). Nunca derruba o boot. */
+  async startWorkerEagerly(entry) {
+    if (!entry || !entry.worker) return;
+    const p = entry.worker.start();
+    if (entry.debug && entry.debug.waitForClient) {
+      // aguardando o debugger anexar: não bloqueia o boot
+      p.catch((e) => logger.error(`❌ Lambda '${entry.name}': falha ao iniciar worker: ${e.message}`));
+      return;
+    }
+    try {
+      await p;
+    } catch (e) {
+      logger.error(`❌ Lambda '${entry.name}': falha ao iniciar worker (será recriado na próxima invocação): ${e.message}`);
+    }
+  }
+
+  /** Para o worker persistente de uma lambda (se houver). */
+  async stopWorkerOf(name) {
+    const existing = this.lambdas.get(name);
+    if (existing && existing.worker) {
+      try {
+        await existing.worker.dispose();
+      } catch (e) {
+        logger.error(`❌ Erro ao parar worker da Lambda '${name}': ${e.message}`);
+      }
+      existing.worker = null;
+    }
+  }
+
+  /** Encerra todos os workers persistentes (e seus processos filhos). */
+  async shutdownWorkers() {
+    await Promise.all(Array.from(this.lambdas.keys()).map((n) => this.stopWorkerOf(n)));
   }
 
   async registerLambda(lambdaConfig) {
@@ -280,6 +369,9 @@ class LambdaSimulator {
         logger.warn(`Lambda sem nome ignorada: ${JSON.stringify(lambdaConfig)}`);
         return;
       }
+
+      // Re-registro (ex.: updateFunction): o worker antigo precisa liberar a porta de debug antes
+      await this.stopWorkerOf(name);
 
       // Merge: global env as base, lambda-specific env overrides
       const env = {
@@ -293,7 +385,8 @@ class LambdaSimulator {
       // ---- Caminho de runtime externo por PROCESSO (spawn por invocação) ----
       // Precedência: runtimeEndpoint (HTTP) > codePath (processo) > defaultEndpoint > JS.
       if (!lambdaConfig.runtimeEndpoint && lambdaConfig.codePath) {
-        this.registerProcessLambda(lambdaConfig, { name, runtime, type, env, timeout, memorySize });
+        const entry = this.registerProcessLambda(lambdaConfig, { name, runtime, type, env, timeout, memorySize });
+        await this.startWorkerEagerly(entry);
         return;
       }
 
@@ -557,6 +650,12 @@ class LambdaSimulator {
         executionMode: l.executionMode || null,
         codePath: l.codePath || null,
         command: l.command || null,
+        persistent: !!l.persistent,
+        workerStatus: l.worker ? l.worker.status : null,
+        workerPid: l.worker ? l.worker.pid : null,
+        debugPort: l.debug ? l.debug.port : null,
+        invocable: l.invocable !== false,
+        invalidReason: l.invalidReason || null,
         code: code
       };
     });
@@ -575,6 +674,16 @@ class LambdaSimulator {
     logger.info("🔄 Recarregando Lambdas...");
 
     for (const [name, lambda] of this.lambdas.entries()) {
+      // Workers persistentes: reinicia para carregar o código editado.
+      if (lambda.worker) {
+        try {
+          await lambda.worker.restart();
+          logger.debug(`✅ Worker reiniciado: ${name}`);
+        } catch (error) {
+          logger.error(`❌ Erro ao reiniciar worker da Lambda ${name} (será recriado na próxima invocação): ${error.message}`);
+        }
+        continue;
+      }
       // Lambdas externas não têm arquivo JS para recarregar.
       if (lambda.external) {
         logger.debug(`⏭️ Lambda externa não recarregada (sem código JS): ${name}`);
@@ -594,7 +703,7 @@ class LambdaSimulator {
   }
 
   async createFunction(lambdaConfig) {
-    const { name, code, runtime, handler, timeout, memorySize, environment, runtimeEndpoint, codePath, command } = lambdaConfig;
+    const { name, code, runtime, handler, timeout, memorySize, environment, runtimeEndpoint, codePath, command, persistent, debug, watch } = lambdaConfig;
 
     if (!name) throw new Error("Function name is required");
 
@@ -607,6 +716,9 @@ class LambdaSimulator {
         runtimeEndpoint,
         codePath,
         command,
+        persistent,
+        debug,
+        watch,
         timeout: timeout || 30,
         memorySize: memorySize || 128,
         env: environment || {},
@@ -663,6 +775,9 @@ class LambdaSimulator {
         handler: handler !== undefined ? handler : lambda.handlerName,
         codePath: config.codePath !== undefined ? config.codePath : lambda.codePath,
         command: config.command !== undefined ? config.command : lambda.command,
+        persistent: config.persistent !== undefined ? config.persistent : lambda.persistent,
+        debug: config.debug !== undefined ? config.debug : lambda.debug,
+        watch: config.watch !== undefined ? config.watch : lambda.watch,
         timeout: timeout !== undefined ? timeout : lambda.timeout,
         memorySize: memorySize !== undefined ? memorySize : lambda.memorySize,
         env: env !== undefined ? env : lambda.env,
@@ -752,6 +867,7 @@ class LambdaSimulator {
   async deleteFunction(name) {
 
     if (this.lambdas.has(name)) {
+      await this.stopWorkerOf(name);
       this.lambdas.delete(name);
       this.persistLambdas();
       return true;

@@ -74,6 +74,8 @@ class LambdaService {
   }
 
   async stop() {
+    // Workers persistentes são encerrados sempre (iniciam no initialize, antes do start)
+    if (this.simulator) await this.simulator.shutdownWorkers();
     if (!this.isRunning) return;
     await this.server.stop();
     this.isRunning = false;

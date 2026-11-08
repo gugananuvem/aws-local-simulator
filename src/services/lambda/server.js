@@ -63,17 +63,24 @@ class LambdaServer {
       const { functionName } = req.params;
       const invocationType = req.headers['x-amz-invocation-type'] || 'RequestResponse';
 
-      // Read body directly from stream, bypassing all body parsers
+      // O express.json() global já consome o stream quando o Content-Type é JSON
+      // (marca req._body); nesse caso usa req.body. Senão lê o stream (SDKs que
+      // enviam outro Content-Type ou nenhum). Ler o stream depois do parser
+      // nunca dispara 'end' e a requisição ficava pendurada.
       let event = {};
       try {
-        const rawBody = await new Promise((resolve, reject) => {
-          const chunks = [];
-          req.on('data', chunk => chunks.push(chunk));
-          req.on('end', () => resolve(Buffer.concat(chunks)));
-          req.on('error', reject);
-        });
-        if (rawBody.length > 0) {
-          event = JSON.parse(rawBody.toString('utf8'));
+        if (req._body) {
+          event = req.body === undefined ? {} : req.body;
+        } else if (!req.readableEnded) {
+          const rawBody = await new Promise((resolve, reject) => {
+            const chunks = [];
+            req.on('data', chunk => chunks.push(chunk));
+            req.on('end', () => resolve(Buffer.concat(chunks)));
+            req.on('error', reject);
+          });
+          if (rawBody.length > 0) {
+            event = JSON.parse(rawBody.toString('utf8'));
+          }
         }
       } catch {
         event = {};

@@ -1,6 +1,6 @@
 {
   "name": "@gugananuvem/aws-local-simulator",
-  "version": "1.0.42",
+  "version": "1.0.43",
   "description": "Simulador local completo para serviços AWS",
   "main": "src/index.js",
   "bin": {
@@ -10,11 +10,9 @@
     "prebuild": "rimraf dist",
     "build": "node scripts/build-simple.js",
     "test": "jest",
-    "build:obfuscated": "node scripts/obfuscate.js",
     "verify-build": "node scripts/verify-build.js",
-    "publish:obfuscated": "npm run build:obfuscated && npm run verify-build && cd dist && npm publish --access public",
     "publish:clean": "npm run build && cd dist && npm publish --access public",
-    "pack": "npm run build && npm pack --pack-destination ./dist",
+    "pack": "npm run build && cd dist && npm pack",
     "clean": "rimraf dist",
     "preinstall": "node scripts/check-deps.js"
   },
@@ -35,10 +33,10 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "fs": "0.0.1-security",
-    "glob": "10.5.0",
+    "glob": "14.0.4",
     "http": "0.0.1-security",
-    "http-proxy-middleware": "0.2.0",
-    "js-yaml": "4.1.1",
+    "http-proxy-middleware": "4.2.1",
+    "js-yaml": "4.3.2",
     "jsonwebtoken": "^9.0.2",
     "luxon": "3.7.2",
     "mkdirp": "^3.0.1",
@@ -53,9 +51,8 @@
   },
   "devDependencies": {
     "eslint": "^8.44.0",
-    "javascript-obfuscator": "^4.0.0",
-    "jest": "30.5.2",
-    "rimraf": "5.0.10"
+    "jest": "29.7.0",
+    "rimraf": "6.1.4"
   },
   "keywords": [
     "aws",

@@ -302,6 +302,93 @@ aviso e falha com `ENOENT` na invocação.
 > simples e isolado, mas mais lento que um runtime server persistente; para cargas pesadas
 > prefira `runtimeEndpoint`.
 
+### Lambda Python persistente e debug (`persistent` / `debug`)
+
+Por padrão, uma Lambda com `codePath` roda **um processo novo por invocação**. Com
+`persistent: true` o simulador sobe **um worker por Lambda** no boot, importa o handler
+**uma única vez** (init) e reaproveita o mesmo processo nas invocações seguintes (sem cold
+start repetido). Com `debug`, o worker sobe com `debugpy` escutando numa porta e você só
+precisa anexar o debugger.
+
+```json
+{
+  "name": "rag-chat-handler",
+  "runtime": "python3.12",
+  "handler": "chat_handler.lambda_handler",
+  "codePath": "src",
+  "timeout": 60,
+  "persistent": true,
+  "watch": false,
+  "debug": { "port": 5678, "host": "127.0.0.1", "waitForClient": false, "ignoreTimeout": true },
+  "env": { "TABLE_NAME": "blog-table" }
+}
+```
+
+| Opção | Padrão | Descrição |
+|-------|--------|-----------|
+| `persistent` | `false` | Ativa o worker persistente. Ausente/`false` = um processo por invocação (comportamento anterior, inalterado). |
+| `debug.port` | (obrigatório) | Porta do `debugpy`. Sem ela a Lambda fica **não invocável** (`invalidReason` no admin). |
+| `debug.host` | `127.0.0.1` | Host do `debugpy`. |
+| `debug.waitForClient` | `false` | `true` = o worker espera o debugger anexar antes de importar o handler (não bloqueia o boot do simulador). |
+| `debug.ignoreTimeout` | `true` | Não aplica o `timeout` da Lambda, para um breakpoint parado não matar o worker. |
+| `watch` | `false` | Reinicia o worker ao alterar um `.py` dentro de `codePath` (debounce de 300 ms, ignora `__pycache__`). |
+
+Regras:
+
+- `debug` sem `persistent` é tratado como `persistent: true` (com um aviso no log).
+- Só o runtime **python** é suportado no modo persistente. `command` (template) e `nodejs`
+  com `persistent: true` ficam registrados como não invocáveis, com o motivo no log e no admin.
+- Invocações são **serializadas** por worker (fila FIFO, concorrência 1).
+- Erro do handler vira falha da invocação e o worker continua vivo. **Crash** do worker rejeita a
+  invocação em andamento (e as da fila) com o código de saída e o final do stderr; a próxima
+  invocação recria o worker. **Timeout** mata o worker (árvore inteira) e o recria na próxima
+  invocação, exceto com `debug.ignoreTimeout`.
+- Falha no init (ex.: erro de import) não derruba o boot: é logada e o worker é recriado na próxima invocação.
+- Ligar o debug sem editar o config: `AWS_LOCAL_SIMULATOR_LAMBDA_DEBUG=rag-chat-handler:5678`
+  (várias: `a:5678,b:5679`). Ativa também o modo persistente para essa Lambda.
+- O código fica carregado no worker. Depois de editar, use `watch: true`, `POST /__admin/reload`
+  ou reinicie o simulador. **Com debug, reiniciar o worker derruba a sessão** e o VS Code precisa anexar de novo.
+- `GET /__admin/functions` informa `persistent`, `workerStatus` (`starting`, `ready`, `busy`,
+  `stopped`, `crashed`), `workerPid` e `debugPort`.
+- Ao parar o simulador (`stop()`, Ctrl+C), `POST /__admin/reload`, `deleteFunction` e
+  `updateFunction`, todo o processo do worker é encerrado, incluindo o adaptador do `debugpy`.
+
+**Requisito:** o `debugpy` é dependência do **seu** Python, não do simulador:
+
+```bash
+python -m pip install debugpy
+```
+
+Use o mesmo interpretador da Lambda. O `debugpy` embutido na extensão do VS Code não é visível
+para o Python do sistema. Sem o `debugpy`, o worker sobe **sem debug** e avisa no log.
+
+`launch.json` do VS Code (mesma máquina e mesmo caminho: `pathMappings` não é necessário):
+
+```json
+{
+  "name": "Attach: Lambda Python (simulador)",
+  "type": "debugpy",
+  "request": "attach",
+  "connect": { "host": "127.0.0.1", "port": 5678 },
+  "justMyCode": false
+}
+```
+
+Fluxo: `node server.js` -> anexar o debugger -> `POST` na rota do API Gateway local -> a execução
+para no breakpoint do handler.
+
+#### Protocolo do bootstrap persistente
+
+`runtimes/python/bootstrap_persistent.py` (separado do `bootstrap.py`, que segue sendo um processo por invocação):
+
+- Env: `AWS_LOCAL_SIM_MARKER` (gerado **por worker**), `AWS_LOCAL_SIM_CODE_PATH`, `AWS_LOCAL_SIM_HANDLER`
+  e, com debug, `AWS_LOCAL_SIM_DEBUG_PORT`, `AWS_LOCAL_SIM_DEBUG_HOST`, `AWS_LOCAL_SIM_DEBUG_WAIT`.
+- Init: `debugpy.listen` (se houver porta) **antes** de importar o handler; depois `<M>:READY:BEGIN{}<M>:READY:END`.
+  Falha de import: `<M>:ERROR:init:BEGIN{...}<M>:ERROR:init:END` e saída com código 1.
+- stdin: **uma linha JSON por invocação**: `{"id": "...", "event": ..., "context": ...}`. EOF encerra o worker.
+- stdout: `<M>:RESULT:<id>:BEGIN<json><M>:RESULT:<id>:END` ou `<M>:ERROR:<id>:BEGIN{errorType,errorMessage,stackTrace}<M>:ERROR:<id>:END`.
+  O restante de stdout/stderr vira log da invocação em andamento (CloudWatch simulado).
+
 ### Variáveis de Ambiente
 
 ```bash
@@ -1027,6 +1114,6 @@ MIT - Licença completa em [LICENSE](LICENSE)
 
 ---
 
-**Versão**: 1.0.0  
+**Versão**: 1.0.43  
 **Última atualização**: Outubro 2024
 

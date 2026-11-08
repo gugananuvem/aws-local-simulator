@@ -34,10 +34,7 @@ const IGNORE_PATTERNS = [
     '!README.md',
     'graphify-out',
     'publish-protected.js',
-    'obfuscate.js',
     'integrate-policy-enforcement.js',
-    'obfuscator-config.js',
-    'verify-obfuscation',
     'build-simple.js'
 ];
 

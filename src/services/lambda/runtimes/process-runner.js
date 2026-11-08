@@ -19,9 +19,10 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 
 const PYTHON_BOOTSTRAP = path.join(__dirname, "python", "bootstrap.py");
+const PYTHON_PERSISTENT_BOOTSTRAP = path.join(__dirname, "python", "bootstrap_persistent.py");
 const NODE_BOOTSTRAP = path.join(__dirname, "node", "bootstrap.js");
 const STDERR_TAIL_CHARS = 2000;
 
@@ -193,7 +194,11 @@ function buildProcessSpec({ runtime, handler, command, codePath, env }) {
   }
   const bootstrap = mode === "python" ? PYTHON_BOOTSTRAP : NODE_BOOTSTRAP;
   const args = mode === "python" ? [...prefixArgs, "-u", bootstrap] : [...prefixArgs, bootstrap];
-  return { ok: true, warnings, spec: { mode, codePath, handler, executable, args, template: false, command: command || null } };
+  return {
+    ok: true,
+    warnings,
+    spec: { mode, codePath, handler, executable, args, prefixArgs, template: false, command: command || null },
+  };
 }
 
 /** Termina o processo e seus filhos (inclusive no Windows). */
@@ -205,6 +210,47 @@ function killTree(child) {
       k.on("error", () => {
         try { child.kill(); } catch (e) {}
       });
+    } catch (e) {
+      try { child.kill(); } catch (e2) {}
+    }
+  } else {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (e) {
+      try { child.kill("SIGKILL"); } catch (e2) {}
+    }
+  }
+}
+
+/** Variante assíncrona de killTree: resolve quando o taskkill/kill terminou. */
+function killTreeAsync(child) {
+  return new Promise((resolve) => {
+    if (!child || !child.pid) return resolve();
+    if (process.platform === "win32") {
+      try {
+        const k = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        k.on("error", () => {
+          try { child.kill(); } catch (e) {}
+          resolve();
+        });
+        k.on("close", () => resolve());
+      } catch (e) {
+        try { child.kill(); } catch (e2) {}
+        resolve();
+      }
+    } else {
+      killTree(child);
+      resolve();
+    }
+  });
+}
+
+/** Variante síncrona (usada no evento process 'exit', onde nada assíncrono roda). */
+function killTreeSync(child) {
+  if (!child || !child.pid) return;
+  if (process.platform === "win32") {
+    try {
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
     } catch (e) {
       try { child.kill(); } catch (e2) {}
     }
@@ -425,7 +471,11 @@ module.exports = {
   makeProcessHandler,
   runProcess,
   killTree,
+  killTreeAsync,
+  killTreeSync,
   extractBlock,
+  STDERR_TAIL_CHARS,
   PYTHON_BOOTSTRAP,
+  PYTHON_PERSISTENT_BOOTSTRAP,
   NODE_BOOTSTRAP,
 };
