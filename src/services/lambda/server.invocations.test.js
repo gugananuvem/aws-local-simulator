@@ -67,6 +67,36 @@ describe('Lambda server - /invocations', () => {
     expect(JSON.parse(res.body)).toEqual({ echo: { b: 2 } });
   });
 
+  test('statusCode do payload não vira status HTTP do Invoke', async () => {
+    server.simulator.invoke.mockImplementationOnce(async () => ({
+      StatusCode: 200,
+      Payload: { statusCode: 400, body: '{}' },
+    }));
+    const res = await post(port, '/2015-03-31/functions/f/invocations', '{}', { 'Content-Type': 'application/json' });
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('"statusCode":400');
+  });
+
+  test('erro de função: 200 + X-Amz-Function-Error', async () => {
+    server.simulator.invoke.mockImplementationOnce(async () => {
+      const e = new Error('boom');
+      e.isFunctionError = true;
+      throw e;
+    });
+    const res = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/2015-03-31/functions/f/invocations', method: 'POST' }, (r) => {
+        let d = '';
+        r.on('data', (c) => (d += c));
+        r.on('end', () => resolve({ status: r.statusCode, headers: r.headers, body: d }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers['x-amz-function-error']).toBe('Unhandled');
+    expect(JSON.parse(res.body)).toMatchObject({ errorMessage: 'boom', errorType: 'Error' });
+  });
+
   test('corpo vazio: evento {}', async () => {
     const res = await post(port, '/2015-03-31/functions/f/invocations', undefined, {});
     expect(res.status).toBe(200);

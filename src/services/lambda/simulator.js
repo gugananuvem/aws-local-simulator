@@ -520,6 +520,8 @@ class LambdaSimulator {
       result = await this.executeHandler(lambda, functionName, event);
     } catch (error) {
       logger.error(`❌ Lambda handler error (${functionName}):`, error);
+      // Erro de função (não do simulador): o server responde 200 + X-Amz-Function-Error
+      if (error && typeof error === "object") error.isFunctionError = true;
       throw error;
     }
     this.audit.record({
@@ -528,7 +530,8 @@ class LambdaSimulator {
       resources: [{ ARN: `arn:aws:lambda:local:000000000000:function:${functionName}`, type: "AWS::Lambda::Function" }],
       requestParameters: { functionName, invocationType },
     });
-    return { StatusCode: result.statusCode || 200, Payload: result };
+    // StatusCode é o da API Invoke (200), independente do statusCode do payload.
+    return { StatusCode: 200, Payload: result };
   }
 
   async invokeFunction(functionName, event) {

@@ -66,3 +66,6 @@ graphify-out
 .agents
 AGENTS.md
 #npx @dreamtree-org/graphify
+# Python
+__pycache__/
+*.pyc

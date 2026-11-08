@@ -529,4 +529,4 @@ class PersistentWorker {
   }
 }
 
-module.exports = { PersistentWorker, normalizePersistentOptions };
+module.exports = { liveWorkers, PersistentWorker, normalizePersistentOptions };

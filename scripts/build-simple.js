@@ -29,6 +29,8 @@ const IGNORE_PATTERNS = [
     '.env.local',
     '.DS_Store',
     '*.tgz',
+    '__pycache__',
+    '*.pyc',
     'docs',
     '*.md',
     '!README.md',
@@ -174,6 +176,8 @@ yarn.lock
 *.test.js
 *.spec.js
 __tests__/
+__pycache__/
+*.pyc
 *.map
 *.ts
 *.tsbuildinfo

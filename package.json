@@ -1,6 +1,6 @@
 {
   "name": "@gugananuvem/aws-local-simulator",
-  "version": "1.0.43",
+  "version": "1.0.44",
   "description": "Simulador local completo para serviços AWS",
   "main": "src/index.js",
   "bin": {

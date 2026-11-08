@@ -39,8 +39,13 @@ class LambdaServer {
   }
 
   async initialize() {
-    this.simulator = new LambdaSimulator(this.config);
-    await this.simulator.initialize();
+    // Reutiliza o simulador injetado pelo LambdaService (instância única por serviço).
+    // Só cria o próprio quando usado de forma isolada, e então passa a ser dono dele.
+    if (!this.simulator) {
+      this.simulator = new LambdaSimulator(this.config);
+      this.ownsSimulator = true;
+      await this.simulator.initialize();
+    }
     this.setupRoutes();
   }
 
@@ -89,14 +94,33 @@ class LambdaServer {
       logger.debug(`Lambda invoke: ${functionName} (${invocationType})`);
 
       try {
+        if (invocationType === 'DryRun') {
+          if (!this.simulator.lambdas.has(functionName)) {
+            throw new Error(`Function not found: ${functionName}`);
+          }
+          return res.status(204).send();
+        }
+
         const result = await this.simulator.invoke(functionName, event, invocationType);
 
         if (invocationType === 'Event') {
           return res.status(202).send();
         }
 
-        res.status(result.StatusCode || 200).json(result.Payload);
+        // Contrato real da API Invoke: HTTP 200 sempre que a função executou.
+        // O statusCode dentro do payload é assunto do API Gateway, não do Invoke.
+        res.set('X-Amz-Executed-Version', '$LATEST');
+        res.status(200).json(result.Payload);
       } catch (err) {
+        if (err && err.isFunctionError) {
+          res.set('X-Amz-Executed-Version', '$LATEST');
+          res.set('X-Amz-Function-Error', 'Unhandled');
+          return res.status(200).json({
+            errorMessage: err.message,
+            errorType: err.name || 'Error',
+            stackTrace: String(err.stack || '').split('\n').slice(1).map((l) => l.trim()),
+          });
+        }
         if (err.message && err.message.includes('Function not found')) {
           return res.status(404).json({ __type: 'ResourceNotFoundException', message: err.message });
         }
@@ -304,14 +328,14 @@ class LambdaServer {
     }
   }
 
-  stop() {
-    return new Promise((resolve) => {
-      if (this.server) {
-        this.server.close(() => resolve());
-      } else {
-        resolve();
-      }
-    });
+  async stop() {
+    if (this.server) {
+      await new Promise((resolve) => this.server.close(() => resolve()));
+    }
+    // Só encerra os workers se o simulador foi criado por este server
+    if (this.ownsSimulator && this.simulator) {
+      await this.simulator.shutdownWorkers();
+    }
   }
 
   getStatus() {
