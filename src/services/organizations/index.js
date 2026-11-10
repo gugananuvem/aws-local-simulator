@@ -39,7 +39,19 @@ class OrganizationsService {
   }
 
   injectDependencies(server) {
-    // Injetar dependências de outros serviços (IAM, VPC, EC2, etc)
+    // As integrações ficam disponíveis no simulador de Organizations: avaliação combinada
+    // de SCP + IAM (iamIntegration) e validação de recursos VPC por conta/região (vpcIntegration).
+    if (!this.organizationsSimulator) return;
+    const IAMIntegration = require('./iam-integration');
+    const VPCIntegration = require('./vpc-integration');
+    const iamService = server.getService('iam');
+    const ec2Service = server.getService('ec2');
+    this.organizationsSimulator.iamIntegration = new IAMIntegration(this.organizationsSimulator, iamService);
+    this.organizationsSimulator.vpcIntegration = new VPCIntegration(
+      this.organizationsSimulator,
+      ec2Service ? ec2Service.vpcSimulator : null,
+      ec2Service || null
+    );
   }
 
   async start() {

@@ -27,14 +27,14 @@ class ServiceControlPolicy {
   /**
    * Valida se uma ação é permitida por esta policy
    */
-  evaluateAction(action, resource = '*') {
+  evaluateAction(action, resource = '*', context = {}) {
     if (!this.document || !this.document.Statement) {
       return true; // Nenhuma restrição
     }
 
     // Processa statements na ordem
     for (const statement of this.document.Statement) {
-      if (this.matchesStatement(statement, action, resource)) {
+      if (this.matchesStatement(statement, action, resource, context)) {
         // Se Effect é Deny, a ação é bloqueada
         if (statement.Effect === 'Deny') {
           return false;
@@ -53,7 +53,7 @@ class ServiceControlPolicy {
   /**
    * Verifica se um statement match com a ação
    */
-  matchesStatement(statement, action, resource) {
+  matchesStatement(statement, action, resource, context = {}) {
     // Verifica Action
     if (!this.matchesPattern(statement.Action, action)) {
       return false;
@@ -65,7 +65,7 @@ class ServiceControlPolicy {
     }
 
     // Verifica Condition (se especificado)
-    if (statement.Condition && !this.evaluateCondition(statement.Condition)) {
+    if (statement.Condition && !this.evaluateCondition(statement.Condition, context)) {
       return false;
     }
 
@@ -100,9 +100,46 @@ class ServiceControlPolicy {
   /**
    * Avalia condições (versão simplificada)
    */
-  evaluateCondition(condition) {
-    // Suporte básico a StringEquals, StringLike, etc
-    return true; // Por enquanto aceita tudo
+  /**
+   * Avalia o bloco Condition de um statement contra o contexto da requisição
+   * (ex.: { 'aws:RequestedRegion': 'us-west-2' }). Todas as chaves precisam bater (AND);
+   * dentro de uma chave, qualquer valor da lista basta (OR).
+   */
+  evaluateCondition(condition, context = {}) {
+    for (const [operator, keys] of Object.entries(condition || {})) {
+      for (const [key, expected] of Object.entries(keys || {})) {
+        if (!this.conditionMatches(operator, key, expected, context)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Um operador de condição. Chave ausente no contexto: operadores positivos não batem e
+   * operadores negativos (StringNotEquals, StringNotLike) batem, como na AWS.
+   * Operadores não suportados não batem (o statement não se aplica).
+   */
+  conditionMatches(operator, key, expected, context) {
+    const values = (Array.isArray(expected) ? expected : [expected]).map(String);
+    const present = Object.prototype.hasOwnProperty.call(context, key) && context[key] !== undefined;
+    const actual = present ? String(context[key]) : null;
+
+    switch (operator) {
+      case 'StringEquals':
+        return present && values.some(v => actual === v);
+      case 'StringNotEquals':
+        return !present || values.every(v => actual !== v);
+      case 'StringLike':
+        return present && values.some(v => this.matchesWildcard(v, actual));
+      case 'StringNotLike':
+        return !present || values.every(v => !this.matchesWildcard(v, actual));
+      case 'Bool':
+        return present && values.some(v => actual.toLowerCase() === v.toLowerCase());
+      default:
+        return false;
+    }
   }
 
   /**

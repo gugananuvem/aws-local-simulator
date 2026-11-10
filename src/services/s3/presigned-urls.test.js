@@ -142,11 +142,14 @@ describe('S3 Presigned URLs Integration', () => {
     });
 
     test('presigned URLs should be unique', () => {
-      const url1 = simulator.generatePresignedGetUrl('test-bucket', 'test-key.txt').presignedUrl;
+      jest.useFakeTimers({ now: new Date('2026-01-01T00:00:00Z') });
+        const url1 = simulator.generatePresignedGetUrl('test-bucket', 'test-key.txt').presignedUrl;
+        jest.setSystemTime(new Date('2026-01-01T00:00:01Z'));
       const url2 = simulator.generatePresignedGetUrl('test-bucket', 'test-key.txt').presignedUrl;
       
       // URLs should differ due to different timestamps
       expect(url1).not.toBe(url2);
+        jest.useRealTimers();
     });
   });
 
@@ -180,7 +183,7 @@ describe('S3 Presigned URLs Integration', () => {
   describe('Error Handling', () => {
     test('should handle invalid bucket names gracefully', () => {
       const result = simulator.generatePresignedGetUrl('', 'key.txt');
-      expect(result.error || !result.presignedUrl).toBe(true);
+      expect(Boolean(result.error || !result.presignedUrl)).toBe(true);
     });
 
     test('should handle missing key parameter', () => {
@@ -214,10 +217,14 @@ describe('S3 Presigned URLs Integration', () => {
       const deleteUrl = simulator.generatePresignedDeleteUrl('test-bucket', 'key.txt');
       const headUrl = simulator.generatePresignedHeadUrl('test-bucket', 'key.txt');
 
-      expect(getUrl.presignedUrl).toContain('GET');
-      expect(putUrl.presignedUrl).toContain('PUT');
-      expect(deleteUrl.presignedUrl).toContain('DELETE');
-      expect(headUrl.presignedUrl).toContain('HEAD');
+      expect(simulator.validatePresignedUrl(getUrl.presignedUrl, 'GET').valid).toBe(true);
+        expect(simulator.validatePresignedUrl(getUrl.presignedUrl, 'DELETE').valid).toBe(false);
+      expect(simulator.validatePresignedUrl(putUrl.presignedUrl, 'PUT').valid).toBe(true);
+        expect(simulator.validatePresignedUrl(putUrl.presignedUrl, 'GET').valid).toBe(false);
+      expect(simulator.validatePresignedUrl(deleteUrl.presignedUrl, 'DELETE').valid).toBe(true);
+        expect(simulator.validatePresignedUrl(deleteUrl.presignedUrl, 'PUT').valid).toBe(false);
+      expect(simulator.validatePresignedUrl(headUrl.presignedUrl, 'HEAD').valid).toBe(true);
+        expect(simulator.validatePresignedUrl(headUrl.presignedUrl, 'GET').valid).toBe(false);
     });
   });
 });

@@ -1,5 +1,6 @@
 {
   "services": {
+    "autentication":true,
     "dynamodb": true,
     "s3": true,
     "sqs": true,

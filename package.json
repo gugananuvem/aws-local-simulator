@@ -50,6 +50,7 @@
     "xmlbuilder": "15.1.1"
   },
   "devDependencies": {
+    "@aws-sdk/client-sts": "3.1149.0",
     "eslint": "^8.44.0",
     "jest": "29.7.0",
     "rimraf": "6.1.4"
@@ -74,11 +75,18 @@
     "url": "git+https://github.com/gugananuvem/aws-local-simulator.git"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.19.0"
   },
   "files": [
     "dist/"
   ],
+  "jest": {
+    "maxWorkers": 1,
+    "moduleNameMapper": {
+      "^uuid$": "<rootDir>/jest-support/uuid-cjs.js",
+      "^http-proxy-middleware$": "<rootDir>/jest-support/http-proxy-middleware-cjs.js"
+    }
+  },
   "publishConfig": {
     "directory": "dist"
   }

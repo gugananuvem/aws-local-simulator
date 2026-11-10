@@ -14,7 +14,12 @@ class SQSSimulator {
     this.snsService = null;
     this.region = "local";
     this.accountId = "000000000000";
-    this.dataDir = path.join(process.env.AWS_LOCAL_SIMULATOR_DATA_DIR, 'sqs');
+    // Mesmo critério dos outros serviços: variável de ambiente (definida pelo servidor),
+    // senão o dataDir do config, senão a pasta padrão do projeto.
+    const dataRoot = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR
+      || config?.dataDir
+      || path.join(process.cwd(), '.aws-local-simulator-data');
+    this.dataDir = path.join(dataRoot, 'sqs');
     this.store = new LocalStore(this.dataDir);
     this.queues = new Map();
   }

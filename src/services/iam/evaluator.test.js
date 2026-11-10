@@ -23,7 +23,7 @@ describe('IAMSimulator - Policy Evaluation Engine (Task 8.1)', () => {
     simulator = new IAMSimulator({});
     // Set up a user with an access key
     await simulator.createUser({ UserName: 'testuser' });
-    const key = await simulator.createAccessKey({ UserName: 'testuser' });
+    const { AccessKey: key } = await simulator.createAccessKey({ UserName: 'testuser' });
     simulator._testAccessKeyId = key.AccessKeyId;
   });
 

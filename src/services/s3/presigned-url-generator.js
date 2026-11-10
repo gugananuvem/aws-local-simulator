@@ -108,49 +108,90 @@ class PresignedUrlGenerator {
   validatePresignedUrl(url, method = 'GET', credentials = null) {
     try {
       const urlObj = new URL(url);
-      
-      // Extrair parâmetros de query
       const params = Object.fromEntries(urlObj.searchParams);
 
-      // Verificar assinatura
-      if (!params.X-Amz-Signature) {
-        return {
-          isValid: false,
-          error: 'Signature missing'
-        };
+      const signature = params['X-Amz-Signature'];
+      if (!signature) {
+        return this._invalid('Signature missing');
       }
 
-      // Verificar expiração
-      if (params['X-Amz-Date']) {
-        const requestTime = this._parseAmzDate(params['X-Amz-Date']);
-        const expiresIn = parseInt(params['X-Amz-Expires']) || 3600;
-        const expireTime = new Date(requestTime.getTime() + expiresIn * 1000);
-
-        if (new Date() > expireTime) {
-          return {
-            isValid: false,
-            error: 'URL expired'
-          };
-        }
+      const amzDate = params['X-Amz-Date'];
+      const credential = params['X-Amz-Credential'] || '';
+      const slash = credential.indexOf('/');
+      const accessKeyId = slash > 0 ? credential.slice(0, slash) : '';
+      const scope = slash > 0 ? credential.slice(slash + 1) : '';
+      if (!amzDate || !accessKeyId || !scope) {
+        return this._invalid('Malformed presigned URL');
       }
 
-      // Verificar método
-      if (method && method !== 'GET') {
-        // A URL assinada funciona para qualquer método que foi assinado
-        // Aqui seria verificado qual método foi assinado
+      // Expiração
+      const requestTime = this._parseAmzDate(amzDate);
+      const expiresIn = parseInt(params['X-Amz-Expires']) || 3600;
+      const expireTime = new Date(requestTime.getTime() + expiresIn * 1000);
+      if (new Date() > expireTime) {
+        return this._invalid('URL expired');
+      }
+
+      // A assinatura só pode ser conferida com o segredo da chave.
+      const secret = this._secretFor(accessKeyId, credentials);
+      if (!secret) {
+        return this._invalid('Unknown access key');
+      }
+      if (scope !== this._getCredentialScope(amzDate)) {
+        return this._invalid('Credential scope mismatch');
+      }
+
+      // Recalcula exatamente o que _generatePresignedUrl assinou. O método entra no
+      // canonical request, então a URL só é válida para o método com que foi assinada.
+      const canonicalQuerystring = urlObj.search.slice(1)
+        .split('&')
+        .filter(part => part && !part.startsWith('X-Amz-Signature='))
+        .sort()
+        .join('&');
+      const host = urlObj.host;
+      const canonicalRequest = [
+        method,
+        urlObj.pathname,
+        canonicalQuerystring,
+        `host:${host}\n`,
+        '',
+        'host'
+      ].join('\n');
+      const stringToSign = [
+        'AWS4-HMAC-SHA256',
+        amzDate,
+        scope,
+        crypto.createHash('sha256').update(canonicalRequest).digest('hex')
+      ].join('\n');
+      const expected = this._calculateSignature(stringToSign, secret, amzDate.substring(0, 8));
+
+      const a = Buffer.from(expected);
+      const b = Buffer.from(String(signature));
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return this._invalid('Signature does not match');
       }
 
       return {
         isValid: true,
-        method: params['X-Amz-Algorithm'] ? 'SIGNATURE_V4' : 'UNKNOWN',
-        expiresAt: this._parseAmzDate(params['X-Amz-Date'])
+        valid: true,
+        method: 'SIGNATURE_V4',
+        expiresAt: expireTime
       };
     } catch (error) {
-      return {
-        isValid: false,
-        error: error.message
-      };
+      return this._invalid(error.message);
     }
+  }
+
+  _invalid(error) {
+    return { isValid: false, valid: false, error };
+  }
+
+  _secretFor(accessKeyId, credentials) {
+    if (credentials && credentials.accessKeyId === accessKeyId) {
+      return credentials.secretAccessKey;
+    }
+    const defaults = this._getDefaultCredentials();
+    return defaults.accessKeyId === accessKeyId ? defaults.secretAccessKey : null;
   }
 
   /**
@@ -202,6 +243,9 @@ class PresignedUrlGenerator {
 
     return {
       policy: policyB64,
+      amzAlgorithm: 'AWS4-HMAC-SHA256',
+      amzDate: amzDate,
+      amzCredential: `${credentials.accessKeyId}/${this._getCredentialScope(amzDate)}`,
       signature: signature,
       credentials: {
         accessKeyId: credentials.accessKeyId,

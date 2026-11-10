@@ -25,7 +25,7 @@ describe('IAMSimulator - User CRUD (Task 3.1)', () => {
 
   describe('createUser', () => {
     it('should create a user with valid params', async () => {
-      const result = await simulator.createUser({ UserName: 'testuser' });
+      const { User: result } = await simulator.createUser({ UserName: 'testuser' });
 
       expect(result.UserName).toBe('testuser');
       expect(result.UserId).toMatch(/^AIDA[A-Z0-9]+$/);
@@ -35,7 +35,7 @@ describe('IAMSimulator - User CRUD (Task 3.1)', () => {
     });
 
     it('should create a user with custom path', async () => {
-      const result = await simulator.createUser({ UserName: 'admin', Path: '/admins/' });
+      const { User: result } = await simulator.createUser({ UserName: 'admin', Path: '/admins/' });
 
       expect(result.Path).toBe('/admins/');
       expect(result.Arn).toBe('arn:aws:iam::123456789012:user/admins/admin');
@@ -67,8 +67,8 @@ describe('IAMSimulator - User CRUD (Task 3.1)', () => {
 
   describe('getUser', () => {
     it('should return user when it exists', async () => {
-      const created = await simulator.createUser({ UserName: 'findme' });
-      const found = await simulator.getUser({ UserName: 'findme' });
+      const { User: created } = await simulator.createUser({ UserName: 'findme' });
+      const { User: found } = await simulator.getUser({ UserName: 'findme' });
 
       expect(found).toEqual(created);
     });

@@ -445,7 +445,7 @@ class OrganizationsSimulator {
   /**
    * Avalia se uma ação é permitida por SCPs
    */
-  evaluateSCPs(accountId, action, resource = '*') {
+  evaluateSCPs(accountId, action, resource = '*', context = {}) {
     const account = this.organization.getAccount(accountId);
     if (!account) throw new Error(`Account '${accountId}' not found`);
 
@@ -465,7 +465,7 @@ class OrganizationsSimulator {
     );
 
     for (const policy of applicablePolicies) {
-      if (!policy.evaluateAction(action, resource)) {
+      if (!policy.evaluateAction(action, resource, context)) {
         return { allowed: false, deniedBy: [policy.name], action, resource };
       }
     }
