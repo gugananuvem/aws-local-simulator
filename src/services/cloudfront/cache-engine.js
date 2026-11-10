@@ -45,27 +45,21 @@ class CacheEngine {
       return null;
     }
 
-    // Hit
+    // Hit: devolve a resposta guardada, no mesmo formato que o origin devolveu
     this.stats.hits++;
     entry.hits++;
     entry.lastAccessed = Date.now();
     logger.debug(`Cache HIT: ${key} (hits: ${entry.hits})`);
 
-    return {
-      data: entry.data,
-      headers: entry.headers,
-      statusCode: entry.statusCode,
-      cacheKey: key,
-      xCache: 'Hit from cloudfront'
-    };
+    return entry.data;
   }
 
   /**
-   * Set com TTL
+   * Set com TTL (em segundos). O simulador chama set(key, response, ttl, distributionId).
    */
-  set(key, data, headers = {}, statusCode = 200, ttl = 86400) {
+  set(key, data, ttl = 86400, distributionId = null) {
     // Calcular tamanho aproximado
-    const size = JSON.stringify({ data, headers }).length;
+    const size = JSON.stringify(data).length;
 
     // Verificar espaço disponível
     if (this.stats.bytesStored + size > this.maxSize) {
@@ -75,8 +69,7 @@ class CacheEngine {
     const now = Date.now();
     const entry = {
       data,
-      headers,
-      statusCode,
+      distributionId,
       createdAt: now,
       expiresAt: now + (ttl * 1000),
       lastAccessed: now,
@@ -96,8 +89,12 @@ class CacheEngine {
   invalidate(pattern) {
     let invalidated = 0;
 
+    // Chaves têm o formato "distributionId:path". O padrão pode ser a chave completa
+    // ou um caminho com curinga (ex.: "/img/*"), casado contra a parte do caminho.
     for (const key of this.cache.keys()) {
-      if (this.pathMatches(key.split(':')[1], pattern)) {
+      const separator = key.indexOf(':');
+      const path = separator === -1 ? key : key.slice(separator + 1);
+      if (key === pattern || this.pathMatches(path, pattern)) {
         const entry = this.cache.get(key);
         this.stats.bytesStored -= entry.size;
         this.cache.delete(key);

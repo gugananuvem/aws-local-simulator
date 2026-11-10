@@ -228,7 +228,8 @@ class OriginValidator {
     const warnings = [];
 
     // S3 domain should end with .s3.amazonaws.com or regional variant
-    const domainPattern = /\.s3[.-]([a-z0-9-]+)?\.amazonaws\.com$/i;
+    // Aceita o endpoint global (bucket.s3.amazonaws.com) e os regionais (bucket.s3.us-east-1.amazonaws.com)
+    const domainPattern = /\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/i;
     if (!domainPattern.test(origin.domainName)) {
       errors.push(
         `S3 origin domain '${origin.domainName}' does not match expected S3 format`

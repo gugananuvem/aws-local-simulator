@@ -17,7 +17,9 @@ function validate(config) {
   const warnings = [];
 
   // Check required fields
-  if (!config.Origins || !Array.isArray(config.Origins) || config.Origins.length === 0) {
+  // Origins como lista direta ou no formato AWS ({ Quantity, Items })
+  const originList = Array.isArray(config.Origins) ? config.Origins : config.Origins?.Items;
+  if (!originList || originList.length === 0) {
     errors.push('Configuration must have at least one origin');
   }
 

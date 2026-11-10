@@ -459,12 +459,13 @@ class CloudFrontServer {
    * GET /:distributionId/*
    * Deliver content from distribution
    */
-  deliverContent(req, res, next) {
+  async deliverContent(req, res, next) {
     try {
       const { distributionId } = req.params;
       const path = '/' + (req.params[0] || '');
 
-      const response = this.simulator.processRequest({
+      // Requisições ao origin devolvem Promise; sem o await o servidor respondia um objeto vazio.
+      const response = await this.simulator.processRequest({
         distributionId: distributionId,
         path: path,
         method: req.method,

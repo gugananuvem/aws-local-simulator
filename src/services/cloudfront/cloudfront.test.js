@@ -3,6 +3,7 @@
  * Comprehensive test suite for CloudFront simulator functionality
  */
 
+const crypto = require('crypto');
 const CloudFrontSimulator = require('./simulator');
 const CloudFrontStore = require('./store');
 const SignedUrlGenerator = require('./signed-url-generator');
@@ -10,6 +11,23 @@ const OriginValidator = require('./origin-validator');
 const GeoRestrictions = require('./geo-restrictions');
 const CacheEngine = require('./cache-engine');
 const { Distribution, validate } = require('./models');
+
+// Origem S3 é resolvida pelo roteador sem chamada de rede (o serviço S3 não está registrado).
+const ORIGIN = { Id: 'origin1', DomainName: 'bucket.s3.amazonaws.com' };
+
+function baseConfig(overrides = {}) {
+  return {
+    CallerReference: `ref-${Math.random().toString(36).slice(2)}`,
+    Comment: 'Test distribution',
+    Origins: [ORIGIN],
+    DefaultCacheBehavior: {
+      TargetOriginId: 'origin1',
+      ViewerProtocolPolicy: 'allow-all'
+    },
+    Enabled: true,
+    ...overrides
+  };
+}
 
 describe('CloudFront Service', () => {
   let simulator;
@@ -23,13 +41,11 @@ describe('CloudFront Service', () => {
   // === Distribution Tests ===
   describe('Distribution Management', () => {
     test('should create a distribution', () => {
-      const config = {
-        CallerReference: 'test-ref-1',
-        Comment: 'Test distribution',
+      const config = baseConfig({
         Origins: [
           {
             Id: 'myOrigin',
-            DomainName: 'example.com',
+            DomainName: 'bucket.s3.amazonaws.com',
             CustomOriginConfig: {
               HTTPPort: 80,
               OriginProtocolPolicy: 'https-only'
@@ -45,93 +61,75 @@ describe('CloudFront Service', () => {
             Cookies: { Forward: 'none' }
           },
           MinTTL: 0
-        },
-        Enabled: true
-      };
+        }
+      });
 
       const distribution = simulator.createDistribution(config);
       expect(distribution).toBeDefined();
-      expect(distribution.id).toBeDefined();
+      expect(distribution.Id).toBeDefined();
       expect(distribution.enabled).toBe(true);
     });
 
-    test('should retrieve distribution by ID', () => {
-      const config = {
-        CallerReference: 'test-ref-2',
-        Comment: 'Test distribution',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
+    test('should accept origins in the AWS format ({ Quantity, Items })', () => {
+      const config = baseConfig({
+        Origins: { Quantity: 1, Items: [ORIGIN] }
+      });
 
-      const created = simulator.createDistribution(config);
-      const retrieved = simulator.getDistribution(created.id);
+      const result = validate(config);
+      expect(result.isValid).toBe(true);
+
+      const distribution = simulator.createDistribution(config);
+      expect(distribution.origins).toHaveLength(1);
+      expect(distribution.origins[0].id).toBe('origin1');
+    });
+
+    test('should retrieve distribution by ID', () => {
+      const created = simulator.createDistribution(baseConfig());
+      const retrieved = simulator.getDistribution(created.Id);
 
       expect(retrieved).toBeDefined();
-      expect(retrieved.id).toBe(created.id);
+      expect(retrieved.Id).toBe(created.Id);
     });
 
     test('should list all distributions', () => {
-      const config = {
-        CallerReference: 'test-ref-3',
-        Comment: 'Test distribution',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
-
-      simulator.createDistribution(config);
-      simulator.createDistribution({ ...config, CallerReference: 'test-ref-4' });
+      simulator.createDistribution(baseConfig());
+      simulator.createDistribution(baseConfig());
 
       const distributions = simulator.listDistributions();
       expect(distributions.length).toBeGreaterThanOrEqual(2);
     });
 
     test('should delete a distribution', () => {
-      const config = {
-        CallerReference: 'test-ref-5',
-        Comment: 'Test distribution',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
-
-      const distribution = simulator.createDistribution(config);
-      const deleted = simulator.deleteDistribution(distribution.id);
+      const distribution = simulator.createDistribution(baseConfig());
+      const deleted = simulator.deleteDistribution(distribution.Id);
 
       expect(deleted).toBe(true);
-      expect(simulator.getDistribution(distribution.id)).toBeNull();
+      expect(simulator.getDistribution(distribution.Id)).toBeNull();
+    });
+
+    test('should report a disabled distribution as 403 (Enabled: false)', async () => {
+      const distribution = simulator.createDistribution(baseConfig({ Enabled: false }));
+
+      const response = await simulator.processRequest({
+        distributionId: distribution.Id,
+        path: '/index.html',
+        method: 'GET',
+        clientIp: '10.0.0.1'
+      });
+
+      expect(response.status).toBe(403);
+      expect(response.error).toBe('Distribution is disabled');
     });
   });
 
   // === Cache Tests ===
   describe('Caching Behavior', () => {
-    test('should cache GET requests', () => {
-      const config = {
-        CallerReference: 'cache-test-1',
-        Comment: 'Cache test',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
-
-      const distribution = simulator.createDistribution(config);
+    test('should cache GET requests', async () => {
+      const distribution = simulator.createDistribution(baseConfig());
 
       // First request (cache miss)
-      const response1 = simulator.processRequest({
-        distributionId: distribution.id,
+      const response1 = await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/index.html',
         method: 'GET'
       });
@@ -139,37 +137,27 @@ describe('CloudFront Service', () => {
       expect(response1.cacheStatus).toBe('MISS');
 
       // Second request (cache hit)
-      const response2 = simulator.processRequest({
-        distributionId: distribution.id,
+      const response2 = await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/index.html',
         method: 'GET'
       });
 
       expect(response2.cacheStatus).toBe('HIT');
+      expect(response2.body).toBe(response1.body);
     });
 
-    test('should return different cache status for different paths', () => {
-      const config = {
-        CallerReference: 'cache-test-2',
-        Comment: 'Cache test',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
+    test('should return different cache status for different paths', async () => {
+      const distribution = simulator.createDistribution(baseConfig());
 
-      const distribution = simulator.createDistribution(config);
-
-      simulator.processRequest({
-        distributionId: distribution.id,
+      await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/page1.html',
         method: 'GET'
       });
 
-      const response = simulator.processRequest({
-        distributionId: distribution.id,
+      const response = await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/page2.html',
         method: 'GET'
       });
@@ -177,28 +165,17 @@ describe('CloudFront Service', () => {
       expect(response.cacheStatus).toBe('MISS');
     });
 
-    test('should track cache statistics', () => {
-      const config = {
-        CallerReference: 'cache-test-3',
-        Comment: 'Cache test',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
+    test('should track cache statistics', async () => {
+      const distribution = simulator.createDistribution(baseConfig());
 
-      const distribution = simulator.createDistribution(config);
-
-      simulator.processRequest({
-        distributionId: distribution.id,
+      await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/file.txt',
         method: 'GET'
       });
 
-      simulator.processRequest({
-        distributionId: distribution.id,
+      await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/file.txt',
         method: 'GET'
       });
@@ -211,49 +188,32 @@ describe('CloudFront Service', () => {
 
   // === Invalidation Tests ===
   describe('Cache Invalidation', () => {
-    test('should invalidate distribution cache', () => {
-      const config = {
-        CallerReference: 'invalidate-test-1',
-        Comment: 'Invalidation test',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
+    test('should invalidate distribution cache', async () => {
+      const distribution = simulator.createDistribution(baseConfig());
 
-      const distribution = simulator.createDistribution(config);
-
-      // Cache a request
-      simulator.processRequest({
-        distributionId: distribution.id,
+      await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/cached.html',
         method: 'GET'
       });
 
-      // Invalidate it
-      const result = simulator.invalidateDistribution(distribution.id, ['/cached.html']);
-
+      const result = simulator.invalidateDistribution(distribution.Id, ['/cached.html']);
       expect(result.invalidationId).toBeDefined();
       expect(result.invalidatedCount).toBe(1);
+
+      // Depois da invalidação, a próxima requisição volta ao origin
+      const after = await simulator.processRequest({
+        distributionId: distribution.Id,
+        path: '/cached.html',
+        method: 'GET'
+      });
+      expect(after.cacheStatus).toBe('MISS');
     });
 
     test('should invalidate multiple paths', () => {
-      const config = {
-        CallerReference: 'invalidate-test-2',
-        Comment: 'Invalidation test',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
+      const distribution = simulator.createDistribution(baseConfig());
 
-      const distribution = simulator.createDistribution(config);
-
-      const result = simulator.invalidateDistribution(distribution.id, [
+      const result = simulator.invalidateDistribution(distribution.Id, [
         '/path1/*',
         '/path2/*',
         '/specific-file.txt'
@@ -268,25 +228,15 @@ describe('CloudFront Service', () => {
     test('should block requests from restricted countries', () => {
       const geoRestrictions = new GeoRestrictions();
 
-      const config = {
-        CallerReference: 'geo-test-1',
-        Comment: 'Geo restriction test',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true,
+      const distribution = simulator.createDistribution(baseConfig({
         Restrictions: {
           GeoRestriction: {
             RestrictionType: 'blacklist',
             Quantity: 2,
-            Locations: ['CN', 'RU']
+            Items: ['CN', 'RU']
           }
         }
-      };
-
-      const distribution = simulator.createDistribution(config);
+      }));
 
       const result = geoRestrictions.checkGeoRestriction(
         distribution.restrictions.geoRestriction,
@@ -296,15 +246,32 @@ describe('CloudFront Service', () => {
       expect(result.isAllowed).toBe(false);
     });
 
+    test('should block a restricted client in a request (403 geo-restriction)', async () => {
+      const distribution = simulator.createDistribution(baseConfig({
+        Restrictions: {
+          GeoRestriction: { RestrictionType: 'blacklist', Quantity: 1, Items: ['BR'] }
+        }
+      }));
+
+      // Primeiro octeto 160-199 é mapeado para BR pelo simulador
+      const response = await simulator.processRequest({
+        distributionId: distribution.Id,
+        path: '/index.html',
+        method: 'GET',
+        clientIp: '170.0.0.1'
+      });
+
+      expect(response.status).toBe(403);
+      expect(response.error).toBe('Access denied by geo-restriction');
+    });
+
     test('should allow requests from non-restricted countries', () => {
       const geoRestrictions = new GeoRestrictions();
 
-      const restriction = {
-        RestrictionType: 'blacklist',
-        Locations: ['CN', 'RU']
-      };
-
-      const result = geoRestrictions.checkGeoRestriction(restriction, 'US');
+      const result = geoRestrictions.checkGeoRestriction(
+        { restrictionType: 'blacklist', locations: ['CN', 'RU'] },
+        'US'
+      );
 
       expect(result.isAllowed).toBe(true);
     });
@@ -313,10 +280,7 @@ describe('CloudFront Service', () => {
       const geoRestrictions = new GeoRestrictions();
 
       const result = geoRestrictions.checkGeoRestriction(
-        {
-          RestrictionType: 'blacklist',
-          Locations: ['US']
-        },
+        { restrictionType: 'blacklist', locations: ['US'] },
         'INVALID'
       );
 
@@ -330,18 +294,18 @@ describe('CloudFront Service', () => {
       const generator = new SignedUrlGenerator();
       const expirationTime = new Date(Date.now() + 3600000);
 
-      // For testing, use a simple key pair
-      const privateKey = `-----BEGIN RSA PRIVATE KEY-----
-MIIEpAIBAAKCAQEA2Z3qX2BTLS39R3wvUL3p1JIiwsViryb74hNnL5uJlUyJPo2f
------END RSA PRIVATE KEY-----`;
-
-      const keyPairId = 'APKAEXAMPLE';
+      // Par de chaves RSA de teste, gerado na hora (o assinador exige PEM válido)
+      const { privateKey } = crypto.generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' }
+      });
 
       const signedUrl = generator.generateCannedUrl(
         'example.cloudfront.net',
         '/private/file.pdf',
         privateKey,
-        keyPairId,
+        'APKAEXAMPLE',
         expirationTime
       );
 
@@ -350,6 +314,102 @@ MIIEpAIBAAKCAQEA2Z3qX2BTLS39R3wvUL3p1JIiwsViryb74hNnL5uJlUyJPo2f
       expect(signedUrl).toContain('/private/file.pdf');
       expect(signedUrl).toContain('Signature=');
       expect(signedUrl).toContain('Key-Pair-Id=');
+    });
+
+    test('should reject unsigned requests when TrustedSigners is enabled', async () => {
+      const distribution = simulator.createDistribution(baseConfig({
+        DefaultCacheBehavior: {
+          TargetOriginId: 'origin1',
+          ViewerProtocolPolicy: 'allow-all',
+          TrustedSigners: { Enabled: true, Quantity: 0 }
+        }
+      }));
+
+      const response = await simulator.processRequest({
+        distributionId: distribution.Id,
+        path: '/private.pdf',
+        method: 'GET',
+        clientIp: '10.0.0.1'
+      });
+
+      expect(response.status).toBe(403);
+      expect(response.error).toBe('Invalid or missing signed URL');
+    });
+  });
+
+  // === Bucket policy access (Origin Access Identity) ===
+  describe('Bucket policy access (OAI)', () => {
+    const OAI_ID = 'EOAI123';
+    const OAI_ARN = `arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${OAI_ID}`;
+    const BUCKET = 'oai-bucket';
+
+    // S3 mínimo: uma política (ou nenhuma) e um objeto. Evita gravar nada em disco.
+    function fakeS3(policy) {
+      return {
+        getBucketPolicy: () => (policy
+          ? { policy, status: 200 }
+          : { error: { code: 'NoSuchBucketPolicy' }, status: 404 }),
+        getObject: () => ({
+          content: Buffer.from('hello oai'),
+          contentType: 'text/html',
+          size: 9,
+          etag: 'etag-1'
+        })
+      };
+    }
+
+    function distributionFor(s3, oai) {
+      const origin = { Id: 's3o', DomainName: `${BUCKET}.s3.amazonaws.com` };
+      if (oai) origin.S3OriginConfig = { OriginAccessIdentity: `origin-access-identity/cloudfront/${oai}` };
+      const sim = new CloudFrontSimulator({ servicesRegistry: { s3: { getSimulator: () => s3 } } });
+      const distribution = sim.createDistribution(baseConfig({
+        Origins: [origin],
+        DefaultCacheBehavior: { TargetOriginId: 's3o', ViewerProtocolPolicy: 'allow-all' }
+      }));
+      return { sim, distribution };
+    }
+
+    const allowOai = {
+      Version: '2012-10-17',
+      Statement: [{ Effect: 'Allow', Principal: { AWS: OAI_ARN }, Action: 's3:GetObject', Resource: `arn:aws:s3:::${BUCKET}/*` }]
+    };
+
+    test('should serve content when the policy allows the origin OAI', async () => {
+      const { sim, distribution } = distributionFor(fakeS3(allowOai), OAI_ID);
+
+      const response = await sim.processRequest({ distributionId: distribution.Id, path: '/index.html', method: 'GET', clientIp: '10.0.0.1' });
+
+      expect(response.status).toBe(200);
+      expect(Buffer.from(response.body.data ?? response.body).toString()).toBe('hello oai');
+    });
+
+    test('should deny when the origin has no OAI', async () => {
+      const { sim, distribution } = distributionFor(fakeS3(allowOai), undefined);
+
+      const response = await sim.processRequest({ distributionId: distribution.Id, path: '/index.html', method: 'GET', clientIp: '10.0.0.1' });
+
+      expect(response.status).toBe(403);
+      expect(JSON.stringify(response)).toContain('does not have permission');
+    });
+
+    test('should deny when the policy names a different OAI', async () => {
+      const { sim, distribution } = distributionFor(fakeS3(allowOai), 'EOTHER');
+
+      const response = await sim.processRequest({ distributionId: distribution.Id, path: '/index.html', method: 'GET', clientIp: '10.0.0.1' });
+
+      expect(response.status).toBe(403);
+    });
+
+    test('should serve a public policy (Principal { AWS: "*" }) without OAI', async () => {
+      const publicPolicy = {
+        Version: '2012-10-17',
+        Statement: [{ Effect: 'Allow', Principal: { AWS: '*' }, Action: 's3:GetObject', Resource: `arn:aws:s3:::${BUCKET}/*` }]
+      };
+      const { sim, distribution } = distributionFor(fakeS3(publicPolicy), undefined);
+
+      const response = await sim.processRequest({ distributionId: distribution.Id, path: '/index.html', method: 'GET', clientIp: '10.0.0.1' });
+
+      expect(response.status).toBe(200);
     });
   });
 
@@ -404,9 +464,17 @@ MIIEpAIBAAKCAQEA2Z3qX2BTLS39R3wvUL3p1JIiwsViryb74hNnL5uJlUyJPo2f
 
   // === Cache Engine Tests ===
   describe('Cache Engine', () => {
-    test('should set and get cached values', () => {
-      const cache = new CacheEngine();
+    let cache;
 
+    beforeEach(() => {
+      cache = new CacheEngine();
+    });
+
+    afterEach(() => {
+      cache.destroy();
+    });
+
+    test('should set and get cached values', () => {
       const key = 'test-key';
       const value = { data: 'test data' };
 
@@ -418,24 +486,45 @@ MIIEpAIBAAKCAQEA2Z3qX2BTLS39R3wvUL3p1JIiwsViryb74hNnL5uJlUyJPo2f
     });
 
     test('should invalidate cached values', () => {
-      const cache = new CacheEngine();
-
       const key = 'test-key';
       cache.set(key, { data: 'test' }, 3600);
       cache.invalidate(key);
 
-      const retrieved = cache.get(key);
-      expect(retrieved).toBeNull();
+      expect(cache.get(key)).toBeNull();
+    });
+
+    test('should invalidate by path pattern', () => {
+      cache.set('dist1:/img/a.png', { status: 200 }, 3600, 'dist1');
+      cache.set('dist1:/img/b.png', { status: 200 }, 3600, 'dist1');
+      cache.set('dist1:/index.html', { status: 200 }, 3600, 'dist1');
+
+      expect(cache.invalidate('/img/*')).toBe(2);
+      expect(cache.get('dist1:/index.html')).not.toBeNull();
+    });
+
+    test('should honor the TTL passed as the third argument', () => {
+      const realNow = Date.now;
+      try {
+        const start = 1_000_000;
+        Date.now = () => start;
+        cache.set('ttl-key', { status: 200 }, 60, 'dist1');
+
+        Date.now = () => start + 59_000;
+        expect(cache.get('ttl-key')).not.toBeNull();
+
+        Date.now = () => start + 61_000;
+        expect(cache.get('ttl-key')).toBeNull();
+      } finally {
+        Date.now = realNow;
+      }
     });
 
     test('should track cache statistics', () => {
-      const cache = new CacheEngine();
-
       cache.set('key1', { data: 'test1' }, 3600);
       cache.set('key2', { data: 'test2' }, 3600);
 
       const stats = cache.getStats();
-      expect(stats.entries).toBe(2);
+      expect(stats.cacheSize).toBe(2);
       expect(stats.maxSize).toBeGreaterThan(0);
     });
   });
@@ -452,6 +541,17 @@ MIIEpAIBAAKCAQEA2Z3qX2BTLS39R3wvUL3p1JIiwsViryb74hNnL5uJlUyJPo2f
 
       expect(result.isValid).toBe(true);
       expect(result.originType).toBe('S3');
+    });
+
+    test('should accept regional S3 endpoints', () => {
+      const validator = new OriginValidator();
+
+      const result = validator.validateS3Origin({
+        id: 'regional',
+        domainName: 'mybucket.s3.us-east-1.amazonaws.com'
+      });
+
+      expect(result.isValid).toBe(true);
     });
 
     test('should validate HTTP origin', () => {
@@ -534,23 +634,12 @@ MIIEpAIBAAKCAQEA2Z3qX2BTLS39R3wvUL3p1JIiwsViryb74hNnL5uJlUyJPo2f
 
   // === End-to-End Tests ===
   describe('End-to-End Scenarios', () => {
-    test('should process complete request lifecycle', () => {
-      const config = {
-        CallerReference: 'e2e-test-1',
-        Comment: 'E2E test',
-        Origins: [{ Id: 'origin1', DomainName: 'example.com' }],
-        DefaultCacheBehavior: {
-          TargetOriginId: 'origin1',
-          ViewerProtocolPolicy: 'allow-all'
-        },
-        Enabled: true
-      };
-
-      const distribution = simulator.createDistribution(config);
+    test('should process complete request lifecycle', async () => {
+      const distribution = simulator.createDistribution(baseConfig({ Comment: 'E2E test' }));
 
       // First request
-      const response1 = simulator.processRequest({
-        distributionId: distribution.id,
+      const response1 = await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/test.html',
         method: 'GET'
       });
@@ -559,8 +648,8 @@ MIIEpAIBAAKCAQEA2Z3qX2BTLS39R3wvUL3p1JIiwsViryb74hNnL5uJlUyJPo2f
       expect(response1.cacheStatus).toBe('MISS');
 
       // Second request (cached)
-      const response2 = simulator.processRequest({
-        distributionId: distribution.id,
+      const response2 = await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/test.html',
         method: 'GET'
       });
@@ -568,11 +657,11 @@ MIIEpAIBAAKCAQEA2Z3qX2BTLS39R3wvUL3p1JIiwsViryb74hNnL5uJlUyJPo2f
       expect(response2.cacheStatus).toBe('HIT');
 
       // Invalidate
-      simulator.invalidateDistribution(distribution.id, ['/test.html']);
+      simulator.invalidateDistribution(distribution.Id, ['/test.html']);
 
       // Third request (after invalidation)
-      const response3 = simulator.processRequest({
-        distributionId: distribution.id,
+      const response3 = await simulator.processRequest({
+        distributionId: distribution.Id,
         path: '/test.html',
         method: 'GET'
       });

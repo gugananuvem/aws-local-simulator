@@ -4,6 +4,7 @@
  */
 
 const crypto = require('crypto');
+const Behavior = require('./behavior');
 
 class Distribution {
   constructor(params = {}) {
@@ -50,7 +51,7 @@ class Distribution {
     };
 
     // Geo Restrictions
-    this.GeoRestriction = params.GeoRestriction || {
+    this.GeoRestriction = params.GeoRestriction || params.Restrictions?.GeoRestriction || {
       RestrictionType: 'none',
       Quantity: 0,
       Items: []
@@ -113,8 +114,10 @@ class Distribution {
    * Converte Origins com Items para array com propriedades em minúsculas
    */
   get origins() {
-    if (!this.Origins?.Items) return [];
-    return this.Origins.Items.map(item => ({
+    // Aceita lista direta ([{Id, DomainName}], como o validador) ou o formato AWS ({ Items: [...] }).
+    const items = Array.isArray(this.Origins) ? this.Origins : this.Origins?.Items;
+    if (!items) return [];
+    return items.map(item => ({
       id: item.Id || item.id,
       domainName: item.DomainName || item.domainName,
       originPath: item.OriginPath || item.originPath || '',
@@ -135,6 +138,35 @@ class Distribution {
       viewerProtocolPolicy: item.ViewerProtocolPolicy || item.viewerProtocolPolicy,
       ...item
     }));
+  }
+
+  /**
+   * Getters de compatibilidade com o simulador. O simulador lê estes nomes em minúsculo;
+   * sem eles, `enabled` era sempre undefined e toda distribuição respondia 403.
+   */
+  get enabled() {
+    return this.Enabled;
+  }
+
+  /**
+   * Restrição geográfica no formato que geo-restrictions.js espera.
+   * Sem restrição (RestrictionType 'none' ou ausente) não devolve geoRestriction.
+   */
+  get restrictions() {
+    const geo = this.GeoRestriction;
+    if (!geo || !geo.RestrictionType || geo.RestrictionType === 'none') return {};
+    return {
+      geoRestriction: {
+        restrictionType: geo.RestrictionType,
+        locations: geo.Items || [],
+      },
+    };
+  }
+
+  get defaultBehavior() {
+    return {
+      requireSignedUrls: this.DefaultCacheBehavior?.TrustedSigners?.Enabled === true,
+    };
   }
 
   generateId() {
@@ -167,13 +199,13 @@ class Distribution {
 
       for (const behavior of sorted) {
         if (this.pathMatches(path, behavior.PathPattern)) {
-          return behavior;
+          return new Behavior(behavior);
         }
       }
     }
 
-    // Retornar default behavior
-    return this.DefaultCacheBehavior;
+    // Retornar default behavior (como instância de Behavior, que o simulador usa)
+    return new Behavior(this.DefaultCacheBehavior);
   }
 
   /**

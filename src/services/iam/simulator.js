@@ -3,7 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../../utils/logger');
 
-const DATA_DIR = path.join(process.cwd(), '.aws-local-simulator-data', 'iam');
+// Diretório de dados da IAM: segue o dataDir do config (como os outros serviços).
+function getDataDir() {
+  const base = process.env.AWS_LOCAL_SIMULATOR_DATA_DIR || path.join(process.cwd(), '.aws-local-simulator-data');
+  return path.join(base, 'iam');
+}
 
 const FILE_MAP = {
   users: 'users.json',
@@ -1097,12 +1101,12 @@ class IAMSimulator {
   }
 
   async _persist() {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(getDataDir())) {
+      fs.mkdirSync(getDataDir(), { recursive: true });
     }
 
     for (const [mapName, fileName] of Object.entries(FILE_MAP)) {
-      const filePath = path.join(DATA_DIR, fileName);
+      const filePath = path.join(getDataDir(), fileName);
       const map = this[mapName];
       let data;
 
@@ -1126,13 +1130,13 @@ class IAMSimulator {
   }
 
   async _load() {
-    if (!fs.existsSync(DATA_DIR)) {
+    if (!fs.existsSync(getDataDir())) {
       logger.debug('IAM data directory not found, starting with empty state.');
       return;
     }
 
     for (const [mapName, fileName] of Object.entries(FILE_MAP)) {
-      const filePath = path.join(DATA_DIR, fileName);
+      const filePath = path.join(getDataDir(), fileName);
 
       if (!fs.existsSync(filePath)) {
         continue;

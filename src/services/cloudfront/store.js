@@ -8,6 +8,9 @@ const path = require('path');
 class CloudFrontStore {
   constructor(storePath = './data/cloudfront') {
     this.storePath = storePath;
+    // ':memory:' mantém os arquivos só em memória (usado pelos testes); nada vai para o disco.
+    this.inMemory = storePath === ':memory:';
+    this.memoryFiles = new Map();
     this.distributionsFile = path.join(storePath, 'distributions.json');
     this.invalidationsFile = path.join(storePath, 'invalidations.json');
     this.keyPairsFile = path.join(storePath, 'key-pairs.json');
@@ -18,6 +21,12 @@ class CloudFrontStore {
    * Initialize store - create directories and files if needed
    */
   init() {
+    if (this.inMemory) {
+      this._writeFile(this.distributionsFile, { distributions: [] });
+      this._writeFile(this.invalidationsFile, { invalidations: [] });
+      this._writeFile(this.keyPairsFile, { keyPairs: [] });
+      return;
+    }
     if (!fs.existsSync(this.storePath)) {
       fs.mkdirSync(this.storePath, { recursive: true });
     }
@@ -295,6 +304,10 @@ class CloudFrontStore {
    */
 
   _readFile(filePath) {
+    if (this.inMemory) {
+      const stored = this.memoryFiles.get(filePath);
+      return stored === undefined ? {} : JSON.parse(JSON.stringify(stored));
+    }
     try {
       if (!fs.existsSync(filePath)) {
         return {};
@@ -309,6 +322,10 @@ class CloudFrontStore {
   }
 
   _writeFile(filePath, data) {
+    if (this.inMemory) {
+      this.memoryFiles.set(filePath, JSON.parse(JSON.stringify(data)));
+      return;
+    }
     try {
       const directory = path.dirname(filePath);
       if (!fs.existsSync(directory)) {

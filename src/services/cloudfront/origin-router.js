@@ -222,18 +222,24 @@ class OriginRouter {
       // Extrair bucket name da domain
       // Formato: bucket.s3.amazonaws.com ou s3.amazonaws.com/bucket
       const domain = origin.DomainName || origin.domainName || '';
-      let bucketName = domain.split('.')[0];
-      
-      // Se for virtual-hosted style
-      if (domain.includes('s3.amazonaws.com')) {
-        const pathSegments = path.split('/');
-        bucketName = pathSegments[1];
+      // Path-style: s3.amazonaws.com ou s3-<região>.amazonaws.com (bucket no caminho).
+      // Virtual-hosted: bucket.s3.amazonaws.com (bucket é o primeiro rótulo do domínio).
+      const isPathStyle = /^s3([.-][a-z0-9-]+)?\.amazonaws\.com$/i.test(domain);
+      let bucketName;
+      let objectPath;
+      if (isPathStyle) {
+        const segments = path.split('/').filter(Boolean);
+        bucketName = segments[0];
+        objectPath = segments.slice(1).join('/');
+      } else {
+        bucketName = domain.split('.')[0];
+        objectPath = path.replace(/^\//, '');
       }
 
-      const objectPath = path.replace(`/${bucketName}`, '');
-
       // Verificar se CloudFront tem permissão no bucket
-      const bucketPolicy = simulator.getBucketPolicy?.(bucketName);
+      // getBucketPolicy devolve { error } quando não há política: isso é "sem política", não uma política.
+      const policyResult = simulator.getBucketPolicy?.(bucketName);
+      const bucketPolicy = policyResult && !policyResult.error ? policyResult.policy : null;
       
       if (bucketPolicy) {
         // Se há política, verificar se permite acesso do CloudFront
@@ -510,7 +516,9 @@ class OriginRouter {
         }
 
         // Principal "*" = público
-        if (principal === '*') {
+        // Principal público: "*" ou { AWS: "*" } (formato usado pelas políticas da AWS)
+        const awsPrincipal = typeof principal === 'object' ? principal.AWS : undefined;
+        if (principal === '*' || awsPrincipal === '*' || (Array.isArray(awsPrincipal) && awsPrincipal.includes('*'))) {
           return true;
         }
 
@@ -522,7 +530,8 @@ class OriginRouter {
 
         // Origin Access Identity (OAI)
         if (origin.S3OriginConfig?.OriginAccessIdentity) {
-          const oaiArn = `arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity/${origin.S3OriginConfig.OriginAccessIdentity.split('/').pop()}`;
+          // Formato AWS: "...user/CloudFront Origin Access Identity <id>" (com espaço, não barra)
+          const oaiArn = `arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${origin.S3OriginConfig.OriginAccessIdentity.split('/').pop()}`;
           
           const principalArns = Array.isArray(principal.AWS) 
             ? principal.AWS 

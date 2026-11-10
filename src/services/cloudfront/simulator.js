@@ -198,7 +198,8 @@ class CloudFrontSimulator {
     if (originResponse && typeof originResponse.then === 'function') {
       return originResponse.then(response => {
         // Cache response if cacheable
-        if (behavior.isCacheable(request.method || 'GET')) {
+        // Só respostas de sucesso entram no cache (erros do origin não ficam guardados)
+        if (response.status < 400 && behavior.isCacheable(request.method || 'GET')) {
           const ttl = behavior.getCachePolicy()?.defaultTtl || 3600;
           this.cacheEngine.set(cacheKey, response, ttl, request.distributionId);
         }
@@ -219,7 +220,7 @@ class CloudFrontSimulator {
 
     // Synchronous response
     // Cache response if cacheable
-    if (behavior.isCacheable(request.method || 'GET')) {
+    if (originResponse.status < 400 && behavior.isCacheable(request.method || 'GET')) {
       const ttl = behavior.getCachePolicy()?.defaultTtl || 3600;
       this.cacheEngine.set(cacheKey, originResponse, ttl, request.distributionId);
     }

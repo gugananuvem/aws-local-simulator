@@ -80,6 +80,11 @@ class Behavior {
   /**
    * Obter política de cache baseada no CachePolicyId
    */
+  /** Compatibilidade com o simulador, que lê o alvo em minúsculo. */
+  get targetOriginId() {
+    return this.TargetOriginId;
+  }
+
   getCachePolicy() {
     const managedPolicies = {
       '658327ea-f89d-4fab-a63d-7e88639e58f6': {
