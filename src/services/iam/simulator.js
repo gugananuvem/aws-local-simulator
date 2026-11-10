@@ -965,11 +965,29 @@ class IAMSimulator {
     return allStatements;
   }
 
+  // Avaliação para um principal assumido (role): usa as políticas anexadas à role.
+  evaluateRoleAccess({ roleName, action, resource, context }) {
+    if (!roleName) return 'Deny';
+    const statements = [];
+    const attached = this.rolePolicies.get(roleName) || new Set();
+    for (const arn of attached) {
+      const policyRecord = this.policies.get(arn);
+      if (policyRecord && policyRecord.Document && Array.isArray(policyRecord.Document.Statement)) {
+        statements.push(...policyRecord.Document.Statement);
+      }
+    }
+    return this._evaluateStatements(statements, action, resource, context);
+  }
+
   evaluateAccess({ accessKeyId, action, resource, context }) {
     const identity = this.resolveIdentity(accessKeyId);
     if (!identity) return 'Deny';
 
-    const allStatements = this._collectPolicies(identity);
+    return this._evaluateStatements(this._collectPolicies(identity), action, resource, context);
+  }
+
+  // Avalia um conjunto de statements: Deny explícito vence; sem Allow correspondente, nega.
+  _evaluateStatements(allStatements, action, resource, context) {
 
     let allowed = false;
 

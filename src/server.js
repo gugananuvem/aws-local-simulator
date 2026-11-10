@@ -395,7 +395,11 @@ class Server {
   /** Contexto de autenticação compartilhado pelos serviços (lê o IAM na hora da requisição). */
   getAuthContext() {
     if (!this._authContext) {
-      this._authContext = new AuthContext(this.config.authentication, () => this.getService("iam")?.getSimulator?.());
+      this._authContext = new AuthContext(
+        this.config.authentication,
+        () => this.getService("iam")?.getSimulator?.(),
+        () => this.getService("sts")?.server?.simulator
+      );
     }
     return this._authContext;
   }

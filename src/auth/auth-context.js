@@ -8,7 +8,7 @@
  *   (políticas do usuário e dos grupos, com Deny explícito).
  */
 
-const { verifySignature, parseAuthorization } = require("./sigv4");
+const { verifySignature, verifyPresignedSignature, parseAuthorization, queryParts, queryValue } = require("./sigv4");
 
 const MESSAGES = {
   MissingAuthenticationToken: "Missing Authentication Token",
@@ -42,9 +42,10 @@ class AuthContext {
    * @param {object} config            bloco `authentication` do config
    * @param {function} getIam          () => simulador do IAM (ou null)
    */
-  constructor(config, getIam) {
+  constructor(config, getIam, getSts) {
     this.config = config || {};
     this.getIam = getIam || (() => null);
+    this.getSts = getSts || (() => null);
   }
 
   get enabled() {
@@ -92,10 +93,20 @@ class AuthContext {
    */
   authenticate(req, body) {
     const authorization = req.headers.authorization;
-    if (!authorization) throw new AuthError("MissingAuthenticationToken");
+    if (!authorization) {
+      // Sem cabeçalho Authorization: URL pré-assinada (assinatura na query string).
+      if (queryValue(queryParts(queryOf(req.originalUrl)), "X-Amz-Algorithm") !== null) {
+        return this._authenticatePresigned(req);
+      }
+      throw new AuthError("MissingAuthenticationToken");
+    }
 
     const parsed = parseAuthorization(authorization);
     if (!parsed) throw new AuthError("IncompleteSignature");
+
+    if (parsed.accessKeyId.startsWith("ASIA")) {
+      return this._authenticateTemporary(req, body, authorization, parsed);
+    }
 
     const found = this._lookupKey(parsed.accessKeyId);
     if (!found) throw new AuthError("InvalidClientTokenId");
@@ -118,8 +129,87 @@ class AuthContext {
    * Autoriza uma ação. Root sempre pode; usuário IAM depende das políticas.
    * `sts:GetCallerIdentity` é permitido a qualquer principal autenticado, como na AWS.
    */
+  /**
+   * Credencial temporária (ASIA) emitida pelo STS. O SessionToken precisa ser um JWT
+   * válido e assinado pelo STS, e a chave da assinatura SigV4 é o segredo guardado nele.
+   */
+  _authenticateTemporary(req, body, authorization, parsed) {
+    const payload = this._temporarySession(parsed.accessKeyId, req.headers["x-amz-security-token"]);
+    const result = verifySignature({
+      method: req.method,
+      rawPath: pathOf(req.originalUrl),
+      rawQuery: queryOf(req.originalUrl),
+      headers: req.headers,
+      body,
+      authorization,
+      secretAccessKey: payload.secretAccessKey,
+    });
+    if (!result.ok) throw new AuthError(result.code);
+    return this._rolePrincipal(payload, parsed.accessKeyId);
+  }
+
+  // URL pré-assinada: a chave e o token (para ASIA) vêm da própria query string.
+  _authenticatePresigned(req) {
+    const parts = queryParts(queryOf(req.originalUrl));
+    const credential = queryValue(parts, "X-Amz-Credential") || "";
+    const accessKeyId = credential.split("/")[0];
+    if (!accessKeyId) throw new AuthError("AuthorizationQueryParametersError");
+
+    let secretAccessKey;
+    let principal;
+    if (accessKeyId.startsWith("ASIA")) {
+      const payload = this._temporarySession(accessKeyId, queryValue(parts, "X-Amz-Security-Token"));
+      secretAccessKey = payload.secretAccessKey;
+      principal = this._rolePrincipal(payload, accessKeyId);
+    } else {
+      const found = this._lookupKey(accessKeyId);
+      if (!found) throw new AuthError("InvalidClientTokenId");
+      secretAccessKey = found.secret;
+      principal = found.principal;
+    }
+
+    const result = verifyPresignedSignature({
+      method: req.method,
+      rawPath: pathOf(req.originalUrl),
+      rawQuery: queryOf(req.originalUrl),
+      headers: req.headers,
+      secretAccessKey,
+    });
+    if (!result.ok) throw new AuthError(result.code, result.message);
+    return principal;
+  }
+
+  // Sessão do STS: o token precisa ser um JWT assinado pelo STS e corresponder à chave.
+  _temporarySession(accessKeyId, token) {
+    const sts = this.getSts();
+    const payload = sts && token ? sts.validateSessionToken(token) : null;
+    if (!payload || payload.accessKeyId !== accessKeyId) {
+      throw new AuthError("InvalidClientTokenId");
+    }
+    return payload;
+  }
+
+  _rolePrincipal(payload, accessKeyId) {
+    const roleName = String(payload.assumedRole || "").split("/").pop();
+    return {
+      type: "assumed-role",
+      accountId: payload.accountId,
+      accessKeyId,
+      roleName,
+      roleArn: payload.assumedRole,
+      sessionName: payload.sessionName,
+      arn: `${payload.assumedRole}/${payload.sessionName}`,
+    };
+  }
+
   authorize(principal, { action, resource }) {
     if (principal.type === "root") return true;
+    if (principal.type === "assumed-role") {
+      if (action === "sts:GetCallerIdentity") return true;
+      const iam = this.getIam();
+      if (!iam || typeof iam.evaluateRoleAccess !== "function") return false;
+      return iam.evaluateRoleAccess({ roleName: principal.roleName, action, resource, context: {} }) === "Allow";
+    }
     if (action === "sts:GetCallerIdentity") return true;
 
     const iam = this.getIam();
@@ -151,6 +241,13 @@ function describeRequest(service, req) {
     case "s3": {
       const parts = req.path.split("/").filter(Boolean);
       const bucket = parts[0];
+      // Subrecurso ?policy: ação própria no IAM (não CreateBucket)
+      if (bucket && req.query && req.query.policy !== undefined) {
+        const policyOp = { GET: 'GetBucketPolicy', PUT: 'PutBucketPolicy', DELETE: 'DeleteBucketPolicy' }[req.method];
+        if (policyOp) {
+          return { action: `s3:${policyOp}`, resource: `arn:aws:s3:::${bucket}` };
+        }
+      }
       const key = parts.slice(1).join("/");
       if (!bucket) return { action: "s3:ListAllMyBuckets", resource: "*" };
 

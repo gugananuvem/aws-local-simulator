@@ -136,4 +136,87 @@ function verifySignature({ method, rawPath, rawQuery, headers, body, authorizati
   return { ok: true, accessKeyId: parsed.accessKeyId };
 }
 
-module.exports = { verifySignature, parseAuthorization, encodeRfc3986 };
+
+const UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD";
+const MAX_PRESIGN_EXPIRES = 604800; // 7 dias, limite da AWS
+
+function queryParts(rawQuery) {
+  return (rawQuery || "").split("&").filter(Boolean);
+}
+
+function queryValue(parts, name) {
+  for (const part of parts) {
+    const i = part.indexOf("=");
+    const key = i === -1 ? part : part.slice(0, i);
+    if (safeDecode(key) === name) return safeDecode(i === -1 ? "" : part.slice(i + 1));
+  }
+  return null;
+}
+
+function deriveSigningKey(secretAccessKey, date, region, service) {
+  const kDate = hmac("AWS4" + secretAccessKey, date);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, service);
+  return hmac(kService, "aws4_request");
+}
+
+/**
+ * Verifica uma URL pré-assinada (SigV4 na query string). O payload é UNSIGNED-PAYLOAD e o
+ * método HTTP entra no canonical request, então a URL só vale para o método assinado.
+ * @returns {{ ok: true, accessKeyId: string } | { ok: false, code: string, message?: string }}
+ */
+function verifyPresignedSignature({ method, rawPath, rawQuery, headers, secretAccessKey, now = Date.now() }) {
+  const parts = queryParts(rawQuery);
+  const algorithm = queryValue(parts, "X-Amz-Algorithm");
+  const credential = queryValue(parts, "X-Amz-Credential");
+  const amzDate = queryValue(parts, "X-Amz-Date");
+  const expires = parseInt(queryValue(parts, "X-Amz-Expires"), 10);
+  const signedHeaders = queryValue(parts, "X-Amz-SignedHeaders");
+  const signature = queryValue(parts, "X-Amz-Signature");
+
+  if (algorithm !== ALGORITHM || !credential || !amzDate || !signedHeaders || !signature) {
+    return { ok: false, code: "AuthorizationQueryParametersError" };
+  }
+  const scopeParts = credential.split("/");
+  if (scopeParts.length !== 5 || scopeParts[4] !== "aws4_request") {
+    return { ok: false, code: "AuthorizationQueryParametersError" };
+  }
+  const [accessKeyId, date, region, service] = scopeParts;
+  if (!(expires > 0 && expires <= MAX_PRESIGN_EXPIRES)) {
+    return { ok: false, code: "AuthorizationQueryParametersError" };
+  }
+
+  const requestTime = parseAmzDate(amzDate);
+  if (requestTime === null) return { ok: false, code: "AuthorizationQueryParametersError" };
+  if (now > requestTime + expires * 1000) {
+    return { ok: false, code: "AccessDenied", message: "Request has expired" };
+  }
+  if (requestTime - now > MAX_SKEW_MS) return { ok: false, code: "RequestTimeTooSkewed" };
+
+  const signedList = signedHeaders.split(";").map((h) => h.trim().toLowerCase());
+  const canonicalQs = canonicalQuery(
+    parts.filter((p) => safeDecode(p.split("=")[0]) !== "X-Amz-Signature").join("&")
+  );
+
+  const canonicalRequest = [
+    method,
+    canonicalUri(rawPath, service),
+    canonicalQs,
+    canonicalHeaders(headers, signedList),
+    signedList.join(";"),
+    UNSIGNED_PAYLOAD,
+  ].join("\n");
+
+  const scope = `${date}/${region}/${service}/aws4_request`;
+  const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join("\n");
+  const expected = hmac(deriveSigningKey(secretAccessKey, date, region, service), stringToSign).toString("hex");
+
+  const a = Buffer.from(expected);
+  const b = Buffer.from(String(signature).toLowerCase());
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, code: "SignatureDoesNotMatch" };
+  }
+  return { ok: true, accessKeyId };
+}
+
+module.exports = { verifySignature, verifyPresignedSignature, parseAuthorization, encodeRfc3986, queryParts, queryValue };

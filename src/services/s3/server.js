@@ -99,6 +99,21 @@ class S3Server {
     
     // Criar bucket
     this.app.put('/:bucket', (req, res) => {
+
+      // PutBucketPolicy: PUT /{bucket}?policy com o JSON da política no corpo
+      if (req.query.policy !== undefined) {
+        let policy;
+        try {
+          policy = JSON.parse(req.body?.toString() || '');
+        } catch (_) {
+          return res.status(400).send(this.simulator.generateErrorResponse('MalformedPolicy', 'Policies must be valid JSON.'));
+        }
+        const result = this.simulator.putBucketPolicy(req.params.bucket, policy);
+        if (result.error) {
+          return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
+        return res.status(204).send();
+      }
       if (req.query.website !== undefined) {
         let config = {};
         try { config = JSON.parse(req.body?.toString() || '{}'); } catch (_) {}
@@ -130,6 +145,15 @@ class S3Server {
     
     // Deletar bucket
     this.app.delete('/:bucket', (req, res) => {
+
+      // DeletePolicy: DELETE /{bucket}?policy remove a política do bucket
+      if (req.query.policy !== undefined) {
+        const result = this.simulator.deleteBucketPolicy(req.params.bucket);
+        if (result.error) {
+          return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
+        return res.status(204).send();
+      }
       if (req.query.website !== undefined) {
         const result = this.simulator.deleteWebsiteConfig(req.params.bucket);
         if (result.error) {
@@ -175,9 +199,11 @@ class S3Server {
     });
     
     // Get object
-    this.app.get('/:bucket/*', (req, res) => {
+    this.app.get('/:bucket/*', (req, res, next) => {
       const bucket = req.params.bucket;
       const key = req.params[0];
+      // "/{bucket}/" sem chave é o endpoint do bucket (ex.: GetBucketPolicy do SDK), não um objeto
+      if (!key) return next();
       const result = this.simulator.getObject(bucket, key, req.headers);
       
       if (result.error) {
@@ -230,6 +256,15 @@ class S3Server {
     
     // Website config
     this.app.get('/:bucket', (req, res) => {
+
+      // GetBucketPolicy: GET /{bucket}?policy devolve o JSON da política
+      if (req.query.policy !== undefined) {
+        const result = this.simulator.getBucketPolicy(req.params.bucket);
+        if (result.error) {
+          return res.status(result.status).send(this.simulator.generateErrorResponse(result.error.code, result.error.message));
+        }
+        return res.status(200).set('Content-Type', 'application/json').send(JSON.stringify(result.policy));
+      }
       if (req.query.website !== undefined) {
         const result = this.simulator.getWebsiteConfig(req.params.bucket);
         if (result.error) {

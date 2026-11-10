@@ -107,10 +107,7 @@ class STSSimulator {
     const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
     const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
     
-    const signature = crypto
-      .createHmac('sha256', this.config.jwtSecret || 'local-simulator-secret')
-      .update(`${header}.${payloadEncoded}`)
-      .digest('base64url');
+    const signature = this._signJwt(`${header}.${payloadEncoded}`);
 
     const sessionToken = `${header}.${payloadEncoded}.${signature}`;
 
@@ -130,20 +127,33 @@ class STSSimulator {
    */
   validateSessionToken(token) {
     try {
+      if (typeof token !== 'string') return null;
       const parts = token.split('.');
       if (parts.length !== 3) return null;
 
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
-
-      if (payload.expiresAt < Date.now()) {
+      // Assinatura do JWT: sem ela, qualquer payload forjado seria aceito.
+      const expected = Buffer.from(this._signJwt(`${parts[0]}.${parts[1]}`));
+      const actual = Buffer.from(parts[2]);
+      if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
         return null;
       }
 
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
+      if (payload.expiresAt < Date.now()) {
+        return null;
+      }
       return payload;
     } catch (error) {
       logger.debug('SessionToken validation error:', error.message);
       return null;
     }
+  }
+
+  _signJwt(signingInput) {
+    return crypto
+      .createHmac('sha256', this.config.jwtSecret || 'local-simulator-secret')
+      .update(signingInput)
+      .digest('base64url');
   }
 
   /**
