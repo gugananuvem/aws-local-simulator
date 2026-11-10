@@ -40,8 +40,9 @@ function installExitHook() {
 }
 
 function toLines(text) {
+  // Aceita \r\n (Windows), \n e \r sozinho: a saída de um parcial pode terminar em \r sem o \n.
   return String(text || "")
-    .split(/\r?\n/)
+    .split(/\r\n|\r|\n/)
     .filter((l) => l.length > 0);
 }
 

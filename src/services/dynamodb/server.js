@@ -6,6 +6,7 @@ const { setupServiceMiddleware } = require('../../middleware');
 const express = require('express');
 const cors = require('cors');
 const DynamoDBSimulator = require('./simulator');
+const reservedCapacity = require('./reserved-capacity');
 const logger = require('../../utils/logger');
 
 class DynamoDBServer {
@@ -108,6 +109,21 @@ class DynamoDBServer {
       res.json({ message: `Table ${req.params.tableName} truncated` });
     });
     
+    // Reserved capacity (somente simulador: compras persistidas, sem cobrança)
+    this.app.get('/__admin/reserved-capacity/offerings', (req, res) => {
+      res.json(reservedCapacity.listOfferings());
+    });
+    this.app.get('/__admin/reserved-capacity/purchases', (req, res) => {
+      res.json(reservedCapacity.listPurchases(this.simulator.dataDir));
+    });
+    this.app.post('/__admin/reserved-capacity/purchases', (req, res) => {
+      try {
+        res.status(201).json(reservedCapacity.createPurchase(this.simulator.dataDir, req.body));
+      } catch (e) {
+        res.status(400).json({ __type: 'ValidationException', message: e.message });
+      }
+    });
+
     this.app.get('/__admin/stats', (req, res) => {
       res.json(this.simulator.getStats());
     });

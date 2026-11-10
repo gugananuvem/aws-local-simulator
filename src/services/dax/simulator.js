@@ -49,10 +49,7 @@ class DAXSimulator {
     if (savedEvents) {
       this.events = savedEvents;
     } else {
-      this.events = [
-        { SourceName: 'cluster-1', SourceType: 'CLUSTER', Message: 'Cluster created', Date: new Date().toISOString() }
-      ];
-      this.persistEvents();
+      this.events = [];
     }
   }
 
@@ -89,13 +86,15 @@ class DAXSimulator {
     if (this.clusters.has(ClusterName)) {
       throw new Error(`Cluster ${ClusterName} already exists`);
     }
+    // A API real usa ReplicationFactor para o número de nós; TotalNodes é aceito por compatibilidade.
+    const totalNodes = params.ReplicationFactor || params.TotalNodes || 1;
     const cluster = {
       ClusterName,
       Status: 'available',
       NodeType: params.NodeType || 'dax.r4.large',
       ClusterArn: `arn:aws:dax:us-east-1:123456789012:cache/${ClusterName}`,
-      TotalNodes: params.TotalNodes || 1,
-      ActiveNodes: params.TotalNodes || 1,
+      TotalNodes: totalNodes,
+      ActiveNodes: totalNodes,
       Endpoint: { Address: `${ClusterName}.dax-cluster.local`, Port: 8111 },
       IamRoleArn: params.IamRoleArn || 'arn:aws:iam::123456789012:role/DAXRole',
       SubnetGroupName: params.SubnetGroupName || 'default',
@@ -148,9 +147,6 @@ class DAXSimulator {
     if (params.SubnetGroupNames && params.SubnetGroupNames.length > 0) {
       groups = groups.filter(g => params.SubnetGroupNames.includes(g.SubnetGroupName));
     }
-    if (groups.length === 0) {
-      groups = [{ SubnetGroupName: 'default', Description: 'Default subnet group', SubnetIds: [], Subnets: [] }];
-    }
     return { SubnetGroups: groups };
   }
 
@@ -189,6 +185,9 @@ class DAXSimulator {
   }
 
   deleteParameterGroup(params) {
+    if (params.ParameterGroupName === 'default.dax1.0') {
+      throw new Error('The default parameter group cannot be deleted');
+    }
     this.parameterGroups.delete(params.ParameterGroupName);
     this.persistParameterGroups();
     return {};

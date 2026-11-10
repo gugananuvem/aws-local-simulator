@@ -40,6 +40,10 @@ class LambdaService {
     const cw = server.getService('cloudwatch');
     if (cw?.simulator) this.simulator.cloudwatchSimulator = cw.simulator;
 
+    // Mapeamentos de DynamoDB Stream leem os registros do serviço DynamoDB.
+    const ddb = server.getService('dynamodb');
+    if (ddb?.simulator?.streams) this.simulator.streamsSource = ddb.simulator.streams;
+
     // IAM enforcement middleware (only when IAM service is active)
     const iamService = server.getService('iam');
     if (iamService && iamService.getSimulator()) {
@@ -70,11 +74,13 @@ class LambdaService {
   async start() {
     if (this.isRunning) return;
     await this.server.start();
+    this.simulator.startEventSourcePoller();
     this.isRunning = true;
   }
 
   async stop() {
     // Workers persistentes são encerrados sempre (iniciam no initialize, antes do start)
+    if (this.simulator) this.simulator.stopEventSourcePoller();
     if (this.simulator) await this.simulator.shutdownWorkers();
     if (!this.isRunning) return;
     await this.server.stop();

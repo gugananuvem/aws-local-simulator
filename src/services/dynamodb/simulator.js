@@ -15,6 +15,7 @@ const backups = require("./backups");
 const { PointInTimeRecovery } = require("./pitr");
 const tableExports = require("./table-exports");
 const tableImports = require("./table-imports");
+const { DynamoDBStreams } = require("./streams");
 
 /** O SDK do DynamoDB espera CreationDateTime como epoch em segundos, não como string ISO. */
 function epochCreationDateTime(response) {
@@ -52,6 +53,7 @@ class DynamoDBSimulator {
     // Mutex por tabela para evitar race condition em escritas concorrentes
     this._writeLocks = new Map();
     this.pitr = new PointInTimeRecovery(this);
+    this.streams = new DynamoDBStreams(this);
     this.s3 = null; // injetado por DynamoDBService.injectDependencies
   }
 
@@ -153,7 +155,7 @@ class DynamoDBSimulator {
   }
 
   createTable(params) {
-    const { TableName, KeySchema, AttributeDefinitions, ProvisionedThroughput, GlobalSecondaryIndexes, VectorIndexes } = params;
+    const { TableName, KeySchema, AttributeDefinitions, ProvisionedThroughput, GlobalSecondaryIndexes, VectorIndexes, StreamSpecification } = params;
 
     if (this.tables.has(TableName)) {
       logger.warn(`Tabela ${TableName} já existe`);
@@ -198,6 +200,7 @@ class DynamoDBSimulator {
     if (!this.store.exists(TableName)) {
       this.store.write(TableName, []);
     }
+    if (StreamSpecification) this.streams.applySpecification(TableName, StreamSpecification);
 
     logger.debug(`✅ Tabela criada: ${TableName}`);
     this.audit.record({ eventName: "CreateTable", readOnly: false, resources: [{ ARN: `arn:aws:dynamodb:local:000000000000:table/${TableName}`, type: "AWS::DynamoDB::Table" }], requestParameters: { tableName: TableName } });
@@ -221,7 +224,7 @@ class DynamoDBSimulator {
   }
 
   updateTable(params) {
-    const { TableName, AttributeDefinitions, VectorIndexUpdates } = params;
+    const { TableName, AttributeDefinitions, VectorIndexUpdates, StreamSpecification } = params;
     const table = this.tables.get(TableName);
     if (!table) {
       const err = new Error(`Requested resource not found: Table: ${TableName} not found`);
@@ -234,6 +237,7 @@ class DynamoDBSimulator {
     } else if (AttributeDefinitions) {
       AttributeDefinitions.forEach((a) => { table.attributeTypes[a.AttributeName] = a.AttributeType; });
     }
+    if (StreamSpecification) this.streams.applySpecification(TableName, StreamSpecification);
     this.persistTables();
 
     return { TableDescription: this.describeTable(TableName).Table };
@@ -279,6 +283,10 @@ class DynamoDBSimulator {
         case "ImportTable": return tableImports.importTable(this, params);
         case "DescribeImport": return tableImports.describeImport(this, params);
         case "ListImports": return tableImports.listImports(this, params);
+        case "ListStreams": return this.streams.listStreams(params);
+        case "DescribeStream": return this.streams.describeStream(params);
+        case "GetShardIterator": return this.streams.getShardIterator(params);
+        case "GetRecords": return this.streams.getRecords(params);
         default: throw new Error(`Unsupported action: ${action}`);
       }
     })();
@@ -335,6 +343,11 @@ class DynamoDBSimulator {
           WriteCapacityUnits: 5,
         },
         ...(Object.keys(table.vectorIndexes || {}).length ? { VectorIndexes: vectorSearch.describeVectorIndexes(table.vectorIndexes) } : {}),
+        ...(table.latestStreamLabel ? {
+          LatestStreamLabel: table.latestStreamLabel,
+          LatestStreamArn: `arn:aws:dynamodb:us-east-1:000000000000:table/${table.name}/stream/${table.latestStreamLabel}`,
+        } : {}),
+        ...(table.streamSpecification ? { StreamSpecification: table.streamSpecification } : {}),
       },
     };
   }
@@ -366,6 +379,7 @@ class DynamoDBSimulator {
 
     this.tables.delete(TableName);
     this.pitr.dropTable(TableName);
+    this.streams.dropTable(TableName);
     this.store.delete(TableName);
     this.persistTables();
 

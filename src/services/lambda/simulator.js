@@ -31,6 +31,9 @@ class LambdaSimulator {
     this.audit = new CloudTrailAudit("lambda.amazonaws.com");
     this.cloudwatchSimulator = null; // injected via injectDependencies
     this.eventSourceMappings = new Map();
+    this.streamsSource = null; // DynamoDBStreams, injetado por injectDependencies
+    this._poller = null;
+    this._pollerBusy = new Set(); // UUIDs de mapeamentos sendo processados neste momento
     this.layers = new Map(); // layerName -> { versions: [] }
     this.codeSigningConfigs = new Map();
     this.capacityProviders = new Map();
@@ -901,6 +904,65 @@ class LambdaSimulator {
   }
 
 
+  // ─── Mapeamentos de DynamoDB Streams: leitura e chamada da função ─────────
+
+  startEventSourcePoller(intervalMs = 1000) {
+    if (this._poller) return;
+    this._poller = setInterval(() => {
+      this.pollEventSourceMappingsOnce().catch(() => {});
+    }, intervalMs);
+    this._poller.unref?.();
+  }
+
+  stopEventSourcePoller() {
+    if (this._poller) {
+      clearInterval(this._poller);
+      this._poller = null;
+    }
+  }
+
+  /**
+   * Lê os registros novos de cada mapeamento habilitado para um DynamoDB Stream e chama a função
+   * com {Records: [...]}. O cursor avança mesmo quando a função falha: o erro fica em
+   * LastProcessingResult e o lote não é reenviado (a AWS repetiria até o registro expirar).
+   */
+  async pollEventSourceMappingsOnce() {
+    const streams = this.streamsSource;
+    if (!streams) return;
+
+    for (const mapping of this.eventSourceMappings.values()) {
+      if (mapping.Enabled === false || !streams.isStreamArn(mapping.EventSourceArn)) continue;
+      if (this._pollerBusy.has(mapping.UUID)) continue;
+
+      this._pollerBusy.add(mapping.UUID);
+      try {
+        if (mapping._cursor === undefined) {
+          mapping._cursor = mapping.StartingPosition === "LATEST"
+            ? streams.latestSequenceNumber(mapping.EventSourceArn) + 1
+            : 1;
+        }
+
+        const { records, nextSeq } = streams.readRecords(mapping.EventSourceArn, mapping._cursor, mapping.BatchSize || 100);
+        if (!records.length) continue;
+
+        try {
+          await this.invoke(mapping.FunctionName, { Records: records }, "Event");
+          mapping.LastProcessingResult = "OK";
+        } catch (err) {
+          mapping.LastProcessingResult = `FAILED: ${err.message}`;
+        }
+        mapping._cursor = nextSeq;
+        this._persistEventSourceMappings();
+      } finally {
+        this._pollerBusy.delete(mapping.UUID);
+      }
+    }
+  }
+
+  _persistEventSourceMappings() {
+    this.store.write("__event_source_mappings__", Array.from(this.eventSourceMappings.values()));
+  }
+
   // Event Source Mappings
   listEventSourceMappings(params = {}) {
     const arr = Array.from(this.eventSourceMappings.values());
@@ -922,6 +984,12 @@ class LambdaSimulator {
       LastModified: new Date().toISOString(),
       ...params,
     };
+    // Mapeamento de DynamoDB Stream: LATEST começa após os registros já existentes, TRIM_HORIZON desde o início.
+    if (this.streamsSource && this.streamsSource.isStreamArn(params.EventSourceArn)) {
+      mapping._cursor = params.StartingPosition === "LATEST"
+        ? this.streamsSource.latestSequenceNumber(params.EventSourceArn) + 1
+        : 1;
+    }
     this.eventSourceMappings.set(uuid, mapping);
     this.store.write("__event_source_mappings__", Array.from(this.eventSourceMappings.values()));
     return mapping;
