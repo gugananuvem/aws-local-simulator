@@ -10,6 +10,20 @@ const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
 const vectorSearch = require("./vector-search");
 const transactions = require("./transactions");
 const { applyUpdateExpression } = require("./update-expression");
+const { parsePartiQL, bindValue } = require("./partiql");
+const backups = require("./backups");
+const { PointInTimeRecovery } = require("./pitr");
+const tableExports = require("./table-exports");
+const tableImports = require("./table-imports");
+
+/** O SDK do DynamoDB espera CreationDateTime como epoch em segundos, não como string ISO. */
+function epochCreationDateTime(response) {
+  const description = response.TableDescription || response.Table;
+  if (description && typeof description.CreationDateTime === "string") {
+    description.CreationDateTime = Date.parse(description.CreationDateTime) / 1000;
+  }
+  return response;
+}
 
 class DynamoDBSimulator {
   constructor(config) {
@@ -37,6 +51,8 @@ class DynamoDBSimulator {
     this.audit = new CloudTrailAudit("dynamodb.amazonaws.com");
     // Mutex por tabela para evitar race condition em escritas concorrentes
     this._writeLocks = new Map();
+    this.pitr = new PointInTimeRecovery(this);
+    this.s3 = null; // injetado por DynamoDBService.injectDependencies
   }
 
   /**
@@ -233,12 +249,12 @@ class DynamoDBSimulator {
 
     const result = (() => {
       switch (action) {
-        case "CreateTable": return this.createTable(params);
-        case "UpdateTable": return this.updateTable(params);
+        case "CreateTable": return epochCreationDateTime(this.createTable(params));
+        case "UpdateTable": return epochCreationDateTime(this.updateTable(params));
         case "TransactWriteItems": return transactions.transactWriteItems(this, params);
         case "TransactGetItems": return transactions.transactGetItems(this, params);
         case "SearchVectors": return vectorSearch.searchVectors(this, params);
-        case "DescribeTable": return this.describeTable(params.TableName);
+        case "DescribeTable": return epochCreationDateTime(this.describeTable(params.TableName));
         case "ListTables": return this.listTables(params);
         case "DeleteTable": return this.deleteTable(params);
         case "PutItem": return this._withTableLock(params.TableName, () => this.putItem(params));
@@ -249,6 +265,20 @@ class DynamoDBSimulator {
         case "BatchGetItem": return this.batchGetItem(params);
         case "Query": return this.query(params);
         case "Scan": return this.scan(params);
+        case "ExecuteStatement": return this.executeStatement(params);
+        case "CreateBackup": return backups.createBackup(this, params);
+        case "ListBackups": return backups.listBackups(this, params);
+        case "DeleteBackup": return backups.deleteBackup(this, params);
+        case "RestoreTableFromBackup": return backups.restoreTableFromBackup(this, params);
+        case "UpdateContinuousBackups": return this.pitr.updateContinuousBackups(params);
+        case "DescribeContinuousBackups": return this.pitr.describeContinuousBackups(params);
+        case "RestoreTableToPointInTime": return this.pitr.restoreTableToPointInTime(params);
+        case "ExportTableToPointInTime": return tableExports.exportTableToPointInTime(this, params);
+        case "DescribeExport": return tableExports.describeExport(this, params);
+        case "ListExports": return tableExports.listExports(this, params);
+        case "ImportTable": return tableImports.importTable(this, params);
+        case "DescribeImport": return tableImports.describeImport(this, params);
+        case "ListImports": return tableImports.listImports(this, params);
         default: throw new Error(`Unsupported action: ${action}`);
       }
     })();
@@ -335,6 +365,7 @@ class DynamoDBSimulator {
     }
 
     this.tables.delete(TableName);
+    this.pitr.dropTable(TableName);
     this.store.delete(TableName);
     this.persistTables();
 
@@ -814,6 +845,144 @@ class DynamoDBSimulator {
       ScannedCount: scannedCount,
       LastEvaluatedKey: lastEvaluatedKey || undefined
     };
+  }
+
+  /**
+   * DynamoDB ExecuteStatement: executa uma instrução PartiQL.
+   * SELECT devolve Items; INSERT, UPDATE e DELETE devolvem apenas a resposta vazia.
+   */
+  executeStatement({ Statement, Parameters = [] }) {
+    const stmt = parsePartiQL(Statement);
+    const table = this.tables.get(stmt.table);
+
+    if (!table) {
+      const err = new Error(`Requested resource not found: Table: ${stmt.table} not found`);
+      err.code = "ResourceNotFoundException";
+      throw err;
+    }
+
+    switch (stmt.type) {
+      case "SELECT":
+        return this._partiqlSelect(table, stmt, Parameters);
+      case "INSERT":
+        return this._withTableLock(stmt.table, () => this._partiqlInsert(table, stmt, Parameters));
+      case "UPDATE":
+        return this._withTableLock(stmt.table, () => this._partiqlUpdate(table, stmt, Parameters));
+      case "DELETE":
+        return this._withTableLock(stmt.table, () => this._partiqlDelete(table, stmt, Parameters));
+      default:
+        throw new Error(`Unsupported statement type: ${stmt.type}`);
+    }
+  }
+
+  _partiqlSelect(table, stmt, parameters) {
+    const predicates = stmt.where.map((p) => ({
+      attr: p.attr,
+      op: p.op,
+      value: this.normalizeValue(bindValue(p.value, parameters), table),
+    }));
+
+    let matched = this.store.read(stmt.table).filter((item) =>
+      predicates.every((p) => this._matchesPartiQLPredicate(item[p.attr], p))
+    );
+
+    if (stmt.limit !== null) matched = matched.slice(0, stmt.limit);
+
+    let items = matched.map((item) => this.marshallItem(item, table));
+    if (stmt.projection) {
+      items = this.applyProjection(items, stmt.projection.join(","), {});
+    }
+
+    return { Items: items };
+  }
+
+  _matchesPartiQLPredicate(actual, { op, value }) {
+    if (actual === undefined) return false;
+    switch (op) {
+      case "=": return actual === value;
+      case "<>": return actual !== value;
+      case "<": return actual < value;
+      case "<=": return actual <= value;
+      case ">": return actual > value;
+      case ">=": return actual >= value;
+      case "begins_with":
+        return typeof actual === "string" && typeof value === "string" && actual.startsWith(value);
+      default: return false;
+    }
+  }
+
+  /** Monta a chave (hash e range, se houver) a partir da cláusula WHERE de UPDATE/DELETE. */
+  _partiqlKeyFromWhere(table, where, parameters) {
+    const key = {};
+    for (const pred of where) {
+      if (pred.op !== "=") {
+        throw this._validationError("Where clause for UPDATE and DELETE must use '=' on key attributes");
+      }
+      key[pred.attr] = bindValue(pred.value, parameters);
+    }
+
+    const required = [table.hashKey, table.rangeKey].filter(Boolean);
+    if (!required.every((k) => k in key)) {
+      throw this._validationError(`Where clause does not contain a mandatory equality on Keys: [${required.join(", ")}]`);
+    }
+    const extra = Object.keys(key).filter((k) => !required.includes(k));
+    if (extra.length) {
+      throw this._validationError(`Where clause contains non-key attribute(s): ${extra.join(", ")}`);
+    }
+    return key;
+  }
+
+  _partiqlInsert(table, stmt, parameters) {
+    const { M: item } = bindValue(stmt.item, parameters);
+
+    const required = [table.hashKey, table.rangeKey].filter(Boolean);
+    if (!required.every((k) => k in item)) {
+      throw this._validationError("One of the required keys was not given a value");
+    }
+
+    const itemKey = this.getItemKeyFromKeys(item, table);
+    const exists = this.store.read(stmt.table).some((i) => this.getItemKey(i, table) === itemKey);
+    if (exists) {
+      const err = new Error("Duplicate primary key exists in table");
+      err.code = "DuplicateItemException";
+      throw err;
+    }
+
+    this.putItem({ TableName: stmt.table, Item: item });
+    return {};
+  }
+
+  _partiqlUpdate(table, stmt, parameters) {
+    const Key = this._partiqlKeyFromWhere(table, stmt.where, parameters);
+
+    const names = {};
+    const values = {};
+    const sets = stmt.assignments.map((a, i) => {
+      names[`#p${i}`] = a.attr;
+      values[`:v${i}`] = bindValue(a.value, parameters);
+      return `#p${i} = :v${i}`;
+    });
+
+    this.updateItem({
+      TableName: stmt.table,
+      Key,
+      UpdateExpression: `SET ${sets.join(", ")}`,
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+    });
+    return {};
+  }
+
+  _partiqlDelete(table, stmt, parameters) {
+    const Key = this._partiqlKeyFromWhere(table, stmt.where, parameters);
+    this.deleteItem({ TableName: stmt.table, Key });
+    return {};
+  }
+
+  _validationError(message) {
+    const err = new Error(message);
+    err.code = "ValidationException";
+    return err;
   }
 
   applyProjection(items, expression, names = {}) {

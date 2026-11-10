@@ -35,6 +35,10 @@ class DynamoDBService {
   injectDependencies(server) {
     const ct = server.getService('cloudtrail');
     if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
+
+    // Exports para S3 gravam os arquivos diretamente no simulador de S3.
+    const s3 = server.getService('s3');
+    this.simulator.s3 = s3?.getSimulator?.() || s3?.simulator || null;
   }
 
   async start() {
