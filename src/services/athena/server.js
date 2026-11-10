@@ -8,6 +8,7 @@ const cors = require('cors');
  */
 function createAthenaServer(simulator, logger) {
   const app = express();
+  require('../../auth/guard').attachAuthGuard(app, { service: 'athena', format: 'json' });
 
   app.use(cors());
   app.use(express.json({ limit: '10mb', type: () => true }));

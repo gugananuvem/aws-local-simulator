@@ -11,6 +11,7 @@ class OpenSearchServer {
     this.port = port;
     this.config = config;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'es', format: 'json' });
     this.simulator = null;
     this.server = null;
     this.setupMiddlewares();

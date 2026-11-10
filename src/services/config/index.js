@@ -49,8 +49,10 @@ class ConfigService {
   async start() {
     if (this.isRunning) return;
     const { handler } = createConfigServer(this.simulator, this.logger);
-    this._server = http.createServer((req, res) => {
-      handler(req, res).catch(err => {
+    this._server = http.createServer(async (req, res) => {
+      const admitted = await require('../../auth/guard').authorizeRequest(req, res, { service: 'config', format: 'json' });
+      if (!admitted) return;
+      handler(admitted, res).catch(err => {
         this.logger.error('[Config] Unhandled error:', err);
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/x-amz-json-1.1' });

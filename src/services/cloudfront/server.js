@@ -10,6 +10,15 @@ const { validate: validateConfig } = require('./models');
 class CloudFrontServer {
   constructor(options = {}) {
     this.app = express();
+    // Entrega de conteúdo (GET /{distributionId}/...) é pública, como no CloudFront.
+    require('../../auth/guard').attachAuthGuard(this.app, {
+      service: 'cloudfront',
+      format: 'xml',
+      exempt: (req) => {
+        const seg = req.url.split('?')[0].split('/').filter(Boolean);
+        return req.method === 'GET' && seg.length >= 2 && !['distribution', 'json', 'cache', 'health'].includes(seg[0]);
+      },
+    });
     this.simulator = new CloudFrontSimulator(options);
     this.setupMiddleware();
     this.setupRoutes();

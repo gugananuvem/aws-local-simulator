@@ -11,6 +11,7 @@ class ACMServer {
     this.port = port;
     this.config = config;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'acm', format: 'json' });
     this.setupMiddlewares();
   }
 

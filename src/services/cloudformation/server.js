@@ -146,6 +146,7 @@ function extractStackStatusFilter(body) {
  */
 function createCloudFormationServer(simulator, config, logger) {
   const app = express();
+  require('../../auth/guard').attachAuthGuard(app, { service: 'cloudformation', format: 'query' });
 
   // ── Middlewares ──────────────────────────────────────────────────
   if (config.cors?.enabled !== false) {

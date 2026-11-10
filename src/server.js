@@ -11,6 +11,8 @@ const logger = require("./utils/logger");
 
 // Importa serviços
 const DynamoDBService = require("./services/dynamodb");
+const { AuthContext } = require("./auth/auth-context");
+const { setAuthContext } = require("./auth/runtime");
 const DAXService = require("./services/dax");
 const S3Service = require("./services/s3");
 const SQSService = require("./services/sqs");
@@ -51,6 +53,8 @@ class Server {
     this.services = [];
     this.servicesMap = new Map();
     this.running = false;
+    // Os serviços protegem as próprias rotas com o contexto registrado aqui.
+    setAuthContext(this.getAuthContext());
     this.managementApp = express();
     this.managementApp.use(cors());
     this.managementApp.use(express.json());
@@ -99,6 +103,16 @@ class Server {
     const app = this.managementApp;
 
     // GET /__admin/services — returns all services status
+    // GET /__admin/auth — modo de autenticação e conta root (sem o segredo)
+    app.get("/__admin/auth", (req, res) => {
+      const auth = this.config.authentication || {};
+      res.json({
+        enabled: auth.enabled === true,
+        rootAccountId: auth.rootAccountId || "000000000000",
+        rootAccessKeyId: auth.rootAccessKeyId || "",
+      });
+    });
+
     app.get("/__admin/services", (req, res) => {
       const registry = this.buildServiceRegistry();
       const services = registry.map((def) => {
@@ -376,6 +390,14 @@ class Server {
     }
 
     return status;
+  }
+
+  /** Contexto de autenticação compartilhado pelos serviços (lê o IAM na hora da requisição). */
+  getAuthContext() {
+    if (!this._authContext) {
+      this._authContext = new AuthContext(this.config.authentication, () => this.getService("iam")?.getSimulator?.());
+    }
+    return this._authContext;
   }
 
   getService(name) {

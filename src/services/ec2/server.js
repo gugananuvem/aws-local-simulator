@@ -263,6 +263,7 @@ class EC2Server {
     this.port = port;
     this.config = config;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'ec2', format: 'query' });
     this.simulator = null;
     this.vpcSimulator = null;
   }

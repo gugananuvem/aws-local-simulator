@@ -38,6 +38,7 @@ class ALBServer {
     this.port = port;
     this.config = config;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'elasticloadbalancing', format: 'query' });
     this.app.use(cors());
     this.simulator = null;
   }

@@ -14,6 +14,16 @@ class APIGatewayServer {
     this.port = port;
     this.config = config;
     this.app = express();
+    // Control plane (REST, API keys, planos de uso, HTTP APIs, admin). A execução das APIs
+    // (/{apiId}/{stage}/...) é pública, como no AWS, e não passa pela assinatura.
+    require('../../auth/guard').attachAuthGuard(this.app, {
+      service: 'apigateway',
+      format: 'json',
+      exempt: (req) => {
+        const seg = req.url.split('?')[0].split('/').filter(Boolean);
+        return seg.length >= 2 && !['restapis', 'apikeys', 'usageplans', 'httpapis', '__admin', 'health'].includes(seg[0]);
+      },
+    });
     this.simulator = null;
     this.server = null;
     this.setupMiddlewares();

@@ -23,6 +23,9 @@ class DynamoDBServer {
 
   setupMiddlewares() {
     this.app.use(cors());
+    // Autenticação no modelo AWS (bypass quando authentication.enabled = false)
+    const { attachAuthGuard } = require('../../auth/guard');
+    attachAuthGuard(this.app, { service: 'dynamodb', format: 'json' });
     this.app.use(express.json({
       type: (req) => {
         const ct = req.headers['content-type'] || '';

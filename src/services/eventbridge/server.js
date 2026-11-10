@@ -18,6 +18,7 @@ const { createAwsProtocol } = require('./server-aws-protocol');
  */
 function createEventBridgeServer(simulator, config, logger) {
   const app = express();
+  require('../../auth/guard').attachAuthGuard(app, { service: 'events', format: 'json' });
 
   if (config.cors?.enabled !== false) {
     app.use(cors({ origin: config.cors?.origin || '*' }));

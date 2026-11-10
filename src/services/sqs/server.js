@@ -17,6 +17,7 @@ class SQSServer {
     this.config = config;
     this.lambdaService = lambdaService;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'sqs', format: 'query' });
     this.simulator = null;
     this.server = null;
     this.setupMiddlewares();

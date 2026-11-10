@@ -111,6 +111,10 @@ function createCloudTrailServer(simulator, logger) {
   const http = require('http');
 
   const server = http.createServer(async (req, res) => {
+    const admitted = await require('../../auth/guard').authorizeRequest(req, res, { service: 'cloudtrail', format: 'json' });
+    if (!admitted) return;
+    req = admitted;
+
     const { method, url } = req;
 
     // ── CORS ────────────────────────────────────────────────────────────────

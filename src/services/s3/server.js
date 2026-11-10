@@ -22,6 +22,9 @@ class S3Server {
 
   setupMiddlewares() {
     this.app.use(cors());
+    // Autenticação no modelo AWS (bypass quando authentication.enabled = false)
+    const { attachAuthGuard } = require('../../auth/guard');
+    attachAuthGuard(this.app, { service: 's3', format: 'xml' });
     // Rotas administrativas recebem JSON; precisa vir antes do raw (que captura tudo).
     this.app.use('/__admin', express.json({ limit: '10mb' }));
     // Captura raw body como Buffer para qualquer content-type

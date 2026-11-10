@@ -12,6 +12,7 @@ class Route53Server {
     this.port = port;
     this.config = config;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'route53', format: 'xml' });
     this.setupMiddlewares();
   }
 

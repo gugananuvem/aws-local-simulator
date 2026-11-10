@@ -39,6 +39,9 @@ class DynamoDBService {
     // Exports para S3 gravam os arquivos diretamente no simulador de S3.
     const s3 = server.getService('s3');
     this.simulator.s3 = s3?.getSimulator?.() || s3?.simulator || null;
+
+    // Autenticação no modelo AWS
+    if (this.server) this.server.getAuth = () => server.getAuthContext();
   }
 
   async start() {

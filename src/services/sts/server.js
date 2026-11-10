@@ -16,6 +16,9 @@ class STSServer {
 
   setupMiddlewares() {
     this.app.use(cors());
+    // Autenticação no modelo AWS (bypass quando authentication.enabled = false)
+    const { attachAuthGuard } = require('../../auth/guard');
+    attachAuthGuard(this.app, { service: 'sts', format: 'query' });
     this.app.use(express.raw({ type: '*/*', limit: '10mb' }));
     this.app.use((req, res, next) => {
       if (req.body && Buffer.isBuffer(req.body)) {

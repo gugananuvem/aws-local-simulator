@@ -32,6 +32,7 @@ const cors = require('cors');
  */
 function createCloudWatchServer(simulator, logger) {
   const app = express();
+  require('../../auth/guard').attachAuthGuard(app, { service: 'cloudwatch', format: 'json' });
 
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));

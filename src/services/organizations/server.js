@@ -101,6 +101,7 @@ class OrganizationsServer {
     this.port = port;
     this.config = config;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'organizations', format: 'json' });
     this.organizationsSimulator = null;
     this.controlTowerSimulator = null;
     this.server = null;

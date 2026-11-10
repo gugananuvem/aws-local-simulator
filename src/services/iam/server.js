@@ -20,6 +20,9 @@ class IAMServer {
 
   _setupMiddleware() {
     this.app.use(cors());
+    // Autenticação no modelo AWS (bypass quando authentication.enabled = false)
+    const { attachAuthGuard } = require('../../auth/guard');
+    attachAuthGuard(this.app, { service: 'iam', format: 'query' });
     this.app.use(express.urlencoded({ extended: true }));
     this.app.use(express.json());
     this.app.use(express.static(__dirname));

@@ -32,6 +32,9 @@ class S3Service {
   }
 
   injectDependencies(server) {
+    // Autenticação no modelo AWS
+    if (this.server) this.server.getAuth = () => server.getAuthContext();
+
     const ct = server.getService('cloudtrail');
     if (ct?.simulator) this.simulator.audit.setTrail(ct.simulator);
 

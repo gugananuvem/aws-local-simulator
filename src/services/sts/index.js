@@ -15,6 +15,11 @@ class STSService {
     await this.server.initialize();
   }
 
+  injectDependencies(server) {
+    // Autenticação no modelo AWS
+    if (this.server) this.server.getAuth = () => server.getAuthContext();
+  }
+
   async start() {
     if (this.isRunning) return;
     await this.server.start();

@@ -24,6 +24,7 @@ class AuroraServer {
     this.port = port;
     this.config = config;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'rds', format: 'json' });
     this.server = null;
 
     // Handler/manager references set externally by AuroraService

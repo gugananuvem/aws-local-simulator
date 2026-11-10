@@ -59,6 +59,9 @@ class IAMService {
 
   injectDependencies(server) {
     this.stsService = server.getService('sts');
+
+    // Autenticação no modelo AWS
+    if (this.server) this.server.getAuth = () => server.getAuthContext();
   }
 }
 

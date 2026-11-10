@@ -100,6 +100,17 @@ module.exports = {
   // Porta do servidor de administração (Management API)
   adminPort: 9999,
 
+  // Autenticação no modelo da AWS (SigV4 + identidades root e IAM).
+  // Desligada: bypass total, nenhuma requisição é validada (comportamento padrão).
+  // Ligada: /health fica aberto; os demais endpoints exigem assinatura válida e autorização;
+  // /__admin só aceita a conta root.
+  authentication: {
+    enabled: false,
+    rootAccountId: '000000000000',
+    rootAccessKeyId: process.env.AWS_LOCAL_SIMULATOR_ROOT_ACCESS_KEY_ID || 'AKIALOCALROOT000000001',
+    rootSecretAccessKey: process.env.AWS_LOCAL_SIMULATOR_ROOT_SECRET_ACCESS_KEY || 'local-root-secret-key-change-me',
+  },
+
   // Organizations Policy Enforcement
   // Aplica SCP + IAM roles em todos os serviços (como na AWS real)
   organizationsPolicyEnforcement: {

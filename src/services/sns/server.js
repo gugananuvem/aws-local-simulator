@@ -31,6 +31,7 @@ const cors    = require('cors');
  */
 function createSNSServer(simulator, config, logger) {
   const app = express();
+  require('../../auth/guard').attachAuthGuard(app, { service: 'sns', format: 'query' });
 
   // ── Middlewares globais ──────────────────────────────────────
   if (config.cors?.enabled !== false) {

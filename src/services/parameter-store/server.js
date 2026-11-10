@@ -7,6 +7,7 @@ class ParameterStoreServer {
   constructor(simulator, logger, config) {
     this.simulator = simulator; this.logger = logger; this.config = config;
     this.app = express();
+    require('../../auth/guard').attachAuthGuard(this.app, { service: 'ssm', format: 'json' });
     this._setupMiddleware(); this._setupRoutes();
   }
   _setupMiddleware() {

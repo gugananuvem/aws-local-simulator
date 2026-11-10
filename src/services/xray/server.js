@@ -117,6 +117,10 @@ function createXRayServer(simulator) {
   const http = require('http');
 
   const server = http.createServer(async (req, res) => {
+    const admitted = await require('../../auth/guard').authorizeRequest(req, res, { service: 'xray', format: 'json' });
+    if (!admitted) return;
+    req = admitted;
+
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
