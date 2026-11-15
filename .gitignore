@@ -69,3 +69,4 @@ AGENTS.md
 # Python
 __pycache__/
 *.pyc
+.worktrees/
