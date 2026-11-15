@@ -7,6 +7,8 @@ const Document = require('./models/document');
 const OpenSearchStore = require('./store');
 const logger = require('../../utils/logger');
 const path = require('path');
+const LocalStore = require('../../utils/local-store');
+const { OpenSearchDomains } = require('./domains');
 
 class OpenSearchSimulator {
   constructor(config) {
@@ -17,6 +19,7 @@ class OpenSearchSimulator {
     this.store = new OpenSearchStore(dataDir);
     this.indices = new Map();
     this.indexCache = new Map();
+    this.domains = new OpenSearchDomains(new LocalStore(this.dataDir));
   }
 
   async initialize() {
@@ -24,6 +27,7 @@ class OpenSearchSimulator {
 
     // Carrega metadados persistidos
     this.loadIndices();
+    this.domains.load();
 
     // Cria índices da configuração
     if (this.config.opensearch?.indices) {
@@ -597,6 +601,7 @@ class OpenSearchSimulator {
   async reset() {
     this.indices.clear();
     this.indexCache.clear();
+    this.domains.reset();
     this.store.clear();
     logger.info('🔄 OpenSearch resetado');
   }

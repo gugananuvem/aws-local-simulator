@@ -35,6 +35,24 @@ class OpenSearchServer {
   }
 
   setupRoutes() {
+    // ========== Domínios (AWS CLI `opensearch ...`, REST-JSON) ==========
+    const sendDomainResult = (res, fn) => {
+      try {
+        return res.json(fn());
+      } catch (error) {
+        const status = error.statusCode || 400;
+        return res.status(status).json({ __type: error.code || 'ValidationException', message: error.message });
+      }
+    };
+    this.app.post('/2021-01-01/opensearch/domain', (req, res) =>
+      sendDomainResult(res, () => ({ DomainStatus: this.simulator.domains.createDomain(req.body || {}) })));
+    this.app.get('/2021-01-01/opensearch/domain/:name', (req, res) =>
+      sendDomainResult(res, () => ({ DomainStatus: this.simulator.domains.describeDomain(req.params.name) })));
+    this.app.delete('/2021-01-01/opensearch/domain/:name', (req, res) =>
+      sendDomainResult(res, () => ({ DomainStatus: this.simulator.domains.deleteDomain(req.params.name) })));
+    this.app.get('/2021-01-01/domain', (req, res) =>
+      sendDomainResult(res, () => ({ DomainNames: this.simulator.domains.listDomainNames() })));
+
     // ========== Índices ==========
 
     // PUT /{index} - Criar índice
