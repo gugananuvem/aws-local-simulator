@@ -8,6 +8,48 @@ const { validate: validateConfig } = require('./models');
  * CloudFront REST API Server
  * Implements CloudFront API endpoints for distribution management and content delivery
  */
+const xmlbuilder = require('xmlbuilder');
+
+const CLOUDFRONT_NS = 'http://cloudfront.amazonaws.com/doc/2020-05-31/';
+
+function appendXml(parent, name, value) {
+  if (value === undefined || value === null) return;
+  if (Array.isArray(value)) {
+    const el = parent.ele(name);
+    for (const item of value) {
+      if (item !== null && typeof item === 'object') {
+        const child = el.ele(name.endsWith('s') ? name.slice(0, -1) : name);
+        for (const [k, v] of Object.entries(item)) appendXml(child, k, v);
+      } else {
+        el.ele(name.endsWith('s') ? name.slice(0, -1) : name, String(item));
+      }
+    }
+    return;
+  }
+  if (typeof value === 'object') {
+    const el = parent.ele(name);
+    for (const [k, v] of Object.entries(value)) appendXml(el, k, v);
+    return;
+  }
+  parent.ele(name, String(value));
+}
+
+/** <DistributionList> as returned by the CloudFront REST-XML API (ListDistributions). */
+function distributionListXml(summaries) {
+  const doc = xmlbuilder.create('DistributionList', { version: '1.0', encoding: 'UTF-8' });
+  doc.att('xmlns', CLOUDFRONT_NS);
+  doc.ele('Marker', '');
+  doc.ele('MaxItems', 100);
+  doc.ele('IsTruncated', false);
+  doc.ele('Quantity', summaries.length);
+  const items = doc.ele('Items');
+  for (const summary of summaries) {
+    const el = items.ele('DistributionSummary');
+    for (const [k, v] of Object.entries(summary)) appendXml(el, k, v);
+  }
+  return doc.end({ pretty: false });
+}
+
 class CloudFrontServer {
   constructor(options = {}) {
     this.app = express();
@@ -201,6 +243,9 @@ class CloudFrontServer {
   listDistributions(req, res, next) {
     try {
       const distributions = this.simulator.listDistributions();
+      if (req.awsApiVersionPrefix) {
+        return res.type('application/xml').send(distributionListXml(distributions.map(d => d.toAWSFormat())));
+      }
       
       res.json({
         DistributionList: {
@@ -498,7 +543,18 @@ class CloudFrontServer {
    * @param {number} port - Port to listen on
    */
   listen(port, host = getInternalHost()) {
-    this.server = this.app.listen(port, host, () => {
+    const http = require('http');
+    const app = this.app;
+    // Strip the API version prefix the AWS CLI/SDK sends (/2020-05-31/distribution) before the
+    // app and its auth guard see the path, and mark the request so the handler answers in XML.
+    this.server = http.createServer((req, res) => {
+      const match = /^\/2020-05-31(?=\/|\?|$)/.exec(req.url);
+      if (match) {
+        req.awsApiVersionPrefix = true;
+        req.url = req.url.slice(match[0].length) || '/';
+      }
+      app(req, res);
+    }).listen(port, host, () => {
       console.log(`CloudFront server listening on port ${port}`);
     });
     return this.server;
