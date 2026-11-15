@@ -225,6 +225,16 @@ function createXRayServer(simulator) {
         return sendJson(res, 200, result);
       }
 
+      // POST /TraceSummaries = GetTraceSummaries no modelo do AWS CLI/botocore (corpo JSON)
+      if (req.method === 'POST' && pathname === '/TraceSummaries') {
+        const result = await simulator.getTraceSummaries({
+          StartTime: body.StartTime,
+          EndTime: body.EndTime,
+          FilterExpression: body.FilterExpression,
+          NextToken: body.NextToken,
+        });
+        return sendJson(res, 200, result);
+      }
       // GET /TraceSummaries
       if (req.method === 'GET' && pathname === '/TraceSummaries') {
         const params = Object.fromEntries(url.searchParams.entries());
@@ -256,9 +266,14 @@ function createXRayServer(simulator) {
         return sendJson(res, 200, result);
       }
 
-      // POST /Groups
-      if (req.method === 'POST' && pathname === '/Groups') {
+      // POST /CreateGroup (modelo do AWS CLI/botocore)
+      if (req.method === 'POST' && pathname === '/CreateGroup') {
         const result = await simulator.createGroup(body);
+        return sendJson(res, 200, result);
+      }
+      // POST /Groups = GetGroups no modelo do AWS CLI/botocore (corpo JSON com NextToken)
+      if (req.method === 'POST' && pathname === '/Groups') {
+        const result = await simulator.getGroups({ NextToken: body.NextToken });
         return sendJson(res, 200, result);
       }
 
@@ -275,6 +290,11 @@ function createXRayServer(simulator) {
         return sendJson(res, 201, result);
       }
 
+      // POST /GetSamplingRules = GetSamplingRules no modelo do AWS CLI/botocore
+      if (req.method === 'POST' && pathname === '/GetSamplingRules') {
+        const result = await simulator.getSamplingRules({ NextToken: body.NextToken });
+        return sendJson(res, 200, result);
+      }
       // GET /SamplingRules
       if (req.method === 'GET' && pathname === '/SamplingRules') {
         const params = Object.fromEntries(url.searchParams.entries());
