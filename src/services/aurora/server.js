@@ -19,6 +19,7 @@ const { getInternalHost } = require('../../gateway/internal-host');
 const express = require('express');
 const cors = require('cors');
 const logger = require('../../utils/logger');
+const { successXml, errorXml } = require('./query-response');
 
 class AuroraServer {
   constructor(port, config) {
@@ -45,6 +46,8 @@ class AuroraServer {
         return ct.includes('application/x-amz-json-1.1') || ct.includes('application/json');
       }
     }));
+    // RDS query protocol (AWS CLI `rds ...`) sends Action/Version as a form body
+    this.app.use(express.urlencoded({ extended: false }));
 
     // Request logging
     if (logger.currentLogLevel === 'verboso') {
@@ -71,6 +74,8 @@ class AuroraServer {
       const target = req.headers['x-amz-target'] || '';
       const body = req.body || {};
       const action = body.Action || req.query?.Action || '';
+      // Query protocol (AWS CLI rds): Action in a form body. JSON clients keep the JSON response.
+      const isQuery = !target.startsWith('RDSDataService') && !!action && req.is('application/x-www-form-urlencoded');
 
       try {
         let result;
@@ -101,9 +106,18 @@ class AuroraServer {
           });
         }
 
+        if (isQuery) {
+          return res.type('text/xml').send(successXml(action, result, body.Version));
+        }
         res.json(result || {});
       } catch (error) {
         logger.error(`Aurora Error: ${error.message}`);
+        if (isQuery) {
+          return res
+            .status(error.statusCode || 400)
+            .type('text/xml')
+            .send(errorXml(error.code || 'BadRequestException', error.message, body.Version));
+        }
 
         // If error already has an AWS-style code, use it directly
         if (error.code && error.statusCode) {
