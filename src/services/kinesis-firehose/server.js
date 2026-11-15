@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * Kinesis Data Firehose Server - Servidor HTTP REST/JSON para Firehose
  */
@@ -183,7 +184,7 @@ class KinesisFirehoseServer {
   async start() {
     return new Promise((resolve, reject) => {
       try {
-        this.server = this.app.listen(this.port, () => {
+        this.server = this.app.listen(this.port, getInternalHost(), () => {
           logger.info(`✅ Kinesis Firehose Server iniciado na porta ${this.port}`);
           resolve();
         });

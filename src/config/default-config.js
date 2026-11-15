@@ -99,6 +99,12 @@ module.exports = {
 
   // Porta do servidor de administração (Management API)
   adminPort: 9999,
+  // Ponto de entrada unico: todos os servicos respondem por esta porta.
+  // legacyPorts: alem do gateway, cada servico tambem sobe na propria porta (compatibilidade).
+  gateway: {
+    port: 4700,
+    legacyPorts: false,
+  },
 
   // Autenticação no modelo da AWS (SigV4 + identidades root e IAM).
   // Desligada: bypass total, nenhuma requisição é validada (comportamento padrão).

@@ -1,3 +1,4 @@
+const { publicBaseUrl } = require('../../gateway/public-base');
 /**
  * API Gateway Simulator Core
  * Simula REST APIs, HTTP APIs, WebSocket APIs, Routes, Integrations
@@ -742,7 +743,7 @@ class APIGatewaySimulator {
     this.persistStages(restApiId);
     
     // Cria endpoint URL
-    const endpointUrl = `http://localhost:${this.config.ports.apigateway}/${restApiId}/${stageName}`;
+    const endpointUrl = `${publicBaseUrl()}/${restApiId}/${stageName}`;
     
     logger.debug(`📡 Stage criado: ${stageName} em ${endpointUrl}`);
     

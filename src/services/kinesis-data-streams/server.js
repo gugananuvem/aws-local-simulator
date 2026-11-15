@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * Kinesis Data Streams Server - Servidor HTTP REST/JSON para Kinesis
  */
@@ -223,7 +224,7 @@ class KinesisDataStreamsServer {
   async start() {
     return new Promise((resolve, reject) => {
       try {
-        this.server = this.app.listen(this.port, () => {
+        this.server = this.app.listen(this.port, getInternalHost(), () => {
           logger.info(`✅ Kinesis Data Streams Server iniciado na porta ${this.port}`);
           resolve();
         });

@@ -1,3 +1,4 @@
+const { publicBaseUrl } = require('../../../gateway/public-base');
 "use strict";
 
 /**
@@ -201,7 +202,7 @@ module.exports = {
             }
           : undefined,
       });
-      return { physicalId: api.ApiId, attrs: { ApiId: api.ApiId, ApiEndpoint: `http://localhost:${sims.apigateway.config?.ports?.apigateway || 4567}/${api.ApiId}` } };
+      return { physicalId: api.ApiId, attrs: { ApiId: api.ApiId, ApiEndpoint: `${publicBaseUrl()}/${api.ApiId}` } };
     },
     async delete({ physicalId, sims }) {
       sims.apigateway.apis.delete(physicalId);

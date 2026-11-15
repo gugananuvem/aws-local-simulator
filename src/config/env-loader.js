@@ -4,6 +4,34 @@
 
 const logger = require('../utils/logger');
 
+const DEFAULT_GATEWAY_PORT = 4700;
+
+/**
+ * Interpreta AWS_ENDPOINT_URL (ex.: http://localhost:4700). Sem porta explicita, a porta
+ * do gateway padrao (4700). URL invalida ou protocolo que nao seja http/https: erro.
+ */
+function parseEndpointUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    throw new Error(`AWS_ENDPOINT_URL invalida: "${value}" (esperado http://host:porta)`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`AWS_ENDPOINT_URL deve usar http ou https: "${value}"`);
+  }
+  const explicit = /^https?:\/\/[^/]*:(\d+)/i.exec(String(value));
+  const port = explicit ? parseInt(explicit[1], 10) : DEFAULT_GATEWAY_PORT;
+  if (!(port >= 1 && port <= 65535)) {
+    throw new Error(`AWS_ENDPOINT_URL com porta invalida: "${value}"`);
+  }
+  return {
+    url: `${url.protocol}//${url.host}`,
+    hostname: url.hostname,
+    port,
+  };
+}
+
 class EnvLoader {
   static load() {
     const config = {};
@@ -42,12 +70,32 @@ class EnvLoader {
     // Carrega auto-create
     config.autoCreateTables = this.getEnvBool('AWS_LOCAL_SIMULATOR_AUTO_CREATE_TABLES', true);
     config.autoCreateBuckets = this.getEnvBool('AWS_LOCAL_SIMULATOR_AUTO_CREATE_BUCKETS', true);
+
+    // Ponto de entrada unico (gateway). So entram os valores definidos no ambiente.
+    config.gateway = this.loadGateway();
     
     logger.debug('Variáveis de ambiente carregadas:', config);
     
     return config;
   }
   
+  static loadGateway() {
+    const gateway = {};
+    if (process.env.AWS_LOCAL_SIMULATOR_GATEWAY_PORT !== undefined) {
+      gateway.port = this.getEnvInt('AWS_LOCAL_SIMULATOR_GATEWAY_PORT', DEFAULT_GATEWAY_PORT);
+    }
+    if (process.env.AWS_LOCAL_SIMULATOR_LEGACY_PORTS !== undefined) {
+      gateway.legacyPorts = this.getEnvBool('AWS_LOCAL_SIMULATOR_LEGACY_PORTS', false);
+    }
+    // AWS_ENDPOINT_URL vence AWS_LOCAL_SIMULATOR_GATEWAY_PORT: a porta vem da URL.
+    if (process.env.AWS_ENDPOINT_URL) {
+      const parsed = parseEndpointUrl(process.env.AWS_ENDPOINT_URL);
+      gateway.endpointUrl = parsed.url;
+      gateway.port = parsed.port;
+    }
+    return gateway;
+  }
+
   static getEnvBool(key, defaultValue) {
     const value = process.env[key];
     if (value === undefined) return defaultValue;
@@ -66,4 +114,6 @@ class EnvLoader {
   }
 }
 
+EnvLoader.parseEndpointUrl = parseEndpointUrl;
+EnvLoader.DEFAULT_GATEWAY_PORT = DEFAULT_GATEWAY_PORT;
 module.exports = EnvLoader;

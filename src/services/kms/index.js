@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 const http = require('http');
@@ -37,7 +38,7 @@ class KMSService {
     if (this.isRunning) return;
     return new Promise((resolve, reject) => {
       this.httpServer = http.createServer(this.app);
-      this.httpServer.listen(this.port, () => {
+      this.httpServer.listen(this.port, getInternalHost(), () => {
         this.isRunning = true;
         this.logger.debug(`KMS rodando na porta ${this.port}`);
         resolve();

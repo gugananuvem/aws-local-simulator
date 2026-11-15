@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * AWS Organizations & Control Tower Server - REST API
  *
@@ -693,7 +694,7 @@ class OrganizationsServer {
   async start() {
     return new Promise((resolve, reject) => {
       try {
-        this.server = this.app.listen(this.port, () => {
+        this.server = this.app.listen(this.port, getInternalHost(), () => {
           logger.info(`✅ Organizations Server iniciado na porta ${this.port}`);
           resolve();
         });

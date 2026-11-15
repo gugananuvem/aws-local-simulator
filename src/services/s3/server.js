@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 const { setupServiceMiddleware } = require('../../middleware');
 /**
  * S3 Server - Servidor HTTP para S3
@@ -6,6 +7,8 @@ const { setupServiceMiddleware } = require('../../middleware');
 const express = require('express');
 const cors = require('cors');
 const S3Simulator = require('./simulator');
+const { bucketFromHost } = require('./host-bucket');
+const { publicBaseUrl } = require('../../gateway/public-base');
 const logger = require('../../utils/logger');
 
 class S3Server {
@@ -33,24 +36,13 @@ class S3Server {
     
     // Suporte a Virtual Host Style addressing (bucket.localhost:4566)
     this.app.use((req, res, next) => {
-      const host = req.headers.host || '';
-      // Se o host contém múltiplos pontos e não é apenas um IP ou localhost puro
-      if (host.includes('.') && !host.startsWith('localhost') && !host.startsWith('127.0.0.1')) {
-        const parts = host.split('.');
-        // O primeiro fragmento é o nome do bucket se houver mais de 2 partes (bucket.localhost:port)
-        // ou se a segunda parte for localhost
-        if (parts.length >= 2) {
-          const bucket = parts[0];
-          // Evita processar se for admin ou se já estiver no path style (heurística simples)
-          if (bucket !== 'localhost' && !req.path.startsWith('/__admin/')) {
-            req.url = `/${bucket}${req.url}`;
-            logger.verboso(`S3: Virtual Host Style detected. Rewriting to ${req.url}`);
-          }
-        }
+      const hostBucketName = bucketFromHost(req.headers.host);
+      if (hostBucketName && !req.path.startsWith('/__admin/')) {
+        req.url = `/${hostBucketName}${req.url}`;
+        logger.verboso(`S3: Virtual Host Style detected. Rewriting to ${req.url}`);
       }
       next();
     });
-
     // Logging de requisições
     if (logger.currentLogLevel === 'verboso') {
       this.app.use((req, res, next) => {
@@ -540,7 +532,7 @@ class S3Server {
           return res.status(400).json({ error: 'bucket and key are required' });
         }
 
-        const result = this.simulator.generatePresignedGetUrl(bucket, key, { expiresIn, credentials });
+        const result = this.simulator.generatePresignedGetUrl(bucket, key, { expiresIn, credentials, baseUrl: publicBaseUrl(req) });
         
         if (result.error) {
           return res.status(result.status || 500).json(result.error);
@@ -570,7 +562,7 @@ class S3Server {
           return res.status(400).json({ error: 'bucket and key are required' });
         }
 
-        const result = this.simulator.generatePresignedPutUrl(bucket, key, { expiresIn, credentials, contentType });
+        const result = this.simulator.generatePresignedPutUrl(bucket, key, { expiresIn, credentials, contentType, baseUrl: publicBaseUrl(req) });
         
         if (result.error) {
           return res.status(result.status || 500).json(result.error);
@@ -600,7 +592,7 @@ class S3Server {
           return res.status(400).json({ error: 'bucket and key are required' });
         }
 
-        const result = this.simulator.generatePresignedDeleteUrl(bucket, key, { expiresIn, credentials });
+        const result = this.simulator.generatePresignedDeleteUrl(bucket, key, { expiresIn, credentials, baseUrl: publicBaseUrl(req) });
         
         if (result.error) {
           return res.status(result.status || 500).json(result.error);
@@ -630,7 +622,7 @@ class S3Server {
           return res.status(400).json({ error: 'bucket and key are required' });
         }
 
-        const result = this.simulator.generatePresignedHeadUrl(bucket, key, { expiresIn, credentials });
+        const result = this.simulator.generatePresignedHeadUrl(bucket, key, { expiresIn, credentials, baseUrl: publicBaseUrl(req) });
         
         if (result.error) {
           return res.status(result.status || 500).json(result.error);
@@ -660,7 +652,7 @@ class S3Server {
           return res.status(400).json({ error: 'bucket and key are required' });
         }
 
-        const result = this.simulator.generatePresignedPostPolicy(bucket, key, { expiresIn, credentials, contentType, conditions });
+        const result = this.simulator.generatePresignedPostPolicy(bucket, key, { expiresIn, credentials, contentType, conditions, baseUrl: publicBaseUrl(req) });
         
         if (result.error) {
           return res.status(result.status || 500).json(result.error);
@@ -781,7 +773,7 @@ class S3Server {
 
   start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`🗄️  S3 rodando em http://localhost:${this.port}`);
         resolve();
       });

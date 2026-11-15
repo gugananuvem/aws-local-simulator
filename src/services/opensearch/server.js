@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * OpenSearch Server - Servidor HTTP REST para OpenSearch/Elasticsearch
  */
@@ -287,7 +288,7 @@ class OpenSearchServer {
 
   async start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`🔍 OpenSearch rodando em http://localhost:${this.port}`);
         resolve();
       });

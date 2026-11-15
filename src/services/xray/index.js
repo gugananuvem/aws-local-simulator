@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 /**
@@ -43,7 +44,7 @@ class XRayService {
     if (this.isRunning) return;
     const httpServer = createXRayServer(this.simulator);
     return new Promise((resolve, reject) => {
-      httpServer.listen(this.port, () => {
+      httpServer.listen(this.port, getInternalHost(), () => {
         this._server = httpServer;
         this.isRunning = true;
         this.logger.debug(`X-Ray rodando na porta ${this.port}`);

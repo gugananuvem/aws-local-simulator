@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 const { setupServiceMiddleware } = require('../../middleware');
 /**
  * API Gateway Server - Servidor HTTP para API Gateway
@@ -786,7 +787,7 @@ class APIGatewayServer {
 
   start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`🌐 API Gateway rodando em http://localhost:${this.port}`);
         this.printInfo();
         resolve();

@@ -80,7 +80,7 @@ function xmlEscape(text) {
   return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function sendError(res, format, code, message) {
+function sendError(res, format, code, message, status = 403) {
   const requestId = Date.now().toString(16);
   let contentType;
   let body;
@@ -94,7 +94,7 @@ function sendError(res, format, code, message) {
     contentType = "application/json";
     body = JSON.stringify({ __type: code, message });
   }
-  res.writeHead(403, { "Content-Type": contentType, "x-amzn-errortype": code });
+  res.writeHead(status, { "Content-Type": contentType, "x-amzn-errortype": code });
   res.end(body);
 }
 
@@ -133,7 +133,7 @@ async function admit(req, res, { service, format, exempt }) {
     return replay;
   } catch (err) {
     const view = buildView(req, raw);
-    sendError(res, errorFormat(format, view), err.code || "AccessDenied", err.message);
+    sendError(res, errorFormat(format, view), err.code || "AccessDenied", err.message, err.status || 403);
     return null;
   }
 }

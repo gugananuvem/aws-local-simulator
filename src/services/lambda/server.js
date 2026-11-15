@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 const { setupServiceMiddleware } = require('../../middleware');
 /**
  * Lambda Server - Servidor HTTP para Lambda (API Gateway style)
@@ -313,7 +314,7 @@ class LambdaServer {
 
   start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`🚀 Lambda API rodando em http://localhost:${this.port}`);
         this.printRoutes();
         resolve();

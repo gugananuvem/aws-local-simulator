@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * CloudFront Service Index
  * Main entry point for CloudFront simulator
@@ -69,7 +70,7 @@ class CloudFrontService {
     
     return new Promise((resolve, reject) => {
       try {
-        const httpServer = this.server.listen(this.port);
+        const httpServer = this.server.listen(this.port, getInternalHost());
         
         // Handle listen errors
         httpServer.on('error', (error) => {

@@ -46,13 +46,43 @@ const CloudFrontService = require("./services/cloudfront");
 const Route53Service = require("./services/route53");
 const ACMService = require("./services/acm");
 const { initializeCloudShell } = require("./services/cloudshell");
+const net = require("net");
+const { GatewayServer } = require("./gateway/gateway-server");
+const { configureInternalHost } = require("./gateway/internal-host");
+const { configurePublicBase, publicBaseUrl } = require("./gateway/public-base");
+
+/** Chave em config.ports usada por cada servico (nem sempre igual ao nome do registro). */
+const PORT_KEYS = {
+  "secret-manager": "secretManager",
+  "parameter-store": "parameterStore",
+};
+
+function portKeyFor(name) {
+  return PORT_KEYS[name] || name;
+}
+
+/** Porta livre em 127.0.0.1, escolhida pelo sistema. Libera antes do uso (ver plano, item e). */
+function allocateFreePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
 
 class Server {
   constructor(config) {
     this.config = config;
     this.services = [];
     this.servicesMap = new Map();
+    this.internalPorts = new Map(); // nome do servico -> porta interna (usada pelo gateway)
+    this.gatewayServer = null;
     this.running = false;
+    configureInternalHost(config);
+    configurePublicBase(config.gateway);
     // Os serviços protegem as próprias rotas com o contexto registrado aqui.
     setAuthContext(this.getAuthContext());
     this.managementApp = express();
@@ -88,6 +118,7 @@ class Server {
     try {
       await this.initializeServices();
       await this.startServices();
+      await this.startGateway();
       this.setupManagementRoutes();
       await this.startManagementServer();
 
@@ -313,11 +344,13 @@ class Server {
             dependencies[dep] = this.servicesMap.get(dep);
           }
 
-          const service = new serviceDef.class(this.config, dependencies);
+          const serviceConfig = await this.serviceConfigFor(serviceDef.name);
+          const service = new serviceDef.class(serviceConfig, dependencies);
           await service.initialize();
 
           this.services.push(service);
           this.servicesMap.set(serviceDef.name, service);
+          this.internalPorts.set(serviceDef.name, service.port);
 
           logger.success(`✅ ${serviceDef.name.toUpperCase()} Service inicializado`);
         } catch (error) {
@@ -341,6 +374,39 @@ class Server {
     logger.success("\n🎉 Todos os serviços foram iniciados com sucesso!");
   }
 
+  /**
+   * Config entregue a um servico. Sem legacyPorts, o servico recebe uma porta livre em loopback
+   * (so o gateway chega nela). Com legacyPorts, recebe a propria porta antiga (config.ports ou o
+   * default do construtor). O config.ports do Server nao muda.
+   */
+  async serviceConfigFor(name) {
+    if (this.config.gateway?.legacyPorts) return this.config;
+    const port = await allocateFreePort();
+    return { ...this.config, ports: { ...(this.config.ports || {}), [portKeyFor(name)]: port } };
+  }
+  bucketExists(name) {
+    const s3 = this.getService("s3");
+    return !!(s3?.simulator?.getBucket?.(name) || s3?.server?.simulator?.getBucket?.(name));
+  }
+
+  apiExists(id) {
+    const apigateway = this.getService("apigateway");
+    return !!apigateway?.simulator?.apis?.has?.(id);
+  }
+
+  async startGateway() {
+    this.gatewayServer = new GatewayServer({
+      port: this.config.gateway?.port || 4700,
+      host: "0.0.0.0",
+      resolvePort: (name) => this.internalPorts.get(name),
+      lookup: {
+        bucketExists: (name) => this.bucketExists(name),
+        apiExists: (id) => this.apiExists(id),
+      },
+    });
+    await this.gatewayServer.start();
+  }
+
   async stop() {
     if (!this.running) {
       logger.warn("Servidor não está rodando");
@@ -352,6 +418,11 @@ class Server {
     try {
       if (this.cloudshell) {
         this.cloudshell.shutdown();
+      }
+
+      if (this.gatewayServer) {
+        await this.gatewayServer.stop();
+        this.gatewayServer = null;
       }
 
       const stopPromises = [...this.services].reverse().map((service) => service.stop());
@@ -429,12 +500,14 @@ class Server {
     }
 
     try {
-      const service = new serviceDef.class(this.config);
+      const serviceConfig = await this.serviceConfigFor(name);
+      const service = new serviceDef.class(serviceConfig);
       await service.initialize();
       await service.start();
 
       this.services.push(service);
       this.servicesMap.set(name, service);
+      this.internalPorts.set(name, service.port);
 
       if (typeof service.injectDependencies === "function") {
         service.injectDependencies(this);
@@ -491,6 +564,7 @@ class Server {
       await service.stop();
       this.services = this.services.filter((s) => s !== service);
       this.servicesMap.delete(name);
+      this.internalPorts.delete(name);
 
       return {
         success: true,
@@ -510,6 +584,8 @@ class Server {
   }
 
   printStatus() {
+    const legacy = !!this.config.gateway?.legacyPorts;
+    const gatewayUrl = publicBaseUrl();
     logger.info("\n" + "=".repeat(60));
     logger.info("📊 Status dos Serviços:");
     logger.info("=".repeat(60));
@@ -518,8 +594,8 @@ class Server {
       const status = service.getStatus();
       logger.info(`\n${service.name.toUpperCase()}:`);
       logger.info(`  Status: ${status.running ? "✅ Rodando" : "❌ Parado"}`);
-      logger.info(`  Porta: ${status.port}`);
-      logger.info(`  Endpoint: ${status.endpoint}`);
+      if (legacy) logger.info(`  Porta: ${status.port}`);
+      logger.info(`  Endpoint: ${legacy ? status.endpoint : gatewayUrl}`);
 
       if (status.tablesCount !== undefined) {
         logger.info(`  Tabelas: ${status.tablesCount}`);
@@ -544,14 +620,14 @@ class Server {
     logger.info("\n" + "=".repeat(60));
     logger.info("\n📝 Comandos úteis:");
     logger.info("  AWS CLI:");
-    logger.info("    aws dynamodb list-tables --endpoint-url http://localhost:8000");
-    logger.info("    aws s3 ls --endpoint-url http://localhost:4566");
-    logger.info("    aws sqs list-queues --endpoint-url http://localhost:9324");
+    logger.info(`    aws dynamodb list-tables --endpoint-url ${gatewayUrl}`);
+    logger.info(`    aws s3 ls --endpoint-url ${gatewayUrl}`);
+    logger.info(`    aws sqs list-queues --endpoint-url ${gatewayUrl}`);
     logger.info("\n  Testar APIs:");
-    logger.info("    curl http://localhost:3001/health");
-    logger.info("    curl http://localhost:8000/__admin/tables");
-    logger.info("    curl http://localhost:4566/__admin/buckets");
-    logger.info("    curl http://localhost:9324/__admin/queues");
+    if (legacy) logger.info("    curl http://localhost:3001/health");
+    if (legacy) logger.info("    curl http://localhost:8000/__admin/tables");
+    if (legacy) logger.info("    curl http://localhost:4566/__admin/buckets");
+    if (legacy) logger.info("    curl http://localhost:9324/__admin/queues");
     logger.info("=".repeat(60) + "\n");
   }
 }

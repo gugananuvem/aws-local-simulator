@@ -9,6 +9,7 @@
  */
 
 const { verifySignature, verifyPresignedSignature, parseAuthorization, queryParts, queryValue } = require("./sigv4");
+const { bucketFromHost } = require("../services/s3/host-bucket");
 
 const MESSAGES = {
   MissingAuthenticationToken: "Missing Authentication Token",
@@ -17,13 +18,18 @@ const MESSAGES = {
   SignatureDoesNotMatch: "The request signature we calculated does not match the signature you provided.",
   RequestTimeTooSkewed: "The difference between the request time and the current time is too large.",
   AccessDenied: "Access Denied",
+  XAmzContentSHA256Mismatch: "The provided 'x-amz-content-sha256' header does not match what was computed.",
+  AuthorizationQueryParametersError: "Query-string authentication requires the X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-SignedHeaders and X-Amz-Signature parameters.",
 };
+
+// Status HTTP por codigo quando nao e 403 (o padrao).
+const STATUS_BY_CODE = { XAmzContentSHA256Mismatch: 400 };
 
 class AuthError extends Error {
   constructor(code, message) {
     super(message || MESSAGES[code] || code);
     this.code = code;
-    this.status = 403;
+    this.status = STATUS_BY_CODE[code] || 403;
   }
 }
 
@@ -126,10 +132,6 @@ class AuthContext {
   }
 
   /**
-   * Autoriza uma ação. Root sempre pode; usuário IAM depende das políticas.
-   * `sts:GetCallerIdentity` é permitido a qualquer principal autenticado, como na AWS.
-   */
-  /**
    * Credencial temporária (ASIA) emitida pelo STS. O SessionToken precisa ser um JWT
    * válido e assinado pelo STS, e a chave da assinatura SigV4 é o segredo guardado nele.
    */
@@ -202,6 +204,10 @@ class AuthContext {
     };
   }
 
+  /**
+   * Autoriza uma ação. Root sempre pode; usuário IAM depende das políticas.
+   * `sts:GetCallerIdentity` é permitido a qualquer principal autenticado, como na AWS.
+   */
   authorize(principal, { action, resource }) {
     if (principal.type === "root") return true;
     if (principal.type === "assumed-role") {
@@ -239,8 +245,10 @@ function describeRequest(service, req) {
     }
 
     case "s3": {
+      // Virtual-hosted: o bucket vem do Host e o caminho inteiro e a chave (mesma regra do servidor S3).
+      const hostBucketName = bucketFromHost(req.headers && req.headers.host);
       const parts = req.path.split("/").filter(Boolean);
-      const bucket = parts[0];
+      const bucket = hostBucketName || parts[0];
       // Subrecurso ?policy: ação própria no IAM (não CreateBucket)
       if (bucket && req.query && req.query.policy !== undefined) {
         const policyOp = { GET: 'GetBucketPolicy', PUT: 'PutBucketPolicy', DELETE: 'DeleteBucketPolicy' }[req.method];
@@ -248,7 +256,7 @@ function describeRequest(service, req) {
           return { action: `s3:${policyOp}`, resource: `arn:aws:s3:::${bucket}` };
         }
       }
-      const key = parts.slice(1).join("/");
+      const key = (hostBucketName ? parts : parts.slice(1)).join("/");
       if (!bucket) return { action: "s3:ListAllMyBuckets", resource: "*" };
 
       const hasKey = key.length > 0;

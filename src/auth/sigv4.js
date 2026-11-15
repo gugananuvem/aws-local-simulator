@@ -109,7 +109,14 @@ function verifySignature({ method, rawPath, rawQuery, headers, body, authorizati
   if (requestTime === null) return { ok: false, code: "IncompleteSignature" };
   if (Math.abs(now - requestTime) > MAX_SKEW_MS) return { ok: false, code: "RequestTimeTooSkewed" };
 
-  const payloadHash = headers["x-amz-content-sha256"] || sha256Hex(body || Buffer.alloc(0));
+  const bodyHash = sha256Hex(body || Buffer.alloc(0));
+  // Hash literal no header tem que bater com o corpo recebido. UNSIGNED-PAYLOAD e STREAMING-*
+  // nao sao conferidos aqui (corpo chunked nao e verificado; ver plano).
+  const declaredHash = headers["x-amz-content-sha256"];
+  if (declaredHash && /^[0-9a-f]{64}$/i.test(declaredHash) && declaredHash.toLowerCase() !== bodyHash) {
+    return { ok: false, code: "XAmzContentSHA256Mismatch" };
+  }
+  const payloadHash = declaredHash || bodyHash;
 
   const canonicalRequest = [
     method,

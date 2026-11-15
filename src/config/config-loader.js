@@ -44,6 +44,9 @@ class ConfigLoader {
     }
     
     // 4. Valida configurações
+    // 3b. Variaveis do gateway valem sobre o arquivo do usuario (AWS_ENDPOINT_URL e a porta)
+    config.gateway = { ...config.gateway, ...(envConfig.gateway || {}) };
+
     this.validate(config);
     
     logger.info(`✅ Configurações carregadas (logLevel: ${config.logLevel})`);
@@ -97,6 +100,12 @@ class ConfigLoader {
           logger.warn(`⚠️ Lambda '${fn.name}': 'codePath' definido sem 'handler' (esperado 'modulo.funcao').`);
         }
       }
+    }
+
+    // Valida porta do gateway
+    const gatewayPort = config.gateway?.port;
+    if (!(gatewayPort >= 1 && gatewayPort <= 65535)) {
+      throw new Error(`Porta do gateway invalida: ${gatewayPort}`);
     }
 
     // Valida portas

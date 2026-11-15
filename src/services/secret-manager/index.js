@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 /**
@@ -42,7 +43,7 @@ class SecretManagerService {
     if (this.isRunning) return;
     return new Promise((resolve, reject) => {
       this.httpServer = http.createServer(this.app);
-      this.httpServer.listen(this.port, () => {
+      this.httpServer.listen(this.port, getInternalHost(), () => {
         this.isRunning = true;
         this.logger.debug(`Secrets Manager rodando na porta ${this.port}`);
         resolve();

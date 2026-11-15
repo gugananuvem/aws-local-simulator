@@ -4,6 +4,63 @@
 
 > Guia completo sobre as portas utilizadas por cada serviço AWS no simulador local
 
+## 🚪 Acesso único (porta 4700)
+
+Todos os serviços respondem por uma única porta, `4700` por padrão:
+
+```bash
+aws s3 ls --endpoint-url http://localhost:4700
+aws dynamodb list-tables --endpoint-url http://localhost:4700
+aws sqs list-queues --endpoint-url http://localhost:4700
+```
+
+Para não repetir `--endpoint-url`, defina `AWS_ENDPOINT_URL` (o AWS CLI e os SDKs leem essa variável):
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+```
+
+Também é possível colocar `endpoint_url = http://localhost:4700` no profile em `~/.aws/config`.
+
+### Como o simulador escolhe o serviço
+
+1. Cabeçalho `X-Amz-Target` (SDKs em JSON): DynamoDB, SQS, Kinesis, Secrets Manager e outros.
+2. Escopo da assinatura SigV4 (`s3`, `lambda`, `sts`, `iam`, `ec2` e os demais), no cabeçalho `Authorization` ou em `X-Amz-Credential` (URL pré-assinada).
+3. `Action` e `Version` do protocolo query (na query string ou no corpo de formulário).
+4. Prefixo de caminho REST (`/2015-03-31/...` do Lambda, `/restapis` do API Gateway, `/queue/` do SQS).
+5. Sem assinatura: bucket no caminho (`/meu-bucket/chave`, path-style) ou execução de API (`/{apiId}/{stage}/...`).
+6. Host `bucket.localhost:4700` (virtual-hosted), quando o bucket existe.
+
+Requisição que não casa com nenhuma regra recebe HTTP 400 com `UnknownService`.
+
+### Configuração da porta
+
+Ordem de precedência, da maior para a menor:
+
+1. `AWS_ENDPOINT_URL` (ex.: `http://localhost:4700`). A porta vem da URL.
+2. `AWS_LOCAL_SIMULATOR_GATEWAY_PORT`.
+3. `gateway.port` em `aws-local-simulator.json` (padrão `4700`).
+
+Os serviços internos escutam só em `127.0.0.1`. O gateway escuta em todas as interfaces, como os serviços faziam antes.
+
+### Limites
+
+- Autenticação: com `authentication.enabled = false` (padrão) nada é validado. Com `true`, cada serviço confere a assinatura, como antes.
+- Management API (`9999`) e as rotas `/__admin` dos serviços não passam pelo gateway. Para `/__admin` de um serviço, use a porta legada (abaixo).
+- URL pré-assinada do S3: usa path-style e o host da requisição, ou `AWS_ENDPOINT_URL` quando definido.
+
+## 🔁 Compatibilidade: portas por serviço
+
+Para scripts que ainda usam `localhost:8000`, `localhost:4566` etc., ligue as portas legadas:
+
+```bash
+AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true
+```
+
+ou `"gateway": { "legacyPorts": true }` em `aws-local-simulator.json`. Com a opção ligada, cada serviço também escuta na própria porta, em todas as interfaces, como antes. Sem a opção, as portas da tabela abaixo não ficam abertas.
+
+Observação: Organizations tem porta padrão `4581` em `default-config.js`. O construtor do serviço usa `4580` só quando a configuração não traz o valor.
+
 ## 📋 Tabela de Portas
 
 | Serviço | Porta | Protocolo | URL | Descrição |
@@ -108,8 +165,8 @@ Você verá output como:
 ℹ️ 🚀 Lambda API rodando em http://localhost:3001
 ℹ️ 🔐 Cognito rodando em http://localhost:9229
 ...
-ℹ️ Ô£à Organizations Server iniciado na porta 4581
-ℹ️ Ô£à CloudFormation Server iniciado na porta 4582
+ℹ️ ✅ Organizations Server iniciado na porta 4581
+ℹ️ ✅ CloudFormation Server iniciado na porta 4582
 ```
 
 ---
@@ -143,6 +200,8 @@ kill -9 <PID>
 ---
 
 ## 🔌 Conectando aos Serviços
+
+> Os exemplos abaixo usam as portas por serviço (modo legado). Com o gateway, use `http://localhost:4700` em todos (ver "Acesso único").
 
 ### Com AWS CLI
 

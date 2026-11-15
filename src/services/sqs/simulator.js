@@ -1,3 +1,4 @@
+const { publicBaseUrl } = require('../../gateway/public-base');
 /**
  * SQS Simulator Core
  */
@@ -113,7 +114,7 @@ class SQSSimulator {
 
     const queue = {
       name: queueName,
-      url: `http://localhost:${this.config.ports.sqs}/queue/${queueName}`,
+      url: `${publicBaseUrl()}/queue/${queueName}`,
       arn: `arn:aws:sqs:${region}:${accountId}:${queueName}`,
       messages: [],
       handler: null,

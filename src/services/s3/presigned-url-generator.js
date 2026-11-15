@@ -5,6 +5,7 @@
  */
 
 const crypto = require('crypto');
+const { publicBaseUrl } = require('../../gateway/public-base');
 
 class PresignedUrlGenerator {
   constructor(config = {}) {
@@ -12,7 +13,6 @@ class PresignedUrlGenerator {
     this.algorithm = 'AWS4-HMAC-SHA256';
     this.service = 's3';
     this.region = config.region || 'us-east-1';
-    this.s3Endpoint = config.s3Endpoint || 'http://localhost:4566';
   }
 
   /**
@@ -28,7 +28,7 @@ class PresignedUrlGenerator {
     const expiresIn = options.expiresIn || 3600;
     const credentials = options.credentials || this._getDefaultCredentials();
 
-    return this._generatePresignedUrl('GET', bucket, key, expiresIn, credentials, {});
+    return this._generatePresignedUrl('GET', bucket, key, expiresIn, credentials, {}, options.baseUrl);
   }
 
   /**
@@ -63,7 +63,7 @@ class PresignedUrlGenerator {
       });
     }
 
-    return this._generatePresignedUrl('PUT', bucket, key, expiresIn, credentials, conditions);
+    return this._generatePresignedUrl('PUT', bucket, key, expiresIn, credentials, conditions, options.baseUrl);
   }
 
   /**
@@ -79,7 +79,7 @@ class PresignedUrlGenerator {
     const expiresIn = options.expiresIn || 3600;
     const credentials = options.credentials || this._getDefaultCredentials();
 
-    return this._generatePresignedUrl('DELETE', bucket, key, expiresIn, credentials, {});
+    return this._generatePresignedUrl('DELETE', bucket, key, expiresIn, credentials, {}, options.baseUrl);
   }
 
   /**
@@ -95,7 +95,7 @@ class PresignedUrlGenerator {
     const expiresIn = options.expiresIn || 3600;
     const credentials = options.credentials || this._getDefaultCredentials();
 
-    return this._generatePresignedUrl('HEAD', bucket, key, expiresIn, credentials, {});
+    return this._generatePresignedUrl('HEAD', bucket, key, expiresIn, credentials, {}, options.baseUrl);
   }
 
   /**
@@ -253,7 +253,7 @@ class PresignedUrlGenerator {
         date: amzDate,
         credentialScope: this._getCredentialScope(amzDate)
       },
-      url: `${this.s3Endpoint}/${bucket}`,
+      url: `${options.baseUrl || publicBaseUrl()}/${bucket}`,
       policyObject: policy
     };
   }
@@ -262,14 +262,16 @@ class PresignedUrlGenerator {
    * Private Methods
    */
 
-  _generatePresignedUrl(method, bucket, key, expiresIn, credentials, conditions = {}) {
+  _generatePresignedUrl(method, bucket, key, expiresIn, credentials, conditions = {}, baseUrl) {
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]/g, '').split('.')[0] + 'Z';
     const dateStamp = amzDate.substring(0, 8);
 
     // Construir canonical request
-    const host = `${bucket}.s3.amazonaws.com`;
-    const canonicalUri = `/${key}`;
+    // Path-style sobre a base publica (Host da requisicao ou AWS_ENDPOINT_URL).
+    const base = new URL(baseUrl || publicBaseUrl());
+    const host = base.host;
+    const canonicalUri = `/${bucket}/${key}`;
     
     const canonicalQuerystring = [
       `X-Amz-Algorithm=AWS4-HMAC-SHA256`,
@@ -312,7 +314,7 @@ class PresignedUrlGenerator {
     );
 
     // Construir presigned URL
-    const presignedUrl = `https://${host}${canonicalUri}?${canonicalQuerystring}&X-Amz-Signature=${signature}`;
+    const presignedUrl = `${base.protocol}//${host}${canonicalUri}?${canonicalQuerystring}&X-Amz-Signature=${signature}`;
 
     return presignedUrl;
   }

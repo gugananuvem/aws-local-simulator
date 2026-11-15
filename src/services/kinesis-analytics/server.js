@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * Kinesis Data Analytics Server - Servidor HTTP REST/JSON para Analytics
  */
@@ -218,7 +219,7 @@ class KinesisAnalyticsServer {
   async start() {
     return new Promise((resolve, reject) => {
       try {
-        this.server = this.app.listen(this.port, () => {
+        this.server = this.app.listen(this.port, getInternalHost(), () => {
           logger.info(`✅ Kinesis Data Analytics Server iniciado na porta ${this.port}`);
           resolve();
         });

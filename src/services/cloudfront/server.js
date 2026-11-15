@@ -1,5 +1,6 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const { getInternalHost } = require('../../gateway/internal-host');
 const CloudFrontSimulator = require('./simulator');
 const { validate: validateConfig } = require('./models');
 
@@ -496,8 +497,8 @@ class CloudFrontServer {
    * Start the server
    * @param {number} port - Port to listen on
    */
-  listen(port) {
-    this.server = this.app.listen(port, () => {
+  listen(port, host = getInternalHost()) {
+    this.server = this.app.listen(port, host, () => {
       console.log(`CloudFront server listening on port ${port}`);
     });
     return this.server;

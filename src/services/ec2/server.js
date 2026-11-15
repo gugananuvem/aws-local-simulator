@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 const { setupServiceMiddleware } = require('../../middleware');
 /**
  * EC2 Server - API REST + EC2 Query Protocol (AWS CLI)
@@ -2422,7 +2423,7 @@ class EC2Server {
 
   async start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`EC2 Server running on http://localhost:${this.port}`);
         resolve();
       });

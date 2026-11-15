@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 const IAMSimulator = require('./simulator');
 const logger = require('../../utils/logger');
 
@@ -24,7 +25,7 @@ class IAMService {
   async start() {
     if (this.isRunning) return;
 
-    this.httpServer = this.server.getApp().listen(this.port);
+    this.httpServer = this.server.getApp().listen(this.port, getInternalHost());
     logger.info(`🔐 IAM rodando em http://localhost:${this.port}`);
     this.isRunning = true;
   }

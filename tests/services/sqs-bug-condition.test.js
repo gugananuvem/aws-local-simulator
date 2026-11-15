@@ -89,7 +89,7 @@ describe('SQS Bug Condition: ListQueues Action', () => {
     expect(result.queues).toHaveLength(2);
 
     const urls = result.queues.map(q => q.url);
-    expect(urls).toContain('http://localhost:9324/queue/queue-alpha');
-    expect(urls).toContain('http://localhost:9324/queue/queue-beta');
+    expect(urls).toContain('http://localhost:4700/queue/queue-alpha');
+    expect(urls).toContain('http://localhost:4700/queue/queue-beta');
   });
 });

@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 /**
@@ -82,7 +83,7 @@ class CloudFormationService {
     const app = createCloudFormationServer(this.simulator, this.config, this.logger);
     this._server = http.createServer(app);
     return new Promise((resolve, reject) => {
-      this._server.listen(this.port, () => {
+      this._server.listen(this.port, getInternalHost(), () => {
         this.isRunning = true;
         this.logger.debug(`CloudFormation rodando na porta ${this.port}`);
         resolve();

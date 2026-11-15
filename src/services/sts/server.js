@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
@@ -125,7 +126,7 @@ class STSServer {
 
   start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`🔑 STS rodando em http://localhost:${this.port}`);
         resolve();
       });

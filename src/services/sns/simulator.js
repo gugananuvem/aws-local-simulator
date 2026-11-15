@@ -1,3 +1,4 @@
+const { publicBaseUrl } = require('../../gateway/public-base');
 /**
  * @fileoverview SNS Simulator - Completo
  * Simula o Amazon Simple Notification Service com todas as operações
@@ -818,7 +819,7 @@ class SNSSimulator {
           SignatureVersion: '1',
           Signature:        'LOCAL_SIMULATOR_NO_SIGNATURE',
           SigningCertURL:   `https://sns.${this.region}.amazonaws.com/SimpleNotificationService.pem`,
-          UnsubscribeURL:   `http://localhost:${this.config.services?.sns?.port || 9911}/?Action=Unsubscribe&SubscriptionArn=${subscription.SubscriptionArn}`,
+          UnsubscribeURL:   `${publicBaseUrl()}/?Action=Unsubscribe&SubscriptionArn=${subscription.SubscriptionArn}`,
           MessageAttributes: messageAttributes
         };
 

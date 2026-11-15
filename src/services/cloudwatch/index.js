@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 /**
@@ -45,7 +46,7 @@ class CloudWatchService {
     const app = createCloudWatchServer(this.simulator, this.logger);
     return new Promise((resolve, reject) => {
       this._server = http.createServer(app);
-      this._server.listen(this.port, () => {
+      this._server.listen(this.port, getInternalHost(), () => {
         this.isRunning = true;
         this.logger.debug(`CloudWatch rodando na porta ${this.port}`);
         resolve();

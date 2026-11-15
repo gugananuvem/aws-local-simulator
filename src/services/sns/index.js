@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 /**
@@ -81,7 +82,7 @@ class SNSService {
     return new Promise((resolve, reject) => {
       this.server = http.createServer(this.app);
       this.server.on('error', reject);
-      this.server.listen(this.port, () => {
+      this.server.listen(this.port, getInternalHost(), () => {
         this.isRunning = true;
         this.logger.debug(`SNS rodando na porta ${this.port}`);
         resolve();

@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 /**
@@ -61,7 +62,7 @@ class ConfigService {
       });
     });
     return new Promise((resolve, reject) => {
-      this._server.listen(this.port, '0.0.0.0', (err) => {
+      this._server.listen(this.port, getInternalHost(), (err) => {
         if (err) return reject(err);
         this.isRunning = true;
         this.logger.debug(`AWS Config rodando na porta ${this.port}`);

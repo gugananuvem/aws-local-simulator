@@ -1,3 +1,4 @@
+const { publicBaseUrl } = require('../../gateway/public-base');
 'use strict';
 
 /**
@@ -18,7 +19,7 @@ function buildShellEnvironment(getActiveServices) {
   const services = getActiveServices();
   for (const { name, port } of services) {
     const envKey = `AWS_ENDPOINT_${name.toUpperCase().replace(/-/g, '_')}`;
-    env[envKey] = `http://localhost:${port}`;
+    env[envKey] = publicBaseUrl();
   }
 
   return env;

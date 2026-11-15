@@ -1,3 +1,4 @@
+const { publicBaseUrl } = require('../../gateway/public-base');
 const LocalStore = require("../../utils/local-store");
 const path = require("path");
 const fs = require("fs");
@@ -1148,7 +1149,7 @@ class LambdaSimulator {
   }
   createFunctionUrlConfig(functionName, params = {}) {
     const cfg = {
-      FunctionUrl: `http://localhost:${this.config.ports?.lambda || 3001}/2021-10-31/functions/${functionName}/url`,
+      FunctionUrl: `${publicBaseUrl()}/2021-10-31/functions/${functionName}/url`,
       FunctionArn: `arn:aws:lambda:local:000000000000:function:${functionName}`,
       CreationTime: new Date().toISOString(),
       LastModifiedTime: new Date().toISOString(),

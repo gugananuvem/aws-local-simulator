@@ -10,6 +10,7 @@ class ACMService {
   constructor(config = {}) {
     this.name = 'acm';
     this.config = config;
+    this.port = config.ports?.acm || 4025;
     this.simulator = null;
     this.server = null;
   }
@@ -25,7 +26,7 @@ class ACMService {
 
   async start() {
     try {
-      const port = this.config.port || 4025;
+      const port = this.port;
       this.server = new ACMServer(port, this.config);
       await this.server.initialize(this.simulator);
       await this.server.start();
@@ -48,9 +49,9 @@ class ACMService {
   getStatus() {
     return {
       name: 'acm',
-      port: this.config.port || 4025,
+      port: this.port,
       running: this.server ? true : false,
-      endpoint: `http://localhost:${this.config.port || 4025}`,
+      endpoint: `http://localhost:${this.port}`,
     };
   }
 

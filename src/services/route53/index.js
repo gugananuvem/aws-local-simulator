@@ -10,6 +10,7 @@ class Route53Service {
   constructor(config = {}) {
     this.name = 'route53';
     this.config = config;
+    this.port = config.ports?.route53 || 4024;
     this.simulator = null;
     this.server = null;
   }
@@ -25,7 +26,7 @@ class Route53Service {
 
   async start() {
     try {
-      const port = this.config.port || 4024;
+      const port = this.port;
       this.server = new Route53Server(port, this.config);
       await this.server.initialize(this.simulator);
       await this.server.start();
@@ -48,9 +49,9 @@ class Route53Service {
   getStatus() {
     return {
       name: 'route53',
-      port: this.config.port || 4024,
+      port: this.port,
       running: this.server ? true : false,
-      endpoint: `http://localhost:${this.config.port || 4024}`,
+      endpoint: `http://localhost:${this.port}`,
     };
   }
 

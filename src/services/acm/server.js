@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * ACM Server
  * REST API para gerenciamento de certificados SSL/TLS
@@ -204,7 +205,7 @@ class ACMServer {
 
   async start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`✅ ACM Server running on port ${this.port}`);
         resolve();
       });

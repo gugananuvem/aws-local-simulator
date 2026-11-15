@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 const { setupServiceMiddleware } = require('../../middleware');
 /**
  * DynamoDB Server - Servidor HTTP para DynamoDB
@@ -134,7 +135,7 @@ class DynamoDBServer {
 
   start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`🗄️  DynamoDB rodando em http://localhost:${this.port}`);
         resolve();
       });

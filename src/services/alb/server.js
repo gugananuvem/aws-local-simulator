@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * ALB Server - API REST + ELBv2 Query Protocol (AWS CLI)
  */
@@ -464,7 +465,7 @@ class ALBServer {
 
   async start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`ALB Server running on http://localhost:${this.port}`);
         resolve();
       });

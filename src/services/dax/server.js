@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 const express = require('express');
 const cors = require('cors');
 const logger = require('../../utils/logger');
@@ -67,7 +68,7 @@ class DAXServer {
 
   start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`⚡ DAX rodando em http://localhost:${this.port}`);
         resolve();
       });

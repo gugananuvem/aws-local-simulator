@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 /**
@@ -44,7 +45,7 @@ class CloudTrailService {
     if (this.isRunning) return;
     this._server = createCloudTrailServer(this.simulator, this.logger);
     return new Promise((resolve, reject) => {
-      this._server.listen(this.port, '0.0.0.0', () => {
+      this._server.listen(this.port, getInternalHost(), () => {
         this.isRunning = true;
         this.logger.debug(`CloudTrail rodando na porta ${this.port}`);
         resolve();

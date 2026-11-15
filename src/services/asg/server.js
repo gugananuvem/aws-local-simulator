@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * ASG Server - API REST + AutoScaling Query Protocol (AWS CLI)
  */
@@ -539,7 +540,7 @@ class ASGServer {
 
   async start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`ASG Server running on http://localhost:${this.port}`);
         resolve();
       });

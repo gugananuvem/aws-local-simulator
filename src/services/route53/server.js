@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 /**
  * Route53 Server
  * REST API para gerenciamento de DNS
@@ -758,7 +759,7 @@ class Route53Server {
 
   async start() {
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, getInternalHost(), () => {
         logger.info(`✅ Route53 Server running on port ${this.port}`);
         resolve();
       });

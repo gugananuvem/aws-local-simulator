@@ -1,3 +1,4 @@
+const { getInternalHost } = require('../../gateway/internal-host');
 'use strict';
 
 const http = require('http');
@@ -37,7 +38,7 @@ class AthenaService {
     if (this.isRunning) return;
     return new Promise((resolve, reject) => {
       this._server = http.createServer(this.app);
-      this._server.listen(this.port, () => {
+      this._server.listen(this.port, getInternalHost(), () => {
         this.isRunning = true;
         this.logger.info(`🔍 Athena rodando em http://localhost:${this.port}`);
         resolve();
