@@ -1147,9 +1147,9 @@ class LambdaSimulator {
     const c = this.functionUrls.get(functionName);
     return { FunctionUrlConfigs: c ? [c] : [] };
   }
-  createFunctionUrlConfig(functionName, params = {}) {
+  createFunctionUrlConfig(functionName, params = {}, baseUrl) {
     const cfg = {
-      FunctionUrl: `${publicBaseUrl()}/2021-10-31/functions/${functionName}/url`,
+      FunctionUrl: `${baseUrl || publicBaseUrl()}/2021-10-31/functions/${functionName}/url`,
       FunctionArn: `arn:aws:lambda:local:000000000000:function:${functionName}`,
       CreationTime: new Date().toISOString(),
       LastModifiedTime: new Date().toISOString(),

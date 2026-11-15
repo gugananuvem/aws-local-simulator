@@ -469,7 +469,8 @@ class Server {
       this._authContext = new AuthContext(
         this.config.authentication,
         () => this.getService("iam")?.getSimulator?.(),
-        () => this.getService("sts")?.server?.simulator
+        () => this.getService("sts")?.server?.simulator,
+        (name) => this.bucketExists(name)
       );
     }
     return this._authContext;

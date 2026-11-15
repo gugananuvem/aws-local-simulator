@@ -1,4 +1,5 @@
 const { getInternalHost } = require('../../gateway/internal-host');
+const { publicBaseUrl } = require('../../gateway/public-base');
 const { setupServiceMiddleware } = require('../../middleware');
 /**
  * API Gateway Server - Servidor HTTP para API Gateway
@@ -185,7 +186,7 @@ class APIGatewayServer {
                 Message: message,
                 Subject: req.body?.Subject,
                 MessageAttributes: req.body?.MessageAttributes
-              });
+              }, publicBaseUrl(req));
               res.status(200).json({
                 PublishResponse: {
                   PublishResult: { MessageId: result.messageId || Math.random().toString(36).slice(2) },
@@ -488,7 +489,7 @@ class APIGatewayServer {
         const result = this.simulator.createStage({
           ...req.body,
           restApiId: req.params.apiId
-        });
+        }, publicBaseUrl(req));
         res.json(result);
       } catch (error) {
         res.status(400).json({ error: error.message });

@@ -642,7 +642,7 @@ class SNSSimulator {
    * @param {string} [params.MessageDeduplicationId]
    * @returns {Promise<{MessageId: string, SequenceNumber?: string}>}
    */
-  async publish(params) {
+  async publish(params, baseUrl) {
     const {
       TopicArn, TargetArn, PhoneNumber,
       Message, Subject,
@@ -705,7 +705,7 @@ class SNSSimulator {
     // Entrega assíncrona (fire and forget)
     Promise.all(
       topicSubs.map(sub =>
-        this._deliver(sub, messagePayload, MessageStructure, Subject, MessageAttributes, messageId)
+        this._deliver(sub, messagePayload, MessageStructure, Subject, MessageAttributes, messageId, baseUrl)
           .catch(err => this.logger.warn('SNS', `Delivery failed [${sub.Protocol}:${sub.Endpoint}]: ${err.message}`))
       )
     );
@@ -723,7 +723,7 @@ class SNSSimulator {
    * @param {Array}  params.PublishBatchRequestEntries
    * @returns {Promise<{Successful: Array, Failed: Array}>}
    */
-  async publishBatch(params) {
+  async publishBatch(params, baseUrl) {
     const { TopicArn, PublishBatchRequestEntries = [] } = params;
 
     if (!this.topics.has(TopicArn)) {
@@ -751,7 +751,7 @@ class SNSSimulator {
           MessageAttributes:        entry.MessageAttributes,
           MessageGroupId:           entry.MessageGroupId,
           MessageDeduplicationId:   entry.MessageDeduplicationId
-        });
+        }, baseUrl);
 
         successful.push({
           Id:               entry.Id,
@@ -786,7 +786,7 @@ class SNSSimulator {
    * @returns {Promise<void>}
    * @private
    */
-  async _deliver(subscription, message, messageStructure, subject, messageAttributes = {}, messageId) {
+  async _deliver(subscription, message, messageStructure, subject, messageAttributes = {}, messageId, baseUrl) {
     // Aplicar FilterPolicy
     if (subscription.FilterPolicy) {
       const scope     = subscription.FilterPolicyScope || 'MessageAttributes';
@@ -819,7 +819,7 @@ class SNSSimulator {
           SignatureVersion: '1',
           Signature:        'LOCAL_SIMULATOR_NO_SIGNATURE',
           SigningCertURL:   `https://sns.${this.region}.amazonaws.com/SimpleNotificationService.pem`,
-          UnsubscribeURL:   `${publicBaseUrl()}/?Action=Unsubscribe&SubscriptionArn=${subscription.SubscriptionArn}`,
+          UnsubscribeURL:   `${baseUrl || publicBaseUrl()}/?Action=Unsubscribe&SubscriptionArn=${subscription.SubscriptionArn}`,
           MessageAttributes: messageAttributes
         };
 

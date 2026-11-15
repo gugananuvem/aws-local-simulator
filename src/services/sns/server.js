@@ -1,4 +1,5 @@
 const { setupServiceMiddleware } = require('../../middleware');
+const { publicBaseUrl } = require('../../gateway/public-base');
 /**
  * @fileoverview SNS HTTP Server — Query Protocol completo
  * Compatível com AWS SDK v3 SNS Client
@@ -67,7 +68,7 @@ function createSNSServer(simulator, config, logger) {
     }
 
     try {
-      return await handleAction(action, body, simulator, res, logger);
+      return await handleAction(action, body, simulator, res, logger, publicBaseUrl(req));
     } catch (err) {
       logger.error('SNS', `[${action}] ${err.message}`);
       const status = err.statusCode || 400;
@@ -175,7 +176,7 @@ function createSNSServer(simulator, config, logger) {
  * @param {Object} logger
  * @returns {Promise<void>}
  */
-async function handleAction(action, body, simulator, res, logger) {
+async function handleAction(action, body, simulator, res, logger, baseUrl) {
   const xml = (tag, content) => wrapResponse(action, tag, content, res);
 
   switch (action) {
@@ -252,14 +253,14 @@ async function handleAction(action, body, simulator, res, logger) {
     // ── Publish ────────────────────────────────────────────────
     case 'Publish': {
       const msgAttrs = parseMessageAttributes(body);
-      const r        = await simulator.publish({ ...parseParams(body), MessageAttributes: msgAttrs });
+      const r        = await simulator.publish({ ...parseParams(body), MessageAttributes: msgAttrs }, baseUrl);
       const seqXml   = r.SequenceNumber ? `<SequenceNumber>${r.SequenceNumber}</SequenceNumber>` : '';
       return xml('PublishResult', `<MessageId>${r.MessageId}</MessageId>${seqXml}`);
     }
 
     case 'PublishBatch': {
       const entries = parsePublishBatchEntries(body);
-      const r       = await simulator.publishBatch({ TopicArn: body.TopicArn, PublishBatchRequestEntries: entries });
+      const r       = await simulator.publishBatch({ TopicArn: body.TopicArn, PublishBatchRequestEntries: entries }, baseUrl);
       const succXml = (r.Successful || []).map(s =>
         `<member><Id>${s.Id}</Id><MessageId>${s.MessageId}</MessageId>${s.SequenceNumber ? `<SequenceNumber>${s.SequenceNumber}</SequenceNumber>` : ''}</member>`
       ).join('');

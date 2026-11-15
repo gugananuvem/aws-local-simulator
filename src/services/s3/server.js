@@ -7,7 +7,7 @@ const { setupServiceMiddleware } = require('../../middleware');
 const express = require('express');
 const cors = require('cors');
 const S3Simulator = require('./simulator');
-const { bucketFromHost } = require('./host-bucket');
+const { virtualHostBucket } = require('./host-bucket');
 const { publicBaseUrl } = require('../../gateway/public-base');
 const logger = require('../../utils/logger');
 
@@ -36,7 +36,7 @@ class S3Server {
     
     // Suporte a Virtual Host Style addressing (bucket.localhost:4566)
     this.app.use((req, res, next) => {
-      const hostBucketName = bucketFromHost(req.headers.host);
+      const hostBucketName = virtualHostBucket(req.headers.host, (name) => !!this.simulator.getBucket(name));
       if (hostBucketName && !req.path.startsWith('/__admin/')) {
         req.url = `/${hostBucketName}${req.url}`;
         logger.verboso(`S3: Virtual Host Style detected. Rewriting to ${req.url}`);

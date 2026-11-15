@@ -104,7 +104,7 @@ class SQSSimulator {
     }
   }
 
-  createQueue(queueName, attributes = {}) {
+  createQueue(queueName, attributes = {}, baseUrl) {
     if (this.queues.has(queueName)) {
       return { error: { code: 'QueueAlreadyExists', message: 'Queue already exists' }, status: 409 };
     }
@@ -114,7 +114,7 @@ class SQSSimulator {
 
     const queue = {
       name: queueName,
-      url: `${publicBaseUrl()}/queue/${queueName}`,
+      url: `${baseUrl || publicBaseUrl()}/queue/${queueName}`,
       arn: `arn:aws:sqs:${region}:${accountId}:${queueName}`,
       messages: [],
       handler: null,
@@ -232,7 +232,7 @@ class SQSSimulator {
   createQueueAction(req) {
     const queueName = req.query.QueueName || req.body.QueueName;
     const attributes = this.extractAttributes(req);
-    const result = this.createQueue(queueName, attributes);
+    const result = this.createQueue(queueName, attributes, publicBaseUrl(req));
 
     if (result.error) {
       return result;

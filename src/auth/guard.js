@@ -103,7 +103,7 @@ function evaluate(auth, service, req, raw) {
   const view = buildView(req, raw);
   const principal = auth.authenticate({ method: req.method, headers: req.headers, originalUrl: req.url }, raw);
 
-  const { action, resource, admin } = describeRequest(service, view);
+  const { action, resource, admin } = describeRequest(service, view, (name) => auth.bucketExists(name));
   if (admin) {
     if (principal.type !== "root") {
       throw new AuthError("AccessDenied", "Only the root account can use the administration API.");

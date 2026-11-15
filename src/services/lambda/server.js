@@ -1,4 +1,5 @@
 const { getInternalHost } = require('../../gateway/internal-host');
+const { publicBaseUrl } = require('../../gateway/public-base');
 const { setupServiceMiddleware } = require('../../middleware');
 /**
  * Lambda Server - Servidor HTTP para Lambda (API Gateway style)
@@ -298,7 +299,7 @@ class LambdaServer {
       catch (e) { res.status(400).json({ __type: 'ValidationException', message: e.message }); }
     });
     this.app.post('/2021-10-31/functions/:FunctionName/url', (req, res) => {
-      try { res.status(201).json(this.simulator.createFunctionUrlConfig(req.params.FunctionName, req.body)); }
+      try { res.status(201).json(this.simulator.createFunctionUrlConfig(req.params.FunctionName, req.body, publicBaseUrl(req))); }
       catch (e) { res.status(400).json({ __type: 'ValidationException', message: e.message }); }
     });
     this.app.put('/2021-10-31/functions/:FunctionName/url', (req, res) => {

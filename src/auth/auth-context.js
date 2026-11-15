@@ -9,7 +9,7 @@
  */
 
 const { verifySignature, verifyPresignedSignature, parseAuthorization, queryParts, queryValue } = require("./sigv4");
-const { bucketFromHost } = require("../services/s3/host-bucket");
+const { virtualHostBucket } = require("../services/s3/host-bucket");
 
 const MESSAGES = {
   MissingAuthenticationToken: "Missing Authentication Token",
@@ -48,12 +48,17 @@ class AuthContext {
    * @param {object} config            bloco `authentication` do config
    * @param {function} getIam          () => simulador do IAM (ou null)
    */
-  constructor(config, getIam, getSts) {
+  constructor(config, getIam, getSts, getBucketExists) {
     this.config = config || {};
     this.getIam = getIam || (() => null);
     this.getSts = getSts || (() => null);
+    this.getBucketExists = getBucketExists || (() => false);
   }
 
+  /** Indica se um bucket existe no simulador S3 (usado para a regra de virtual-hosted). */
+  bucketExists(name) {
+    return !!this.getBucketExists(name);
+  }
   get enabled() {
     return this.config.enabled === true;
   }
@@ -229,7 +234,7 @@ class AuthContext {
  * Descreve a ação e o recurso de uma requisição, por serviço, no formato do IAM.
  * @returns {{ action: string, resource: string, admin?: boolean }}
  */
-function describeRequest(service, req) {
+function describeRequest(service, req, bucketExists = () => false) {
   if (req.path.startsWith("/__admin")) return { action: `${service}:Admin`, resource: "*", admin: true };
 
   switch (service) {
@@ -246,7 +251,7 @@ function describeRequest(service, req) {
 
     case "s3": {
       // Virtual-hosted: o bucket vem do Host e o caminho inteiro e a chave (mesma regra do servidor S3).
-      const hostBucketName = bucketFromHost(req.headers && req.headers.host);
+      const hostBucketName = virtualHostBucket(req.headers && req.headers.host, bucketExists);
       const parts = req.path.split("/").filter(Boolean);
       const bucket = hostBucketName || parts[0];
       // Subrecurso ?policy: ação própria no IAM (não CreateBucket)

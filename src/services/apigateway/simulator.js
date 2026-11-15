@@ -718,7 +718,7 @@ class APIGatewaySimulator {
 
   // ============ Stage Operations ============
 
-  createStage(params) {
+  createStage(params, baseUrl) {
     const { restApiId, stageName, description, variables, deploymentId, cacheClusterEnabled, cacheClusterSize, tracingEnabled } = params;
     const api = this.apis.get(restApiId);
     
@@ -743,7 +743,7 @@ class APIGatewaySimulator {
     this.persistStages(restApiId);
     
     // Cria endpoint URL
-    const endpointUrl = `${publicBaseUrl()}/${restApiId}/${stageName}`;
+    const endpointUrl = `${baseUrl || publicBaseUrl()}/${restApiId}/${stageName}`;
     
     logger.debug(`📡 Stage criado: ${stageName} em ${endpointUrl}`);
     
