@@ -17,7 +17,8 @@ class ACMServer {
   }
 
   setupMiddlewares() {
-    this.app.use(express.json());
+    // AWS CLI/SDK JSON protocol sends application/x-amz-json-1.1
+    this.app.use(express.json({ type: ['application/json', 'application/x-amz-json-1.1'] }));
     this.app.use((req, res, next) => {
       logger.info(`[ACM] ${req.method} ${req.path}`);
       next();
@@ -30,6 +31,8 @@ class ACMServer {
   }
 
   setupRoutes() {
+    // AWS JSON protocol (AWS CLI/SDK): X-Amz-Target: CertificateManager.<Operation>
+    this.app.post('/', (req, res) => this.handleJsonTarget(req, res));
     // Certificates
     this.app.post('/acm/request-certificate', (req, res) => this.requestCertificate(req, res));
     this.app.get('/acm/list-certificates', (req, res) => this.listCertificates(req, res));
@@ -40,6 +43,44 @@ class ACMServer {
     this.app.post('/acm/add-tags-to-certificate', (req, res) => this.addTagsToCertificate(req, res));
     this.app.get('/acm/stats', (req, res) => this.getStats(req, res));
     this.app.get('/acm/certificate-by-domain/:domain', (req, res) => this.listByDomain(req, res));
+  }
+
+  handleJsonTarget(req, res) {
+    const operation = (req.headers['x-amz-target'] || '').split('.').pop();
+    const body = req.body || {};
+    try {
+      switch (operation) {
+        case 'ListCertificates': {
+          const statuses = body.CertificateStatuses || [];
+          const certificates = this.simulator.listCertificates(statuses[0] || null);
+          return res.json({
+            CertificateSummaryList: certificates.map((c) => c.toJSONSummary()),
+            NextToken: null,
+          });
+        }
+        case 'DescribeCertificate': {
+          const certificate = this.simulator.describeCertificate(body.CertificateArn);
+          return res.json({ Certificate: certificate.toJSON() });
+        }
+        case 'RequestCertificate': {
+          const certificate = this.simulator.requestCertificate(body.DomainName, {
+            SubjectAlternativeNames: body.SubjectAlternativeNames,
+            ValidationMethod: body.ValidationMethod,
+            Tags: body.Tags,
+            CertificateType: body.CertificateType,
+          });
+          return res.json({ CertificateArn: certificate.CertificateArn });
+        }
+        case 'DeleteCertificate':
+          this.simulator.deleteCertificate(body.CertificateArn);
+          return res.json({});
+        default:
+          return res.status(400).json({ __type: 'InvalidAction', message: `Unknown operation: ${operation}` });
+      }
+    } catch (error) {
+      const type = /not found/i.test(error.message) ? 'ResourceNotFoundException' : 'ValidationException';
+      return res.status(400).json({ __type: type, message: error.message });
+    }
   }
 
   async requestCertificate(req, res) {
