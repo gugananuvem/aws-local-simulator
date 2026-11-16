@@ -191,19 +191,18 @@ curl -X POST http://localhost:4022/__admin/asg/auto-scaling-groups/web-asg/scali
   }'
 ```
 
-## Configuração com Arquivo .env
+## Portas (compatibilidade)
 
-```env
-# EC2
-AWS_EC2_PORT=4020
-AWS_EC2_DEFAULT_INSTANCE_TYPE=t2.micro
+O simulador não lê variáveis `AWS_EC2_*`, `AWS_ALB_*` nem `AWS_ASG_*`. As portas por serviço vêm de `ports` em `aws-local-simulator.json` (padrões: `ec2` 4020, `alb` 4021, `asg` 4022). Elas só ficam abertas com `legacyPorts` ligado. Com o gateway (padrão), use `http://localhost:4700`.
 
-# ALB
-AWS_ALB_PORT=4021
-
-# ASG
-AWS_ASG_PORT=4022
+```json
+{
+  "gateway": { "legacyPorts": true },
+  "ports": { "ec2": 4020, "alb": 4021, "asg": 4022 }
+}
 ```
+
+`AWS_EC2_DEFAULT_INSTANCE_TYPE` não é lido pelo código, então não tem efeito.
 
 ## Recursos da EC2
 

@@ -271,14 +271,18 @@ Validar: `HealthState` é "healthy" para todos os targets.
 - [AWS ALB Documentation](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/)
 - [AWS ASG Documentation](https://docs.aws.amazon.com/autoscaling/)
 
-## Configuração com .env
+## Portas (compatibilidade)
 
-```env
-AWS_EC2_PORT=4020
-AWS_EC2_DEFAULT_INSTANCE_TYPE=t2.micro
-AWS_ALB_PORT=4021
-AWS_ASG_PORT=4022
+O simulador não lê variáveis `AWS_EC2_*`, `AWS_ALB_*` nem `AWS_ASG_*`. As portas por serviço vêm de `ports` em `aws-local-simulator.json` (padrões: `ec2` 4020, `alb` 4021, `asg` 4022, em `src/services/*/index.js`). Elas só ficam abertas com `legacyPorts` ligado. Com o gateway (padrão), use `http://localhost:4700`.
+
+```json
+{
+  "gateway": { "legacyPorts": true },
+  "ports": { "ec2": 4020, "alb": 4021, "asg": 4022 }
+}
 ```
+
+`AWS_EC2_DEFAULT_INSTANCE_TYPE` não é lido pelo código, então não tem efeito.
 
 ## Troubleshooting
 

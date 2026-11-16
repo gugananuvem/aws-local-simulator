@@ -307,7 +307,7 @@ Conexão privada com serviços AWS sem sair da VPC. Tipos:
 Você pode usar AWS CLI com o simulador:
 
 ```bash
-# Configurar endpoint
+# Configurar endpoint (a porta 4020 só fica aberta com AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true)
 export AWS_ENDPOINT_URL_EC2=http://localhost:4020
 
 # Mas não use AWS CLI para VPC (use a API REST)

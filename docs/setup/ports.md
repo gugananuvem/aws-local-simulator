@@ -29,9 +29,9 @@ Os seis comandos retornaram código 0.
 
 A primeira fonte definida vence:
 
-1. `AWS_ENDPOINT_URL`. Host e porta vêm da URL. Vence `AWS_LOCAL_SIMULATOR_GATEWAY_PORT` (`src/config/env-loader.js`, `parseEndpointUrl`).
+1. `AWS_ENDPOINT_URL`. Host e porta vêm da URL. Vence `AWS_LOCAL_SIMULATOR_GATEWAY_PORT` (`src/config/env-loader.js`, `loadGateway`).
 2. `AWS_LOCAL_SIMULATOR_GATEWAY_PORT` (`src/config/env-loader.js`, `loadGateway`).
-3. `gateway.port` em `aws-local-simulator.json`. Variáveis de ambiente valem sobre o arquivo (`src/config/config-loader.js`).
+3. `gateway.port` em `aws-local-simulator.json`. As variáveis de ambiente do gateway valem sobre o arquivo (`src/config/config-loader.js`, linhas 47 e 48).
 4. Padrão `4700` (`src/config/default-config.js`).
 
 ### AWS_ENDPOINT_URL
@@ -189,7 +189,7 @@ Valores do `default-config.js`. Quando a chave não existe na configuração, o 
 | OpenSearch | 9200 | |
 | Management API | 9999 | `adminPort`. Sempre ativa, fora do gateway. |
 
-ECS (`8080`) fica desligado por padrão (`services.ecs: false`).
+ECS (`8080`) fica desligado por padrão (`services.ecs: false`, `src/config/default-config.js`). O serviço ECS não está registrado em `src/server.js` (linha comentada), então nenhuma configuração abre essa porta hoje.
 
 ## Problemas comuns
 

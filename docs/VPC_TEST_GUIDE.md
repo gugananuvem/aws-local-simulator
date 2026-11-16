@@ -329,7 +329,7 @@ curl http://localhost:4020/__admin/ec2/resources
 O simulador VPC suporta AWS CLI quando configurado:
 
 ```bash
-# Configurar endpoint
+# Configurar endpoint (a porta 4020 só fica aberta com AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true)
 export AWS_ENDPOINT_URL_VPC=http://localhost:4020
 
 # Listar VPCs (nota: não é um comando padrão da AWS CLI, use a API)

@@ -584,7 +584,7 @@ Mudar porta na config:
 ports: { opensearch: 9300 }
 ```
 
-Depois acessar em `http://localhost:9300`
+Depois acessar em `http://localhost:9300`, com `"gateway": { "legacyPorts": true }` no mesmo arquivo. Sem `legacyPorts`, o serviço recebe uma porta livre em loopback e a entrada `ports` não é usada; o acesso é pelo gateway em `http://localhost:4700`.
 
 ## Referências
 
