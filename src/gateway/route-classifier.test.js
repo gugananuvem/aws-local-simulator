@@ -84,6 +84,15 @@ describe('route classifier', () => {
       }, noState);
       expect(result).toMatchObject({ service: 'apigateway', rule: 'R4' });
     });
+
+    test('lambda ListFunctions with lambda scope routes by scope (R2)', () => {
+      const result = classify({
+        method: 'GET',
+        url: '/2015-03-31/functions',
+        headers: SIGNED('lambda'),
+      }, noState);
+      expect(result).toMatchObject({ service: 'lambda', rule: 'R2' });
+    });
   });
 
   describe('R3: query protocol Action + Version', () => {
@@ -144,6 +153,15 @@ describe('route classifier', () => {
         headers: { host: 'localhost:4700' },
       }, noState);
       expect(result.service).toBeNull();
+    });
+
+    test('GET /2015-03-31/functions without signature routes to lambda (R4)', () => {
+      const result = classify({
+        method: 'GET',
+        url: '/2015-03-31/functions',
+        headers: { host: 'localhost:4700' },
+      }, noState);
+      expect(result).toMatchObject({ service: 'lambda', rule: 'R4' });
     });
   });
 

@@ -7,6 +7,7 @@ const logger = require("../../utils/logger");
 const { CloudTrailAudit } = require("../../utils/cloudtrail-audit");
 const { buildProcessSpec, makeProcessHandler } = require("./runtimes/process-runner");
 const { PersistentWorker, normalizePersistentOptions } = require("./runtimes/persistent-worker");
+const { toFunctionConfiguration } = require("./list-functions");
 
 /**
  * AWS_LOCAL_SIMULATOR_LAMBDA_DEBUG="nome:porta[,nome2:porta2]" liga o debug
@@ -628,6 +629,12 @@ class LambdaSimulator {
 
   getEnvironmentVariables() {
     return { ...this.environment };
+  }
+
+  listFunctionConfigurations() {
+    return Array.from(this.lambdas.values())
+      .map((l) => toFunctionConfiguration(l))
+      .sort((a, b) => (a.FunctionName < b.FunctionName ? -1 : a.FunctionName > b.FunctionName ? 1 : 0));
   }
 
   listLambdas() {

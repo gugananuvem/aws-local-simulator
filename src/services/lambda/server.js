@@ -8,6 +8,7 @@ const { setupServiceMiddleware } = require('../../middleware');
 const express = require('express');
 const cors = require('cors');
 const LambdaSimulator = require('./simulator');
+const { paginateFunctions } = require('./list-functions');
 const logger = require('../../utils/logger');
 
 class LambdaServer {
@@ -129,6 +130,20 @@ class LambdaServer {
         }
         logger.error('Lambda invoke error:', err);
         res.status(500).json({ __type: 'ServiceException', message: err.message });
+      }
+    });
+
+    // ListFunctions: GET /2015-03-31/functions?MaxItems=&Marker=
+    this.app.get('/2015-03-31/functions', (req, res) => {
+      try {
+        const configs = this.simulator.listFunctionConfigurations();
+        res.json(paginateFunctions(configs, { MaxItems: req.query.MaxItems, Marker: req.query.Marker }));
+      } catch (e) {
+        res.status(e.statusCode === 400 ? 400 : 500).json(
+          e.statusCode === 400
+            ? { __type: 'ValidationException', message: e.message }
+            : { __type: 'ServiceException', message: e.message }
+        );
       }
     });
 
