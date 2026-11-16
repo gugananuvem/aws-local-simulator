@@ -143,7 +143,7 @@ Requisição que não casa com nenhuma regra recebe HTTP 400 com `UnknownService
 
 - A Management API escuta em `adminPort`, padrão `9999` (`src/server.js`, `startManagementServer`). Testado: `GET http://localhost:9999/__admin/services` retornou a lista de serviços.
 - O gateway não roteia `/__admin`. Testado: `GET http://localhost:4700/__admin/functions` retornou HTTP 400 `UnknownService`.
-- Para as rotas `/__admin` de um serviço, use a porta legada com `legacyPorts` ligado. Testado: `POST http://localhost:3001/__admin/functions` respondeu 201.
+- Para as rotas `/__admin` de um serviço, use a porta legada com `legacyPorts` ligado. Testado: `POST http://localhost:3001/__admin/functions` com corpo `{"name":"fn-url","code":"exports.handler = async () => ({ statusCode: 200, body: \"ok\" });"}` respondeu 201. Com corpo `{}`, a rota respondeu 400 (`src/services/lambda/server.js`, `setupAdminRoutes`).
 
 ## URL de função Lambda
 
