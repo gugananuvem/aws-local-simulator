@@ -153,11 +153,13 @@ class OpenSearchDomains {
     return match[1];
   }
 
-  /** Confirma o domínio do ARN e devolve o nome. Região e conta não são checadas. */
+  /**
+   * Confirma o domínio do ARN e devolve o ARN canônico do domínio, que é a chave das tags.
+   * Região e conta do ARN recebido não são checadas.
+   */
   requireDomainForArn(arn) {
     const name = this.domainNameFromArn(arn);
-    this.describeDomain(name);
-    return name;
+    return this.describeDomain(name).ARN;
   }
 
   addTags(arn, tagList) {
@@ -170,16 +172,16 @@ class OpenSearchDomains {
         throw new DomainError('ValidationException', 'Each tag needs a non-empty string Key and a string Value', 400);
       }
     }
-    this.requireDomainForArn(arn);
-    const pairs = this.tags.get(arn) || new Map();
+    const key = this.requireDomainForArn(arn);
+    const pairs = this.tags.get(key) || new Map();
     for (const tag of tagList) pairs.set(tag.Key, tag.Value);
-    this.tags.set(arn, pairs);
+    this.tags.set(key, pairs);
     this.persist();
   }
 
   listTags(arn) {
-    this.requireDomainForArn(arn);
-    const pairs = this.tags.get(arn) || new Map();
+    const key = this.requireDomainForArn(arn);
+    const pairs = this.tags.get(key) || new Map();
     return Array.from(pairs, ([Key, Value]) => ({ Key, Value }));
   }
 
@@ -188,8 +190,8 @@ class OpenSearchDomains {
     if (!Array.isArray(tagKeys) || tagKeys.some((k) => typeof k !== 'string' || k === '')) {
       throw new DomainError('ValidationException', 'TagKeys must be an array of non-empty strings', 400);
     }
-    this.requireDomainForArn(arn);
-    const pairs = this.tags.get(arn);
+    const canonicalArn = this.requireDomainForArn(arn);
+    const pairs = this.tags.get(canonicalArn);
     if (pairs) {
       for (const key of tagKeys) pairs.delete(key);
     }

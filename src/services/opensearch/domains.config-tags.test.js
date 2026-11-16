@@ -279,6 +279,29 @@ describe('OpenSearch domain Endpoint, UpdateDomainConfig and tags (AWS CLI opens
       expect(sim.domains.tags.has(arn3)).toBe(false);
     });
 
+    test('tags gravadas com ARN de outra região ficam no domínio canônico', async () => {
+      await request('POST', '/2021-01-01/opensearch/domain', { DomainName: 'cfg4' });
+      const canonical = 'arn:aws:es:us-east-1:000000000000:domain/cfg4';
+      const otherRegion = 'arn:aws:es:eu-west-1:000000000000:domain/cfg4';
+      const add = await request('POST', '/2021-01-01/tags', { ARN: otherRegion, TagList: [{ Key: 'alt', Value: 'z' }] });
+      expect(add.status).toBe(200);
+      const viaCanonical = await request('GET', `/2021-01-01/tags/?arn=${encodeURIComponent(canonical)}`);
+      expect(viaCanonical.json.TagList).toEqual([{ Key: 'alt', Value: 'z' }]);
+      const viaOtherRegion = await request('GET', `/2021-01-01/tags/?arn=${encodeURIComponent(otherRegion)}`);
+      expect(viaOtherRegion.json.TagList).toEqual([{ Key: 'alt', Value: 'z' }]);
+    });
+
+    test('após delete e create do mesmo nome, tags do ARN alternativo não reaparecem', async () => {
+      const otherRegion = 'arn:aws:es:eu-west-1:000000000000:domain/cfg4';
+      await request('DELETE', '/2021-01-01/opensearch/domain/cfg4');
+      expect(sim.domains.tags.has('arn:aws:es:us-east-1:000000000000:domain/cfg4')).toBe(false);
+      await request('POST', '/2021-01-01/opensearch/domain', { DomainName: 'cfg4' });
+      const res = await request('GET', `/2021-01-01/tags/?arn=${encodeURIComponent(otherRegion)}`);
+      expect(res.status).toBe(200);
+      expect(res.json.TagList).toEqual([]);
+      expect(sim.domains.tags.has('arn:aws:es:eu-west-1:000000000000:domain/cfg4')).toBe(false);
+    });
+
     test('um OpenSearchDomains novo sobre o mesmo store carrega as tags gravadas', async () => {
       const { OpenSearchDomains } = require('./domains');
       const fresh = new OpenSearchDomains(sim.domains.store);
