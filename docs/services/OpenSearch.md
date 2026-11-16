@@ -340,6 +340,27 @@ curl http://localhost:9200/
 curl http://localhost:9200/_stats
 ```
 
+## Domínios (control plane `aws opensearch`)
+
+Operações testadas com o AWS CLI nas portas 4700 e 9200 (modo legado):
+
+- `create-domain`, `describe-domain`, `list-domain-names`, `delete-domain`
+- `update-domain-config`: altera só `ClusterConfig` (`InstanceType`, `InstanceCount`, `DedicatedMasterEnabled`, `ZoneAwarenessEnabled`). Campos ausentes mantêm o valor atual. Valor de tipo inválido responde 400.
+- `add-tags`, `list-tags`, `remove-tags`, usando o ARN `arn:aws:es:us-east-1:000000000000:domain/<nome>`.
+
+```bash
+aws opensearch create-domain --domain-name dom-a --endpoint-url http://localhost:4700
+aws opensearch describe-domain --domain-name dom-a --endpoint-url http://localhost:4700 --query DomainStatus.Endpoint --output text
+# localhost:4700
+aws opensearch update-domain-config --domain-name dom-a --cluster-config InstanceCount=2 --endpoint-url http://localhost:4700
+aws opensearch add-tags --arn arn:aws:es:us-east-1:000000000000:domain/dom-a --tag-list Key=env,Value=dev --endpoint-url http://localhost:4700
+aws opensearch list-tags --arn arn:aws:es:us-east-1:000000000000:domain/dom-a --endpoint-url http://localhost:4700
+```
+
+`Endpoint` em `DomainStatus` é o host pelo qual a requisição chegou (por exemplo `localhost:4700` ou `localhost:9200`). Não é gravado no domínio.
+
+Não simulado: limite de 10 tags por recurso, campo `Status` na resposta de `update-domain-config`, e opções de `UpdateDomainConfig` fora de `ClusterConfig` (são ignoradas).
+
 ## Configuração
 
 ### Via Config File

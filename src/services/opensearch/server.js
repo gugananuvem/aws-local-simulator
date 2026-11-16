@@ -1,4 +1,5 @@
 const { getInternalHost } = require('../../gateway/internal-host');
+const { publicBaseUrl } = require('../../gateway/public-base');
 /**
  * OpenSearch Server - Servidor HTTP REST para OpenSearch/Elasticsearch
  */
@@ -6,6 +7,9 @@ const { getInternalHost } = require('../../gateway/internal-host');
 const express = require('express');
 const cors = require('cors');
 const logger = require('../../utils/logger');
+
+/** Host (com porta) pelo qual a requisição chegou, derivado de publicBaseUrl. */
+const endpointOf = (req) => new URL(publicBaseUrl(req)).host;
 
 class OpenSearchServer {
   constructor(port, config) {
@@ -36,22 +40,51 @@ class OpenSearchServer {
 
   setupRoutes() {
     // ========== Domínios (AWS CLI `opensearch ...`, REST-JSON) ==========
+    const sendDomainError = (res, error) => {
+      const status = error.statusCode || 400;
+      return res.status(status).json({ __type: error.code || 'ValidationException', message: error.message });
+    };
     const sendDomainResult = (res, fn) => {
       try {
         return res.json(fn());
       } catch (error) {
-        const status = error.statusCode || 400;
-        return res.status(status).json({ __type: error.code || 'ValidationException', message: error.message });
+        return sendDomainError(res, error);
       }
     };
+    // Endpoint é calculado a cada resposta: depende da porta de entrada, não é gravado no domínio.
+    const withEndpoint = (req, status) => ({ ...status, Endpoint: endpointOf(req) });
     this.app.post('/2021-01-01/opensearch/domain', (req, res) =>
-      sendDomainResult(res, () => ({ DomainStatus: this.simulator.domains.createDomain(req.body || {}) })));
+      sendDomainResult(res, () => ({ DomainStatus: withEndpoint(req, this.simulator.domains.createDomain(req.body || {})) })));
     this.app.get('/2021-01-01/opensearch/domain/:name', (req, res) =>
-      sendDomainResult(res, () => ({ DomainStatus: this.simulator.domains.describeDomain(req.params.name) })));
+      sendDomainResult(res, () => ({ DomainStatus: withEndpoint(req, this.simulator.domains.describeDomain(req.params.name)) })));
     this.app.delete('/2021-01-01/opensearch/domain/:name', (req, res) =>
-      sendDomainResult(res, () => ({ DomainStatus: this.simulator.domains.deleteDomain(req.params.name) })));
+      sendDomainResult(res, () => ({ DomainStatus: withEndpoint(req, this.simulator.domains.deleteDomain(req.params.name)) })));
     this.app.get('/2021-01-01/domain', (req, res) =>
       sendDomainResult(res, () => ({ DomainNames: this.simulator.domains.listDomainNames() })));
+    this.app.post('/2021-01-01/opensearch/domain/:name/config', (req, res) =>
+      sendDomainResult(res, () => ({ DomainConfig: this.simulator.domains.updateDomainConfig(req.params.name, req.body || {}) })));
+
+    // ========== Tags (AWS CLI `opensearch add-tags|list-tags|remove-tags`) ==========
+    this.app.post('/2021-01-01/tags', (req, res) => {
+      try {
+        const body = req.body || {};
+        this.simulator.domains.addTags(body.ARN, body.TagList);
+        res.status(200).end();
+      } catch (error) {
+        sendDomainError(res, error);
+      }
+    });
+    this.app.get('/2021-01-01/tags', (req, res) =>
+      sendDomainResult(res, () => ({ TagList: this.simulator.domains.listTags(req.query.arn) })));
+    this.app.post('/2021-01-01/tags-removal', (req, res) => {
+      try {
+        const body = req.body || {};
+        this.simulator.domains.removeTags(body.ARN, body.TagKeys);
+        res.status(200).end();
+      } catch (error) {
+        sendDomainError(res, error);
+      }
+    });
 
     // ========== Índices ==========
 
