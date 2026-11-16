@@ -86,8 +86,10 @@ module.exports = {
           ClusterConfig: cc ? { InstanceType: cc.InstanceType, InstanceCount: toNumber(cc.InstanceCount, undefined) } : undefined,
         });
         if (props.Tags?.length) {
+          const scalar = (v) => (typeof v === "number" || typeof v === "boolean" ? String(v) : v);
+          const tags = props.Tags.map((t) => ({ Key: scalar(t?.Key), Value: scalar(t?.Value) }));
           try {
-            store.addTags(status.ARN, props.Tags);
+            store.addTags(status.ARN, tags);
           } catch (err) {
             store.deleteDomain(status.DomainName);
             throw err;

@@ -96,8 +96,17 @@ describe('AWS::OpenSearchService::Domain grava no store de domínios', () => {
     await expect(deleteCfn('dom-a', {})).resolves.toBeUndefined();
   });
 
-  test('tag inválida faz create falhar e não deixa domínio órfão no store', async () => {
-    await expect(createCfn({ Tags: [{ Key: 'a', Value: 1 }] })).rejects.toThrow(/Key and a string Value/);
+  test('Value numérico ou booleano do template vira string na tag', async () => {
+    const result = await createCfn({ Tags: [{ Key: 'a', Value: 1 }, { Key: 'b', Value: true }] });
+
+    expect(sims.opensearch.domains.listTags(result.attrs.Arn)).toEqual([
+      { Key: 'a', Value: '1' },
+      { Key: 'b', Value: 'true' },
+    ]);
+  });
+
+  test('tag sem Key faz create falhar e não deixa domínio órfão no store', async () => {
+    await expect(createCfn({ Tags: [{ Value: 'x' }] })).rejects.toThrow(/Key and a string Value/);
 
     expect(sims.opensearch.domains.listDomainNames()).toEqual([]);
   });
