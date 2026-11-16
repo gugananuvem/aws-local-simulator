@@ -64,20 +64,43 @@ module.exports = {
     },
   },
 
-  // ─── OpenSearch (sem conceito de domínio no simulador: endpoint único) ──
+  // ─── OpenSearch: domínio gravado no store de sims.opensearch.domains (mesmo do CreateDomain) ──
   ...Object.fromEntries(["AWS::OpenSearchService::Domain", "AWS::Elasticsearch::Domain"].map((type) => [
     type,
     {
       inPlace: ["ClusterConfig", "EBSOptions", "AccessPolicies", "Tags", "EngineVersion", "ElasticsearchClusterConfig"],
-      async create({ logicalId, stackName, props, env }) {
+      async create({ logicalId, stackName, props, env, sims }) {
         const name = props.DomainName || generateName(stackName, logicalId, { lower: true, max: 28 });
-        const domainArn = arn(env, "es", `domain/${name}`);
+        const store = sims?.opensearch?.domains;
+        if (!store) {
+          const domainArn = arn(env, "es", `domain/${name}`);
+          return {
+            physicalId: name,
+            attrs: { Arn: domainArn, DomainArn: domainArn, DomainEndpoint: new URL(publicBaseUrl()).host, DomainName: name },
+          };
+        }
+        const cc = props.ClusterConfig ?? props.ElasticsearchClusterConfig;
+        const status = store.createDomain({
+          DomainName: name,
+          EngineVersion: props.EngineVersion ?? props.ElasticsearchVersion,
+          ClusterConfig: cc ? { InstanceType: cc.InstanceType, InstanceCount: toNumber(cc.InstanceCount, undefined) } : undefined,
+        });
+        if (props.Tags?.length) {
+          try {
+            store.addTags(status.ARN, props.Tags);
+          } catch (err) {
+            store.deleteDomain(status.DomainName);
+            throw err;
+          }
+        }
         return {
-          physicalId: name,
-          attrs: { Arn: domainArn, DomainArn: domainArn, DomainEndpoint: new URL(publicBaseUrl()).host, DomainName: name },
+          physicalId: status.DomainName,
+          attrs: { Arn: status.ARN, DomainArn: status.ARN, DomainEndpoint: new URL(publicBaseUrl()).host, DomainName: status.DomainName },
         };
       },
-      async delete() {},
+      async delete({ physicalId, sims }) {
+        sims?.opensearch?.domains?.deleteDomain(physicalId);
+      },
     },
   ])),
 
