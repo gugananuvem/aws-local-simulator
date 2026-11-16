@@ -6,6 +6,7 @@
  */
 
 const { arn, generateName, toBool, toNumber } = require("./helpers");
+const { publicBaseUrl } = require("../../../gateway/public-base");
 
 /** Lista CFN -> estrutura { Quantity, Items } da API do CloudFront. */
 const cfList = (items = []) => ({ Quantity: items.length, Items: items });
@@ -68,13 +69,12 @@ module.exports = {
     type,
     {
       inPlace: ["ClusterConfig", "EBSOptions", "AccessPolicies", "Tags", "EngineVersion", "ElasticsearchClusterConfig"],
-      async create({ logicalId, stackName, props, env, sims }) {
+      async create({ logicalId, stackName, props, env }) {
         const name = props.DomainName || generateName(stackName, logicalId, { lower: true, max: 28 });
-        const port = sims.opensearch?.config?.ports?.opensearch || 9200;
         const domainArn = arn(env, "es", `domain/${name}`);
         return {
           physicalId: name,
-          attrs: { Arn: domainArn, DomainArn: domainArn, DomainEndpoint: `localhost:${port}`, DomainName: name },
+          attrs: { Arn: domainArn, DomainArn: domainArn, DomainEndpoint: new URL(publicBaseUrl()).host, DomainName: name },
         };
       },
       async delete() {},
