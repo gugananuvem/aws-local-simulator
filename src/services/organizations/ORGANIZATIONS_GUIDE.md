@@ -13,7 +13,7 @@ The Organizations service in AWS Local Simulator provides a complete simulation 
 
 ## Service Configuration
 
-**Default Port**: `4580`
+**Default Port**: `4581` (porta legada, ativa com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`; com o gateway, use `http://localhost:4700`)
 **Service Name**: `organizations`
 **Dependencies**: IAM service
 
@@ -26,7 +26,7 @@ module.exports = {
     organizations: true,
   },
   ports: {
-    organizations: 4580,
+    organizations: 4581,
   }
 };
 ```
@@ -133,7 +133,7 @@ Validates regional restrictions and resource constraints from SCPs.
 
 ### Base URL
 ```
-http://localhost:4580
+http://localhost:4581
 ```
 
 ### Organizations Operations

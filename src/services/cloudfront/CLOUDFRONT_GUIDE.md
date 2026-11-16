@@ -1,5 +1,7 @@
 # AWS CloudFront Simulator Guide
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../../../docs/setup/ports.md).
+
 A comprehensive CloudFront simulator for local AWS development and testing. Implements real AWS CloudFront behavior including distributions, caching, invalidation, geo-restrictions, and signed URLs.
 
 ## Features

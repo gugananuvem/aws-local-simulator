@@ -1,5 +1,7 @@
 # CloudWatch (Amazon CloudWatch)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 Amazon CloudWatch é um serviço de monitoramento e observabilidade que fornece logs, métricas e alarmes para aplicações e infraestrutura. O simulador local oferece suporte a CloudWatch, permitindo capturar logs, registrar métricas e criar alarmes.

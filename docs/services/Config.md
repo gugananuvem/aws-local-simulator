@@ -1,5 +1,7 @@
 # AWS Config
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## 📖 Visão Geral
 
 **AWS Config** é um serviço que ajuda a rastrear as configurações dos seus recursos AWS e avaluar como essas configurações atendem às suas necessidades de conformidade.
@@ -240,13 +242,6 @@ aws configservice describe-compliance-by-config-rule \
     "config": 4013
   }
 }
-```
-
-### Variáveis de Ambiente
-
-```bash
-export AWS_LOCAL_SIMULATOR_CONFIG=true
-export AWS_LOCAL_SIMULATOR_CONFIG_PORT=4013
 ```
 
 ---

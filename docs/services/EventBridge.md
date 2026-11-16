@@ -1,5 +1,7 @@
 # EventBridge (Amazon EventBridge)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 Amazon EventBridge é um barramento de eventos serverless que conecta aplicações usando eventos. O simulador local oferece suporte completo a EventBridge, permitindo criar regras, publicar eventos e integrar com outros serviços AWS.

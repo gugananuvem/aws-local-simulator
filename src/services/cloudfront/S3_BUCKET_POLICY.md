@@ -1,5 +1,7 @@
 # CloudFront + S3 Bucket Policy - Access Control
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../../../docs/setup/ports.md).
+
 CloudFront agora **valida permissões** quando tenta acessar objetos em buckets S3. Se o bucket tem uma política que **não permite** acesso do CloudFront, a requisição retorna **403 Access Denied**.
 
 ## 🔒 Como Funciona

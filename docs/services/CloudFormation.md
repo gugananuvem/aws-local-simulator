@@ -1,5 +1,7 @@
 # CloudFormation (AWS CloudFormation)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 AWS CloudFormation é um serviço de Infraestrutura como Código (IaC) que permite provisionar e gerenciar recursos AWS usando templates. O simulador local oferece suporte a CloudFormation, permitindo criar stacks de recursos localmente e testar infraestrutura.

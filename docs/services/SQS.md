@@ -1,5 +1,7 @@
 # SQS (Simple Queue Service)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 Amazon SQS é um serviço de filas de mensagens que desacopla componentes de aplicações distribuídas. O simulador local oferece suporte completo a SQS, incluindo filas padrão, Dead Letter Queues (DLQ), triggers Lambda e RedrivePolicy para tratamento de falhas.

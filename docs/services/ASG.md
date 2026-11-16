@@ -1,5 +1,7 @@
 # ASG (Auto Scaling Group)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 O simulador de ASG (Auto Scaling Group) permite criar e gerenciar grupos de auto-escalonamento, launch templates, políticas de scaling e atividades de scaling. Ele integra-se com o EC2 (para criação de instâncias) e com o ALB (para registro automático de targets).

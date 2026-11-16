@@ -1,5 +1,7 @@
 # DynamoDB (Amazon DynamoDB)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 Amazon DynamoDB é um banco de dados NoSQL gerenciado, rápido e flexível. O simulador local oferece compatibilidade completa com a API DynamoDB, permitindo desenvolver e testar aplicações com tabelas, índices e operações CRUD localmente sem custos.

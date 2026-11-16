@@ -1,5 +1,7 @@
 # VPC (Virtual Private Cloud)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 O VPC Simulator fornece a camada de rede para toda a arquitetura local. Ele permite criar e gerenciar redes isoladas, subnets, gateways e endpoints, emulando o comportamento da AWS VPC na sua máquina.

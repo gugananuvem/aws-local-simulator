@@ -1,5 +1,7 @@
 # Athena
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## 📖 Visão Geral
 
 **AWS Athena** é um serviço de consulta interativa que permite executar consultas SQL em dados armazenados no S3 sem necessidade de gerenciar infraestrutura.
@@ -241,13 +243,6 @@ aws athena get-named-query \
     "athena": 4599
   }
 }
-```
-
-### Variáveis de Ambiente
-
-```bash
-export AWS_LOCAL_SIMULATOR_ATHENA=true
-export AWS_LOCAL_SIMULATOR_ATHENA_PORT=4599
 ```
 
 ---

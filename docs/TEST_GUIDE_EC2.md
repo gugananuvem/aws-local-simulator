@@ -1,5 +1,7 @@
 # Test Guide: EC2, ALB e ASG
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](setup/ports.md).
+
 Guia completo para testar os simuladores de EC2, ALB e ASG.
 
 ## Preparação

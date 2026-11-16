@@ -1,5 +1,7 @@
 # VPC - Simulador de Virtual Private Cloud (parte do serviço EC2)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../../../../docs/setup/ports.md).
+
 Simulador completo de AWS VPC com suporte a rotas, subnets, Internet Gateways, VPC Endpoints e VPC Gateways.
 
 > ℹ️ **A VPC não é um serviço AWS separado.** Na AWS, as ações de VPC fazem parte da API do
@@ -95,10 +97,10 @@ A VPC é habilitada/desabilitada junto com o EC2 (não há mais variável dedica
 
 ```bash
 # Habilitar/Desabilitar o serviço EC2 (que inclui a VPC)
-export AWS_LOCAL_SIMULATOR_EC2=true
+# services.ec2 no aws-local-simulator.json (padrão: true)
 
 # Porta (padrão: 4020), compartilhada com o EC2
-export AWS_LOCAL_SIMULATOR_EC2_PORT=4020
+# ports.ec2 no aws-local-simulator.json (padrão: 4020)
 ```
 
 ### Persistência

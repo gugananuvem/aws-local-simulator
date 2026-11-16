@@ -1,5 +1,7 @@
 # OpenSearch - Guia Completo
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](setup/ports.md).
+
 Simulador local de OpenSearch/Elasticsearch com suporte completo a indexação, busca e agregação.
 
 ## Começar Rápido

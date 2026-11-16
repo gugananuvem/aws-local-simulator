@@ -1,392 +1,198 @@
-<!-- Migrado de: PORTS_CONFIGURATION.md -->
+# Portas e gateway
 
-# AWS Local Simulator - Configuração de Portas
+Este guia cobre a porta única do simulador (gateway), como configurá-la, o modo de portas por serviço (compatibilidade) e o S3 em path-style. Cada valor citado foi conferido no código (`src/config/`, `src/server.js`, `src/gateway/`). Os exemplos marcados como testados rodaram com o AWS CLI 2.37.10 no Windows.
 
-> Guia completo sobre as portas utilizadas por cada serviço AWS no simulador local
+## Porta única (padrão 4700)
 
-## 🚪 Acesso único (porta 4700)
+Com a configuração padrão, o gateway escuta em `4700` e encaminha cada requisição ao serviço certo. A inicialização mostra:
 
-Todos os serviços respondem por uma única porta, `4700` por padrão:
-
-```bash
-aws s3 ls --endpoint-url http://localhost:4700
-aws dynamodb list-tables --endpoint-url http://localhost:4700
-aws sqs list-queues --endpoint-url http://localhost:4700
+```
+Gateway rodando em http://localhost:4700
+Management API rodando em http://localhost:9999
 ```
 
-Para não repetir `--endpoint-url`, defina `AWS_ENDPOINT_URL` (o AWS CLI e os SDKs leem essa variável):
+Exemplos testados, sem `AWS_LOCAL_SIMULATOR_LEGACY_PORTS`:
+
+```bash
+aws dynamodb list-tables --endpoint-url http://localhost:4700
+# { "TableNames": [] }
+aws lambda list-functions --endpoint-url http://localhost:4700
+aws sqs list-queues --endpoint-url http://localhost:4700
+aws s3 ls --endpoint-url http://localhost:4700
+aws opensearch list-domain-names --endpoint-url http://localhost:4700
+aws sts get-caller-identity --endpoint-url http://localhost:4700
+```
+
+Os seis comandos retornaram código 0.
+
+## Como configurar a porta
+
+A primeira fonte definida vence:
+
+1. `AWS_ENDPOINT_URL`. Host e porta vêm da URL. Vence `AWS_LOCAL_SIMULATOR_GATEWAY_PORT` (`src/config/env-loader.js`, `parseEndpointUrl`).
+2. `AWS_LOCAL_SIMULATOR_GATEWAY_PORT` (`src/config/env-loader.js`, `loadGateway`).
+3. `gateway.port` em `aws-local-simulator.json`. Variáveis de ambiente valem sobre o arquivo (`src/config/config-loader.js`).
+4. Padrão `4700` (`src/config/default-config.js`).
+
+### AWS_ENDPOINT_URL
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws dynamodb list-tables
 ```
 
-Também é possível colocar `endpoint_url = http://localhost:4700` no profile em `~/.aws/config`.
+Testado: o comando funcionou sem `--endpoint-url`.
 
-### Como o simulador escolhe o serviço
+### AWS_LOCAL_SIMULATOR_GATEWAY_PORT
 
-1. Cabeçalho `X-Amz-Target` (SDKs em JSON): DynamoDB, SQS, Kinesis, Secrets Manager e outros.
-2. Escopo da assinatura SigV4 (`s3`, `lambda`, `sts`, `iam`, `ec2` e os demais), no cabeçalho `Authorization` ou em `X-Amz-Credential` (URL pré-assinada).
-3. `Action` e `Version` do protocolo query (na query string ou no corpo de formulário).
-4. Prefixo de caminho REST (`/2015-03-31/...` do Lambda, `/restapis` do API Gateway, `/queue/` do SQS).
-5. Sem assinatura: bucket no caminho (`/meu-bucket/chave`, path-style) ou execução de API (`/{apiId}/{stage}/...`).
+```powershell
+$env:AWS_LOCAL_SIMULATOR_GATEWAY_PORT = "4800"
+aws dynamodb list-tables --endpoint-url http://localhost:4800
+```
+
+Testado: o gateway escuta em `4800` e o comando respondeu. Com `AWS_ENDPOINT_URL=http://localhost:4700` definido ao mesmo tempo, o gateway ficou em `4700` e `4800` não abriu.
+
+### gateway.port no arquivo de configuração
+
+Arquivo `aws-local-simulator.json` no diretório de onde o simulador é iniciado:
+
+```json
+{
+  "gateway": {
+    "port": 4900
+  }
+}
+```
+
+Testado: o gateway escuta em `4900` e `4700` fica fechada.
+
+### Profile do AWS CLI
+
+```ini
+# ~/.aws/config
+[profile als]
+region = us-east-1
+endpoint_url = http://localhost:4700
+aws_access_key_id = test
+aws_secret_access_key = test
+```
+
+Testado: `aws dynamodb list-tables --profile als` retornou código 0. Sem as credenciais no perfil, o CLI respondeu `NoCredentials`, mesmo com `AWS_ACCESS_KEY_ID` definido no ambiente. Com a autenticação desligada (padrão), o simulador aceita qualquer valor de chave.
+
+## Portas por serviço (compatibilidade)
+
+As portas por serviço só ficam abertas com uma destas opções:
+
+- `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true` (também aceita `1` ou `yes`).
+- `"gateway": { "legacyPorts": true }` em `aws-local-simulator.json`.
+
+Sem a opção, cada serviço escuta em uma porta livre de loopback (`127.0.0.1`) que só o gateway usa. Com a opção, cada serviço também escuta na própria porta, em todas as interfaces (`0.0.0.0`). Ver `serviceConfigFor` em `src/server.js` e `src/gateway/internal-host.js`.
+
+Testado com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`:
+
+```bash
+aws dynamodb list-tables --endpoint-url http://localhost:8000
+aws lambda list-functions --endpoint-url http://localhost:3001
+aws organizations list-roots --endpoint-url http://localhost:4581
+```
+
+Testado sem a opção: `http://localhost:3001/2015-03-31/functions` não conectou (código de saída do curl 7).
+
+Para mudar a porta legada de um serviço, use `ports` em `aws-local-simulator.json` (por exemplo `"ports": { "s3": 5000 }`). Isso só vale com `legacyPorts` ligado. Não testado neste ciclo.
+
+## S3 em path-style (modo principal)
+
+Configure o profile para o S3 usar path-style:
+
+```ini
+[profile als]
+region = us-east-1
+endpoint_url = http://localhost:4700
+aws_access_key_id = test
+aws_secret_access_key = test
+s3 =
+  addressing_style = path
+```
+
+```bash
+aws s3 mb s3://bucket-teste --profile als
+aws s3 cp ./arquivo.txt s3://bucket-teste/arquivo.txt --profile als
+aws s3 ls s3://bucket-teste --profile als
+```
+
+Testado na porta 4700: os três comandos retornaram código 0. Com `--debug`, o CLI montou a URL `http://localhost:4700/bucket-teste`.
+
+Sem `addressing_style`, o mesmo CLI também criou e listou um bucket na porta 4700 (testado). O path-style é o modo recomendado porque deixa explícito o formato da URL. O host virtual (`bucket.localhost:4700`) é aceito quando o bucket existe (`src/gateway/route-classifier.js`, regra R6). Esse caminho não foi testado com resolução de DNS.
+
+URLs pré-assinadas do S3 também usam path-style sobre a URL pública (`src/services/s3/presigned-url-generator.js`).
+
+## Como o simulador escolhe o serviço
+
+O gateway aplica as regras na ordem abaixo (`src/gateway/route-classifier.js`):
+
+1. Cabeçalho `X-Amz-Target` (protocolo JSON de DynamoDB, SQS, Secrets Manager e outros).
+2. Escopo da assinatura SigV4 (`s3`, `lambda`, `sts`, `es` e os demais), no cabeçalho `Authorization` ou em `X-Amz-Credential`.
+3. `Action` e `Version` do protocolo query, na query string ou no corpo de formulário.
+4. Prefixo de caminho REST (`/2015-03-31/` do Lambda, `/restapis` do API Gateway, `/_cat` e `/_bulk` do OpenSearch, entre outros).
+5. Sem assinatura: primeiro segmento do caminho é um bucket existente (path-style), ou `/{apiId}/{stage}/...` de um API existente.
 6. Host `bucket.localhost:4700` (virtual-hosted), quando o bucket existe.
 
 Requisição que não casa com nenhuma regra recebe HTTP 400 com `UnknownService`.
 
-### Configuração da porta
-
-Ordem de precedência, da maior para a menor:
-
-1. `AWS_ENDPOINT_URL` (ex.: `http://localhost:4700`). A porta vem da URL.
-2. `AWS_LOCAL_SIMULATOR_GATEWAY_PORT`.
-3. `gateway.port` em `aws-local-simulator.json` (padrão `4700`).
-
-Os serviços internos escutam só em `127.0.0.1`. O gateway escuta em todas as interfaces, como os serviços faziam antes.
-
-### Limites
-
-- Autenticação: com `authentication.enabled = false` (padrão) nada é validado. Com `true`, cada serviço confere a assinatura, como antes.
-- Management API (`9999`) e as rotas `/__admin` dos serviços não passam pelo gateway. Para `/__admin` de um serviço, use a porta legada (abaixo).
-- URL pré-assinada do S3: usa path-style e o host da requisição, ou `AWS_ENDPOINT_URL` quando definido.
-
-## 🔁 Compatibilidade: portas por serviço
-
-Para scripts que ainda usam `localhost:8000`, `localhost:4566` etc., ligue as portas legadas:
-
-```bash
-AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true
-```
-
-ou `"gateway": { "legacyPorts": true }` em `aws-local-simulator.json`. Com a opção ligada, cada serviço também escuta na própria porta, em todas as interfaces, como antes. Sem a opção, as portas da tabela abaixo não ficam abertas.
-
-Observação: Organizations tem porta padrão `4581` em `default-config.js`. O construtor do serviço usa `4580` só quando a configuração não traz o valor.
-
-## 📋 Tabela de Portas
-
-| Serviço | Porta | Protocolo | URL | Descrição |
-|---------|-------|-----------|-----|-----------|
-| DynamoDB | 8000 | HTTP | http://localhost:8000 | Banco de dados NoSQL |
-| S3 | 4566 | HTTP | http://localhost:4566 | Armazenamento de objetos, Website estático |
-| Lambda | 3001 | HTTP | http://localhost:3001 | Invocação e gerenciamento de funções serverless |
-| Cognito | 9229 | HTTP | http://localhost:9229 | Autenticação e autorização |
-| STS | 9326 | HTTP | http://localhost:9326 | Credenciais temporárias e AssumeRole |
-| SQS | 9324 | HTTP | http://localhost:9324 | Filas de mensagens |
-| SNS | 9911 | HTTP | http://localhost:9911 | Notificações pub/sub |
-| KMS | 4000 | HTTP | http://localhost:4000 | Gerenciamento de chaves |
-| Secrets Manager | 4001 | HTTP | http://localhost:4001 | Gerenciamento de segredos |
-| Parameter Store | 4002 | HTTP | http://localhost:4002 | Armazenamento de parâmetros |
-| IAM | 4003 | HTTP | http://localhost:4003 | Identity and Access Management |
-| EventBridge | 4010 | HTTP | http://localhost:4010 | Barramento de eventos |
-| EC2 | 4020 | HTTP | http://localhost:4020 | Instâncias, AMIs, Security Groups, VPC, Subnets, Route Tables |
-| ALB | 4021 | HTTP | http://localhost:4021 | Application Load Balancer |
-| ASG | 4022 | HTTP | http://localhost:4022 | Auto Scaling Groups |
-| CloudWatch | 4011 | HTTP | http://localhost:4011 | Logs, métricas e alarmes |
-| CloudTrail | 4012 | HTTP | http://localhost:4012 | Auditoria de API calls |
-| AWS Config | 4013 | HTTP | http://localhost:4013 | Conformidade e configuração |
-| Athena | 4599 | HTTP | http://localhost:4599 | Consultas SQL em dados no S3 |
-| X-Ray | 4015 | HTTP | http://localhost:4015 | Rastreamento distribuído |
-| **CloudFormation** | **4582** | **HTTP** | **http://localhost:4582** | **Infraestrutura como código** |
-| **Organizations** | **4581** | **HTTP** | **http://localhost:4581** | **OUs, Accounts, SCPs, Control Tower** |
-| OpenSearch | 9200 | HTTP | http://localhost:9200 | Índices, Documentos, Busca Full-text |
-| Kinesis Data Streams | 4568 | HTTP | http://localhost:4568 | Shards, Records, Consumers |
-| Kinesis Firehose | 4569 | HTTP | http://localhost:4569 | Delivery Streams, Buffering |
-| Kinesis Analytics | 4570 | HTTP | http://localhost:4570 | SQL Applications, Real-time Analytics |
-| API Gateway | 4567 | HTTP | http://localhost:4567 | APIs REST e HTTP |
-| Management API | 9999 | HTTP | http://localhost:9999 | Admin endpoints para gerenciamento |
-
----
-
-## 🔧 Configurando Portas Customizadas
-
-Você pode sobrescrever as portas padrão no arquivo `aws-local-simulator.json`:
-
-```json
-{
-  "ports": {
-    "dynamodb": 8000,
-    "s3": 4566,
-    "lambda": 3001,
-    "cognito": 9229,
-    "sts": 9326,
-    "sqs": 9324,
-    "sns": 9911,
-    "kms": 4000,
-    "secretManager": 4001,
-    "parameterStore": 4002,
-    "iam": 4003,
-    "eventbridge": 4010,
-    "cloudwatch": 4011,
-    "cloudtrail": 4012,
-    "config": 4013,
-    "xray": 4015,
-    "ec2": 4020,
-    "alb": 4021,
-    "asg": 4022,
-    "opensearch": 9200,
-    "kinesis-data-streams": 4568,
-    "kinesis-firehose": 4569,
-    "kinesis-analytics": 4570,
-    "apigateway": 4567,
-    "cloudformation": 4582,
-    "organizations": 4581
-  }
-}
-```
-
-### Exemplo: Alterar Porta do S3
-
-```json
-{
-  "ports": {
-    "s3": 5000
-  }
-}
-```
-
-Agora S3 estará disponível em `http://localhost:5000`
-
----
-
-## 🚀 Iniciando todos os serviços
-
-```bash
-# Iniciar o simulador com todas as portas padrão
-npm start
-
-# Ou especificamente:
-node index.js
-```
-
-Você verá output como:
-
-```
-ℹ️ 🗄️  DynamoDB rodando em http://localhost:8000
-ℹ️ 🗄️  S3 rodando em http://localhost:4566
-ℹ️ 🚀 Lambda API rodando em http://localhost:3001
-ℹ️ 🔐 Cognito rodando em http://localhost:9229
-...
-ℹ️ ✅ Organizations Server iniciado na porta 4581
-ℹ️ ✅ CloudFormation Server iniciado na porta 4582
-```
-
----
-
-## 📌 Portas Reservadas do Sistema
-
-> ⚠️ **Importante:** Se você receber erro `EADDRINUSE: address already in use`, significa que outra aplicação está usando a porta.
-
-### Verificar quais processos estão usando as portas
-
-#### No Windows (PowerShell):
-
-```powershell
-# Verificar porta específica
-netstat -ano | findstr :4566
-
-# Matar processo usando a porta (exemplo: porta 4566, PID 1234)
-taskkill /PID 1234 /F
-```
-
-#### No Linux/macOS:
-
-```bash
-# Verificar porta específica
-lsof -i :4566
-
-# Matar processo
-kill -9 <PID>
-```
-
----
-
-## 🔌 Conectando aos Serviços
-
-> Os exemplos abaixo usam as portas por serviço (modo legado). Com o gateway, use `http://localhost:4700` em todos (ver "Acesso único").
-
-### Com AWS CLI
-
-```bash
-# S3
-aws s3 ls --endpoint-url http://localhost:4566
-
-# DynamoDB
-aws dynamodb list-tables --endpoint-url http://localhost:8000
-
-# SQS
-aws sqs list-queues --endpoint-url http://localhost:9324
-```
-
-### Com AWS SDK (Node.js)
-
-```javascript
-const AWS = require('aws-sdk');
-
-// S3
-const s3 = new AWS.S3({
-  endpoint: 'http://localhost:4566',
-  s3ForcePathStyle: true,
-  accessKeyId: 'testing',
-  secretAccessKey: 'testing'
-});
-
-// DynamoDB
-const dynamodb = new AWS.DynamoDB({
-  endpoint: 'http://localhost:8000',
-  region: 'us-east-1',
-  accessKeyId: 'testing',
-  secretAccessKey: 'testing'
-});
-
-// Lambda
-const lambda = new AWS.Lambda({
-  endpoint: 'http://localhost:3001',
-  region: 'us-east-1',
-  accessKeyId: 'testing',
-  secretAccessKey: 'testing'
-});
-```
-
-### Com SDK v3 (@aws-sdk)
-
-```javascript
-const { S3Client, ListBucketsCommand } = require("@aws-sdk/client-s3");
-
-const s3Client = new S3Client({
-  endpoint: "http://localhost:4566",
-  region: "us-east-1",
-  credentials: {
-    accessKeyId: "testing",
-    secretAccessKey: "testing"
-  }
-});
-
-const command = new ListBucketsCommand({});
-const response = await s3Client.send(command);
-```
-
----
-
-## 🏗️ Architetura de Portas
-
-```
-┌─────────────────────────────────────────────────────────┐
-│          AWS LOCAL SIMULATOR - PORTAS                   │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  STORAGE & COMPUTE                                      │
-│  ├─ DynamoDB ............... 8000                       │
-│  ├─ S3 (+ Presigned URLs) .. 4566                       │
-│  ├─ Lambda ................. 3001                       │
-│  └─ EC2(+VPC)/ALB/ASG ...... 4020-4022                  │
-│                                                         │
-│  IDENTITY & AUTH                                        │
-│  ├─ Cognito ................ 9229                       │
-│  ├─ IAM .................... 4003                       │
-│  ├─ STS .................... 9326                       │
-│  └─ API Gateway ............ 4567                       │
-│                                                         │
-│  MESSAGING & EVENTS                                     │
-│  ├─ SQS .................... 9324                       │
-│  ├─ SNS .................... 9911                       │
-│  ├─ EventBridge ............ 4010                       │
-│  └─ Kinesis ................ 4568-4570                  │
-│                                                         │
-│  SECURITY & CONFIG                                      │
-│  ├─ KMS .................... 4000                       │
-│  ├─ Secrets Manager ........ 4001                       │
-│  ├─ Parameter Store ........ 4002                       │
-│  ├─ AWS Config ............. 4013                       │
-│  └─ CloudTrail ............. 4012                       │
-│                                                         │
-│  INFRASTRUCTURE & MANAGEMENT                            │
-│  ├─ CloudFormation ......... 4582 ← NOVO              │
-│  ├─ Organizations .......... 4581 ← NOVO              │
-│  ├─ CloudWatch ............. 4011                       │
-│  ├─ OpenSearch ............. 9200                       │
-│  ├─ X-Ray .................. 4015                       │
-│  ├─ Athena ................. 4599                       │
-│  └─ Management API ......... 9999                       │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-## 📊 Estatísticas de Portas
-
-| Faixa | Uso | Quantidade |
-|-------|-----|-----------|
-| 3000-3999 | Lambda | 1 |
-| 4000-4999 | Serviços diversos | 22 |
-| 8000-8999 | DynamoDB | 1 |
-| 9000-9999 | Cognito, STS, SNS | 4 |
-
-**Total de portas ativas:** 28+
-
----
-
-## ⚠️ Resolução de Problemas
-
-### Erro: `EADDRINUSE: address already in use :::4581`
-
-**Solução:** Uma aplicação já está usando a porta 4581.
-
-```powershell
-# Windows - Encontrar e matar o processo
-netstat -ano | findstr :4581
-taskkill /PID <PID> /F
-
-# Linux/macOS
-lsof -i :4581
-kill -9 <PID>
-```
-
-### Erro: `Connection refused` ao conectar em um serviço
-
-**Verificar:**
-1. Serviço está habilitado no `aws-local-simulator.json`
-2. A porta está correta
-3. O simulador foi iniciado: `npm start`
-4. Não há firewall bloqueando a porta
-
-### Porta padrão já está em uso
-
-**Solução:** Configure uma porta diferente no arquivo de configuração:
-
-```json
-{
-  "ports": {
-    "s3": 5000,
-    "dynamodb": 8001
-  }
-}
-```
-
----
-
-## 🔐 Usando Portas Seguras (HTTPS)
-
-Por padrão, o simulador usa HTTP. Para ativar HTTPS:
-
-```json
-{
-  "https": true,
-  "ssl": {
-    "cert": "/path/to/cert.pem",
-    "key": "/path/to/key.pem"
-  }
-}
-```
-
-Depois acesse via:
-```bash
-https://localhost:4566
-```
-
----
-
-## 📚 Referências
-
-- [AWS Local Simulator Repository](https://github.com/gugananuvem/aws-local-simulator)
-- [AWS Documentation](https://docs.aws.amazon.com/)
-- [LocalStack Documentation](https://docs.localstack.cloud/)
+## Management API e rotas /__admin
+
+- A Management API escuta em `adminPort`, padrão `9999` (`src/server.js`, `startManagementServer`). Testado: `GET http://localhost:9999/__admin/services` retornou a lista de serviços.
+- O gateway não roteia `/__admin`. Testado: `GET http://localhost:4700/__admin/functions` retornou HTTP 400 `UnknownService`.
+- Para as rotas `/__admin` de um serviço, use a porta legada com `legacyPorts` ligado. Testado: `POST http://localhost:3001/__admin/functions` respondeu 201.
+
+## URL de função Lambda
+
+`aws lambda create-function-url-config` monta a `FunctionUrl` com o host da requisição. Testado: com o gateway na porta 4900, a URL retornada foi `http://localhost:4900/2021-10-31/functions/fn-url/url`.
+
+## Tabela de portas
+
+Valores do `default-config.js`. Quando a chave não existe na configuração, o serviço usa o mesmo número como fallback no próprio `index.js`.
+
+| Serviço | Porta legada | Observação |
+|---------|--------------|------------|
+| DynamoDB | 8000 | |
+| DAX | 8111 | |
+| S3 | 4566 | |
+| Athena | 4599 | |
+| Aurora | 4510 | |
+| Lambda | 3001 | |
+| Cognito | 9229 | |
+| STS | 9326 | |
+| SQS | 9324 | |
+| SNS | 9911 | |
+| EventBridge | 4010 | |
+| API Gateway | 4567 | |
+| KMS | 4000 | |
+| Secrets Manager | 4001 | |
+| Parameter Store | 4002 | |
+| IAM | 4003 | |
+| Kinesis Data Streams | 4568 | |
+| Kinesis Firehose | 4569 | |
+| Kinesis Analytics | 4570 | |
+| EC2 | 4020 | |
+| ALB | 4021 | |
+| ASG | 4022 | |
+| Route53 | 4024 | |
+| ACM | 4025 | |
+| CloudFront | 4017 | |
+| CloudWatch | 4011 | |
+| CloudTrail | 4012 | |
+| AWS Config | 4013 | |
+| X-Ray | 4015 | |
+| CloudFormation | 4582 | |
+| Organizations | 4581 | Padrão em `default-config.js`. O fallback `4580` em `src/services/organizations/index.js` só vale se `ports.organizations` faltar. |
+| OpenSearch | 9200 | |
+| Management API | 9999 | `adminPort`. Sempre ativa, fora do gateway. |
+
+ECS (`8080`) fica desligado por padrão (`services.ecs: false`).
+
+## Problemas comuns
+
+- **Connection refused em uma porta legada.** Confirme `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Sem essa opção, a porta do serviço não fica aberta.
+- **Porta em uso.** Verifique no Windows com `Get-NetTCPConnection -State Listen -LocalPort 4700`. Em Linux/macOS, use `lsof -i :4700`.
+- **AWS_ENDPOINT_URL inválida.** O simulador para na inicialização com a mensagem `AWS_ENDPOINT_URL invalida` (`src/config/env-loader.js`).

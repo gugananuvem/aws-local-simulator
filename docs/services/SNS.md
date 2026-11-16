@@ -1,5 +1,7 @@
 # SNS (Simple Notification Service)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 Amazon SNS é um serviço de notificações pub/sub totalmente gerenciado. O simulador local oferece suporte completo a SNS, permitindo criar tópicos, publicar mensagens e inscrever aplicações para receber notificações em tempo real.

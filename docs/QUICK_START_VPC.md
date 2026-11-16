@@ -1,5 +1,7 @@
 # VPC Simulator - Quick Start Guide 🚀
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](setup/ports.md).
+
 ## 5 Minutos para Entender o VPC Simulator
 
 ### Passo 1: Iniciar o Simulador

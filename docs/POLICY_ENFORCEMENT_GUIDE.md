@@ -1,5 +1,7 @@
 # AWS Policy Enforcement Guide
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](setup/ports.md).
+
 ## 🎯 Overview
 
 A partir de agora, o AWS Local Simulator suporta **enforcement real de políticas** - exatamente como funciona em produção AWS.
@@ -160,7 +162,7 @@ aws s3 mb s3://my-bucket --endpoint-url http://localhost:4566
 ### 1. Criar Organização
 
 ```javascript
-const orgs = new AWS.Organizations({ endpoint: 'http://localhost:4580' });
+const orgs = new AWS.Organizations({ endpoint: 'http://localhost:4581' });
 
 // Criar organização
 await orgs.createOrganization({ FeatureSet: 'ALL' }).promise();
@@ -247,7 +249,7 @@ await iam.putRolePolicy({
 
 ```javascript
 async function testPolicyEnforcement() {
-  const orgs = new AWS.Organizations({ endpoint: 'http://localhost:4580' });
+  const orgs = new AWS.Organizations({ endpoint: 'http://localhost:4581' });
   const sts = new AWS.STS({ endpoint: 'http://localhost:9326' });
   const s3 = new AWS.S3({ endpoint: 'http://localhost:4566' });
 
@@ -312,7 +314,7 @@ async function testPolicyEnforcement() {
 
 ```javascript
 async function checkAuditTrail() {
-  const orgs = new AWS.Organizations({ endpoint: 'http://localhost:4580' });
+  const orgs = new AWS.Organizations({ endpoint: 'http://localhost:4581' });
   const cloudtrail = new AWS.CloudTrail({ endpoint: 'http://localhost:4012' });
 
   // Verificar eventos
@@ -384,7 +386,7 @@ Políticas são cacheadas por 60 segundos por padrão:
 
 1. Verificar se SCP foi anexado corretamente:
 ```javascript
-const org = new AWS.Organizations({ endpoint: 'http://localhost:4580' });
+const org = new AWS.Organizations({ endpoint: 'http://localhost:4581' });
 const policies = await org.listPolicies({ Filter: 'SERVICE_CONTROL_POLICY' }).promise();
 console.log('Policies:', policies.Policies);
 ```
@@ -398,7 +400,7 @@ console.log('Role:', role.Role.Arn);
 
 3. Testar policy sem role:
 ```javascript
-const orgs = new AWS.Organizations({ endpoint: 'http://localhost:4580' });
+const orgs = new AWS.Organizations({ endpoint: 'http://localhost:4581' });
 const evaluation = await orgs.evaluateSCPs({
   AccountId: '123456789012',
   Action: 's3:CreateBucket',

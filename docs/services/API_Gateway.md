@@ -1,5 +1,7 @@
 # API Gateway (AWS API Gateway)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 AWS API Gateway é um serviço gerenciado que permite criar APIs REST e HTTP de forma rápida. O simulador local oferece suporte completo a API Gateway, permitindo criar endpoints, rotas, autenticadores e validadores localmente.

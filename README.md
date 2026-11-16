@@ -11,7 +11,7 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 1. **Instalação**: `npm install --save-dev @gugananuvem/aws-local-simulator`
 2. **Iniciar**: `npx aws-local-simulator start`
 3. **Configurar**: Crie `aws-local-simulator.json`
-4. **Conectar**: Use SDK AWS apontando para localhost
+4. **Conectar**: aponte o AWS CLI ou o SDK para `http://localhost:4700`, a porta única do gateway. Ver [portas e gateway](docs/setup/ports.md)
 
 📚 **[Guia de Instalação Completo](docs/setup/installation.md)**
 
@@ -478,9 +478,11 @@ curl -X POST http://localhost:9999/__admin/services/sqs/disable
 
 ## 🔌 Configuração de Portas
 
-Cada serviço usa uma porta padrão diferente:
+Todos os serviços respondem pela porta única `4700` (gateway). Ela pode ser trocada com `AWS_ENDPOINT_URL`, `AWS_LOCAL_SIMULATOR_GATEWAY_PORT` ou `gateway.port` no JSON.
 
-| Serviço | Porta Padrão |
+As portas por serviço abaixo são só compatibilidade. Elas ficam abertas com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`.
+
+| Serviço | Porta por serviço (legado) |
 |---------|-------------|
 | S3 | 4566 |
 | DynamoDB | 8000 |
@@ -496,6 +498,9 @@ Cada serviço usa uma porta padrão diferente:
 [Configuração completa de portas →](docs/setup/ports.md)
 
 ## 💡 Exemplos Rápidos
+
+> Os exemplos desta seção usam a porta de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`.
+> Com o gateway, troque a URL por `http://localhost:4700`. Testados: `aws dynamodb list-tables --endpoint-url http://localhost:8000` e `aws lambda list-functions --endpoint-url http://localhost:3001` (modo legado), e `aws dynamodb list-tables --endpoint-url http://localhost:4700` (porta única).
 
 ### S3
 ```bash

@@ -1,5 +1,7 @@
 # Organizations (AWS Organizations)
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](../setup/ports.md).
+
 ## Visão Geral
 
 AWS Organizations é um serviço que permite gerenciar múltiplas contas AWS de forma centralizada. O simulador local oferece suporte a Organizations, permitindo criar e gerenciar OUs (Organizational Units), contas, políticas de controle de serviço (SCPs) e Control Tower guardrails.

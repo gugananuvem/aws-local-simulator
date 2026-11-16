@@ -1,5 +1,7 @@
 # S3 Presigned URLs API Reference
 
+> **Portas:** os exemplos deste documento usam a porta própria de cada serviço, que só fica aberta com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Com o gateway (padrão), os serviços respondem em `http://localhost:4700`. Ver [portas e gateway](setup/ports.md).
+
 > Complete documentation for S3 Presigned URLs in AWS Local Simulator
 
 ## Table of Contents
@@ -652,3 +654,25 @@ aws s3 presign s3://my-bucket/file.pdf \
 - [AWS S3 Presigned URLs Documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/PresignedUrlUploadObject.html)
 - [AWS Signature Version 4](https://docs.aws.amazon.com/general/latest/gr/signature-version-4.html)
 - [AWS Local Simulator Repository](https://github.com/gugananuvem/aws-local-simulator)
+
+## S3 em path-style (modo principal)
+
+No profile do AWS CLI, use `addressing_style = path` e a porta única:
+
+```ini
+[profile als]
+region = us-east-1
+endpoint_url = http://localhost:4700
+aws_access_key_id = test
+aws_secret_access_key = test
+s3 =
+  addressing_style = path
+```
+
+```bash
+aws s3 mb s3://bucket-teste --profile als
+aws s3 cp ./arquivo.txt s3://bucket-teste/arquivo.txt --profile als
+aws s3 ls s3://bucket-teste --profile als
+```
+
+Testado na porta 4700 (AWS CLI 2.37.10): os três comandos retornaram código 0. Sem `addressing_style`, o CLI também funcionou nesse teste. Detalhes em [portas e gateway](setup/ports.md).
