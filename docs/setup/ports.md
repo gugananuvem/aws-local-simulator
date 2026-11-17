@@ -79,6 +79,60 @@ aws_secret_access_key = test
 
 Testado: `aws dynamodb list-tables --profile als` retornou código 0. Sem as credenciais no perfil, o CLI respondeu `NoCredentials`, mesmo com `AWS_ACCESS_KEY_ID` definido no ambiente. Com a autenticação desligada (padrão), o simulador aceita qualquer valor de chave.
 
+## Exemplos por serviço (onda 1)
+
+Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco rodou com código 0 na rodada B da onda 1. O registro de cada comando está em `.agents/tasks/migracao-porta-unica/inventory/onda1/logs/run-b-<servico>.txt`, e a comparação com a porta legada está em `inventory/onda1/onda1.md`.
+
+### IAM
+
+Testado (onda 1, rodada B): código 0. Registro: `run-b-iam.txt`.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws iam list-users
+# { "Users": [] }
+```
+
+### KMS
+
+Testado (onda 1, rodada B): código 0. Registro: `run-b-kms.txt`.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws kms list-keys
+# { "Keys": [] }
+```
+
+### Secrets Manager
+
+Testado (onda 1, rodada B): código 0. Registro: `run-b-secret-manager.txt`.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws secretsmanager list-secrets
+# { "SecretList": [] }
+```
+
+### Parameter Store
+
+Testado (onda 1, rodada B): código 0. Registro: `run-b-parameter-store.txt`.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws ssm describe-parameters
+# { "Parameters": [] }
+```
+
+### CloudTrail
+
+Testado (onda 1, rodada B): código 0. Registro: `run-b-cloudtrail.txt`. A saída lista a trilha padrão `local-default-trail`.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws cloudtrail describe-trails
+# { "trailList": [ { "Name": "local-default-trail" } ] }
+```
+
 ## Portas por serviço (compatibilidade)
 
 As portas por serviço só ficam abertas com uma destas opções:
