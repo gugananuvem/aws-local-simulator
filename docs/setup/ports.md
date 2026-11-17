@@ -81,7 +81,7 @@ Testado: `aws dynamodb list-tables --profile als` retornou código 0. Sem as cre
 
 ## Exemplos por serviço
 
-Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco foi executado no modo padrão, sem `AWS_LOCAL_SIMULATOR_LEGACY_PORTS`. Em uma rodada anterior com a porta legada ligada, o mesmo comando com `--endpoint-url` para a porta legada do serviço deu código 0 e a mesma saída. Cada bloco traz esse resultado.
+Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco foi executado no modo padrão, sem `AWS_LOCAL_SIMULATOR_LEGACY_PORTS`. Em 2026-11-17, na rodada com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`, o mesmo comando com `--endpoint-url` para a porta legada do serviço deu código 0 e a mesma saída. Cada bloco traz esse resultado. Os logs dessa rodada ficam em `inventory/onda1/logs/run-a-<servico>-*.txt`, na pasta `.agents` (ignorada pelo git).
 
 ### IAM
 
