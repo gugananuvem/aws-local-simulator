@@ -79,13 +79,13 @@ aws_secret_access_key = test
 
 Testado: `aws dynamodb list-tables --profile als` retornou código 0. Sem as credenciais no perfil, o CLI respondeu `NoCredentials`, mesmo com `AWS_ACCESS_KEY_ID` definido no ambiente. Com a autenticação desligada (padrão), o simulador aceita qualquer valor de chave.
 
-## Exemplos por serviço (onda 1)
+## Exemplos por serviço
 
-Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco rodou com código 0 na rodada B da onda 1. O registro de cada comando está em `.agents/tasks/migracao-porta-unica/inventory/onda1/logs/run-b-<servico>.txt`, e a comparação com a porta legada está em `inventory/onda1/onda1.md`.
+Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco rodou com código 0 no modo padrão, sem `AWS_LOCAL_SIMULATOR_LEGACY_PORTS`. O registro de cada comando (arquivo `run-b-<servico>.txt`) fica fora do repositório, na pasta `.agents` (ignorada pelo git), e a comparação com a porta legada fica no inventário local da migração.
 
 ### IAM
 
-Testado (onda 1, rodada B): código 0. Registro: `run-b-iam.txt`.
+Testado: código 0. Registro: `run-b-iam.txt`.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
@@ -95,7 +95,7 @@ aws iam list-users
 
 ### KMS
 
-Testado (onda 1, rodada B): código 0. Registro: `run-b-kms.txt`.
+Testado: código 0. Registro: `run-b-kms.txt`.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
@@ -105,7 +105,7 @@ aws kms list-keys
 
 ### Secrets Manager
 
-Testado (onda 1, rodada B): código 0. Registro: `run-b-secret-manager.txt`.
+Testado: código 0. Registro: `run-b-secret-manager.txt`.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
@@ -115,7 +115,7 @@ aws secretsmanager list-secrets
 
 ### Parameter Store
 
-Testado (onda 1, rodada B): código 0. Registro: `run-b-parameter-store.txt`.
+Testado: código 0. Registro: `run-b-parameter-store.txt`.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
@@ -125,7 +125,7 @@ aws ssm describe-parameters
 
 ### CloudTrail
 
-Testado (onda 1, rodada B): código 0. Registro: `run-b-cloudtrail.txt`. A saída lista a trilha padrão `local-default-trail`.
+Testado: código 0. Registro: `run-b-cloudtrail.txt`. A saída lista a trilha padrão `local-default-trail`.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
