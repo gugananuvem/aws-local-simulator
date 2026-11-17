@@ -81,7 +81,7 @@ Testado: `aws dynamodb list-tables --profile als` retornou código 0. Sem as cre
 
 ## Exemplos por serviço
 
-Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco foi executado no modo padrão, sem `AWS_LOCAL_SIMULATOR_LEGACY_PORTS`. Em 2026-11-17, na rodada com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`, o mesmo comando com `--endpoint-url` para a porta legada do serviço deu código 0 e a mesma saída. Cada bloco traz esse resultado. Os logs dessa rodada ficam em `inventory/onda1/logs/run-a-<servico>-*.txt`, na pasta `.agents` (ignorada pelo git).
+Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco foi executado no modo padrão, sem `AWS_LOCAL_SIMULATOR_LEGACY_PORTS`. Em 2026-11-17, na rodada com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`, o mesmo comando com `--endpoint-url` para a porta legada do serviço deu código 0 e a mesma saída. Cada bloco traz esse resultado. Os logs dessas rodadas ficam em `inventory/onda1/logs/run-a-<servico>-*.txt` e em `inventory/onda2/logs/`, na pasta `.agents` (ignorada pelo git).
 
 ### IAM
 
@@ -131,6 +131,66 @@ Testado: código 0 na porta 4700. Porta legada 4012: código 0 e mesma saída. A
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
 aws cloudtrail describe-trails
 # { "trailList": [ { "Name": "local-default-trail" } ] }
+```
+
+### DynamoDB
+
+Testado: código 0 na porta 4700. Porta legada 8000: código 0 e mesma saída.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws dynamodb list-tables
+# { "TableNames": [ ... ] }
+```
+
+### S3
+
+Testado com `addressing_style = path` no arquivo de configuração do AWS CLI (ver a seção S3 em path-style abaixo): código 0 na porta 4700. Porta legada 4566: código 0 e mesma saída.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws s3 ls
+# lista os buckets existentes
+```
+
+### Lambda
+
+Testado: código 0 na porta 4700. Porta legada 3001: código 0 e mesma saída.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws lambda list-functions
+# { "Functions": [ ... ] }
+```
+
+### API Gateway
+
+Testado: código 0 na porta 4700. Porta legada 4567: código 0 e mesma saída. A saída lista as APIs existentes, e a API estática `static_0` aparece sempre.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws apigateway get-rest-apis
+# { "items": [ ... ] }
+```
+
+### SQS
+
+Testado: código 0 na porta 4700. Porta legada 9324: código 0 e mesma saída. Na criação, a `QueueUrl` usa a porta pela qual a requisição chegou, por isso uma fila criada pela porta legada traz `localhost:9324`.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws sqs list-queues
+# { "QueueUrls": [ ... ] }
+```
+
+### SNS
+
+Testado: código 0 na porta 4700. Porta legada 9911: código 0 e mesma saída.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws sns list-topics
+# { "Topics": [] }
 ```
 
 ## Portas por serviço (compatibilidade)
