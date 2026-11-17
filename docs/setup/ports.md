@@ -225,6 +225,44 @@ aws elbv2 describe-load-balancers
 # { "LoadBalancers": [] }
 ```
 
+## Exemplos da onda 3 (--endpoint-url)
+
+Comandos rodados contra `http://localhost:4700` com `--endpoint-url`, a partir do worktree `migracao-onda3`, com `AWS_ACCESS_KEY_ID=test`, `AWS_SECRET_ACCESS_KEY=test` e região `us-east-1`. Os comandos são somente leitura. A saída abaixo é a registrada na execução. Em `describe-vpcs`, a saída está abreviada.
+
+### STS (--endpoint-url)
+
+Testado: código de saída 0 na porta 4700.
+
+```powershell
+aws sts get-caller-identity --endpoint-url http://localhost:4700
+# { "UserId": "AKIAIOSFODNN7EXAMPLE", "Account": "123456789012", "Arn": "arn:aws:iam::123456789012:user/local-simulator" }
+# exit=0
+```
+
+### EC2 (--endpoint-url)
+
+Testado: código de saída 0 na porta 4700 para os dois comandos.
+
+```powershell
+aws ec2 describe-vpcs --endpoint-url http://localhost:4700
+# { "Vpcs": [ { "VpcId": "vpc-96b360dc", "CidrBlock": "10.0.0.0/16", "State": "available", "Tags": [ { "Key": "Name", "Value": "main-vpc" } ], ... } ] }
+# exit=0
+
+aws ec2 describe-instances --endpoint-url http://localhost:4700
+# { "Reservations": [ { "ReservationId": "r-default", "OwnerId": "123456789012", "Groups": [], "Instances": [] } ] }
+# exit=0
+```
+
+### ALB (--endpoint-url)
+
+Testado: código de saída 0 na porta 4700.
+
+```powershell
+aws elbv2 describe-load-balancers --endpoint-url http://localhost:4700
+# { "LoadBalancers": [] }
+# exit=0
+```
+
 ## Portas por serviço (compatibilidade)
 
 As portas por serviço só ficam abertas com uma destas opções:
