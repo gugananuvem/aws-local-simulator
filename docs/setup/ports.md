@@ -193,6 +193,38 @@ aws sns list-topics
 # { "Topics": [] }
 ```
 
+### STS
+
+Testado: código 0 na porta 4700. Porta legada 9326: código 0 e mesma saída.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws sts get-caller-identity
+# { "UserId": "AKIAIOSFODNN7EXAMPLE", "Account": "123456789012", "Arn": "arn:aws:iam::123456789012:user/local-simulator" }
+```
+
+### EC2
+
+Testado: código 0 na porta 4700 para `describe-vpcs` e `describe-instances`. Porta legada 4020: código 0 e mesma saída nos dois comandos. O servidor de instância do EC2 (`instanceServer`) não passa pelo gateway e continua fora desta migração.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws ec2 describe-vpcs
+# { "Vpcs": [ { "CidrBlock": "10.0.0.0/16", ... } ] }
+aws ec2 describe-instances
+# { "Reservations": [ ... ] }
+```
+
+### ALB
+
+Testado: código 0 na porta 4700. Porta legada 4021: código 0 e mesma saída. Na medição, `create-load-balancer` e `delete-load-balancer` também responderam código 0 pela porta 4700.
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700"
+aws elbv2 describe-load-balancers
+# { "LoadBalancers": [] }
+```
+
 ## Portas por serviço (compatibilidade)
 
 As portas por serviço só ficam abertas com uma destas opções:
