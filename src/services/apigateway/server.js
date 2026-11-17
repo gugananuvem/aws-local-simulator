@@ -321,7 +321,8 @@ class APIGatewayServer {
 
     this.app.get('/restapis', (req, res) => {
       const result = this.simulator.getRestApis();
-      res.json(result);
+      // O CLI da AWS lê a lista na chave "item"; "items" é mantido para a UI.
+      res.json({ ...result, item: result.items });
     });
 
     this.app.get('/restapis/:apiId', (req, res) => {
