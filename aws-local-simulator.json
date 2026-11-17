@@ -104,6 +104,8 @@
         "UserPoolId": "us-east-1_eKqARaG2Q",
         "ClientId": "fn2acoiuo7hj0fotrbrgaash5",
         "LambdaTriggers": {
+          "PreAuthentication": "pre-autentication-api",
+          "PostConfirmation": "post-autentication-api"
         }        
       }
     ]
@@ -139,15 +141,15 @@
   "lambdas": [
     {
       "name": "pre-autentication-api",
-      "handler": "./handlers/pre-autentication.js"
+      "handler": "../../../../.aws-local-simulator-data/lambda/handlers/pre-autentication.js"
     },
     {
       "name": "post-autentication-api",
-      "handler": "./handlers/post-autentication.js"
+      "handler": "../../../../.aws-local-simulator-data/lambda/handlers/post-autentication.js"
     },
     {
       "name": "users-api",
-      "handler": "./handlers/users.js"
+      "handler": "../../../../.aws-local-simulator-data/lambda/handlers/users.js"
     }
   ],
   "vpc": {
