@@ -104,8 +104,6 @@
         "UserPoolId": "us-east-1_eKqARaG2Q",
         "ClientId": "fn2acoiuo7hj0fotrbrgaash5",
         "LambdaTriggers": {
-          "PreAuthentication": "pre-autentication-api",
-          "PostConfirmation": "post-autentication-api"
         }        
       }
     ]
