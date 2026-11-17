@@ -81,11 +81,11 @@ Testado: `aws dynamodb list-tables --profile als` retornou código 0. Sem as cre
 
 ## Exemplos por serviço
 
-Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco rodou com código 0 no modo padrão, sem `AWS_LOCAL_SIMULATOR_LEGACY_PORTS`. O registro de cada comando (arquivo `run-b-<servico>.txt`) fica fora do repositório, na pasta `.agents` (ignorada pelo git), e a comparação com a porta legada fica no inventário local da migração.
+Os exemplos abaixo usam só a porta única (`AWS_ENDPOINT_URL`), sem a porta legada. Cada bloco foi executado no modo padrão, sem `AWS_LOCAL_SIMULATOR_LEGACY_PORTS`. Em uma rodada anterior com a porta legada ligada, o mesmo comando com `--endpoint-url` para a porta legada do serviço deu código 0 e a mesma saída. Cada bloco traz esse resultado.
 
 ### IAM
 
-Testado: código 0. Registro: `run-b-iam.txt`.
+Testado: código 0 na porta 4700. Porta legada 4003: código 0 e mesma saída.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
@@ -95,7 +95,7 @@ aws iam list-users
 
 ### KMS
 
-Testado: código 0. Registro: `run-b-kms.txt`.
+Testado: código 0 na porta 4700. Porta legada 4000: código 0 e mesma saída.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
@@ -105,7 +105,7 @@ aws kms list-keys
 
 ### Secrets Manager
 
-Testado: código 0. Registro: `run-b-secret-manager.txt`.
+Testado: código 0 na porta 4700. Porta legada 4001: código 0 e mesma saída.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
@@ -115,7 +115,7 @@ aws secretsmanager list-secrets
 
 ### Parameter Store
 
-Testado: código 0. Registro: `run-b-parameter-store.txt`.
+Testado: código 0 na porta 4700. Porta legada 4002: código 0 e mesma saída.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
@@ -125,7 +125,7 @@ aws ssm describe-parameters
 
 ### CloudTrail
 
-Testado: código 0. Registro: `run-b-cloudtrail.txt`. A saída lista a trilha padrão `local-default-trail`.
+Testado: código 0 na porta 4700. Porta legada 4012: código 0 e mesma saída. A saída lista a trilha padrão `local-default-trail`.
 
 ```powershell
 $env:AWS_ENDPOINT_URL = "http://localhost:4700"
