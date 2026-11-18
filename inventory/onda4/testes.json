@@ -1,0 +1,32 @@
+﻿{
+    "route53": {
+        "exitCode": -1,
+        "output": "No test suite found in src/services/route53 or tests/services",
+        "hasSuite": false
+    },
+    "cloudformation": {
+        "exitCode": 0,
+        "output": "> @gugananuvem/aws-local-simulator@1.0.44 test\n> jest src/services/cloudformation\n\nPASS src/services/cloudformation/resource-handlers/services.opensearch-store.test.js\nPASS src/services/cloudformation/resource-handlers/services.domain-endpoint.test.js\n\nTest Suites: 2 passed, 2 total\nTests:       11 passed, 11 total\nSnapshots:   0 total\nTime:        0.582 s, estimated 2 s\nRan all test suites matching /src\\\\services\\\\cloudformation/i.",
+        "hasSuite": true
+    },
+    "kinesis-data-streams": {
+        "exitCode": -1,
+        "output": "No test suite found in src/services/kinesis-data-streams or tests/services",
+        "hasSuite": false
+    },
+    "kinesis-firehose": {
+        "exitCode": -1,
+        "output": "No test suite found in src/services/kinesis-firehose or tests/services",
+        "hasSuite": false
+    },
+    "kinesis-analytics": {
+        "exitCode": -1,
+        "output": "No test suite found in src/services/kinesis-analytics or tests/services",
+        "hasSuite": false
+    },
+    "opensearch": {
+        "exitCode": 0,
+        "output": "> @gugananuvem/aws-local-simulator@1.0.44 test\n> jest src/services/opensearch\n\nPASS src/services/opensearch/domains.config-tags.test.js\nPASS src/services/opensearch/domains.cli.test.js\n\nTest Suites: 2 passed, 2 total\nTests:       34 passed, 34 total\nSnapshots:   0 total\nTime:        0.961 s, estimated 2 s\nRan all test suites matching /src\\\\services\\\\opensearch/i.",
+        "hasSuite": true
+    }
+}
