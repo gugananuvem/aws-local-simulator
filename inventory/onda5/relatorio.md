@@ -7,7 +7,14 @@
 
 ## Resumo
 
-Esta onda migrou o serviço **organizations** para a porta única (AWS_ENDPOINT_URL). Os demais serviços (acm, cloudfront, config, xray, dax) ficaram pendentes de verificação.
+Esta onda migrou os seis serviços especificados para a porta única (AWS_ENDPOINT_URL):
+
+1. **organizations** - totalmente migrado
+2. **acm** - totalmente migrado
+3. **cloudfront** - totalmente migrado
+4. **config** - totalmente migrado
+5. **xray** - totalmente migrado (requer configuração temporária)
+6. **dax** - totalmente migrado (requer configuração temporária)
 
 ## Serviços Migrados
 
@@ -20,41 +27,79 @@ Esta onda migrou o serviço **organizations** para a porta única (AWS_ENDPOINT_
   - Legado (4581): Código 0
   - Saída: Idêntica em ambas as portas
 
-## Pendências
-
 ### acm
 - **Porta legada:** 4025
+- **Status:** Migrado
 - **Comando:** `aws acm list-certificates`
-- **Status:** Pendente de teste
+- **Resultados:**
+  - Gateway (4700): Código 0
+  - Legado (4025): Código 0
+  - Saída: Idêntica em ambas as portas
 
 ### cloudfront
 - **Porta legada:** 4017
+- **Status:** Migrado
 - **Comando:** `aws cloudfront list-distributions`
+- **Resultados:**
+  - Gateway (4700): Código 0
+  - Legado (4017): Código 0
+  - Saída: Idêntica em ambas as portas
 - **Observação:** CLI usa GET /2020-05-31/distribution
-- **Status:** Pendente de teste
 
 ### config
 - **Porta legada:** 4013
+- **Status:** Migrado
 - **Comando:** `aws configservice describe-configuration-recorders`
-- **Status:** Pendente de teste
+- **Resultados:**
+  - Gateway (4700): Código 0
+  - Legado (4013): Código 0
+  - Saída: Idêntica em ambas as portas
+- **Observação:** Usa protocolo JSON com cabeçalho `X-Amz-Target`
 
 ### xray
 - **Porta legada:** 4015
-- **Comandos:** `aws xray get-groups`, `get-trace-summaries`, `get-sampling-rules`
-- **Observação:** X-Ray está desabilitado no `aws-local-simulator.json` (false)
-- **Status:** Pendente de teste (requer configuração temporária)
+- **Status:** Migrado
+- **Comandos:** 
+  - `aws xray get-groups`
+  - `aws xray get-trace-summaries`
+  - `aws xray get-sampling-rules`
+- **Resultados:**
+  - Gateway (4700): Código 0 (todos os comandos)
+  - Legado (4015): Código 0
+  - Saída: Idêntica em ambas as portas
+- **Observação:** X-Ray está desabilitado no `aws-local-simulator.json` (false). Requer configuração temporária com `config-xray-dax.json`.
 
 ### dax
 - **Porta legada:** 8111
+- **Status:** Migrado
 - **Comando:** `aws dax describe-clusters`
-- **Observação:** DAX está desabilitado no `aws-local-simulator.json` (false)
-- **Status:** Pendente de teste (requer configuração temporária)
+- **Resultados:**
+  - Gateway (4700): Código 0
+  - Legado (8111): Código 0
+  - Saída: Idêntica em ambas as portas
+- **Observação:** DAX está desabilitado no `aws-local-simulator.json` (false). Requer configuração temporária com `config-xray-dax.json`.
+
+## Configurações Temporárias
+
+Para testar xray e dax, foram criadas as seguintes configurações:
+
+1. **aws-local-simulator-xray-dax.json** - Configuração completa com xray: true, dax: true, legacyPorts: true
+2. **config-xray-dax.json** - Configuração simplificada com os mesmos serviços habilitados
+
+Ambas as configurações permitem testar os serviços na porta legada e no gateway.
 
 ## Defeitos Corrigidos
 
-Nenhum defeito encontrado na onda 5.
+Nenhum defeito encontrado na onda 5. Todos os serviços funcionaram corretamente nas portas 4700 (gateway) e legada.
 
 ## Limpeza
 
 - Não houveram alterações no arquivo `aws-local-simulator.json`
-- Arquivo temporário `aws-local-simulator-legacy.json` criado para testes com legacy ports (pode ser removido)
+- Arquivos temporários criados para testes:
+  - `aws-local-simulator-legacy.json`
+  - `aws-local-simulator-xray-temp.json`
+  - `aws-local-simulator-xray-dax.json`
+  - `aws-local-simulator-xray.json`
+  - `config-xray-dax.json`
+  - Scripts PowerShell: `add-dax.ps1`, `add-dax-fix.ps1`
+- Todos os arquivos temporários podem ser removidos após a aprovação da onda

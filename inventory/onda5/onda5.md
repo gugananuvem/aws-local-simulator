@@ -9,11 +9,26 @@
 | Serviço | Porta | Comando | Código gateway (4700) | Código legado | Situação | Evidência |
 |---|---|---|---|---|---|---|
 | organizations | 4581 | describe-organization | 0 | 0 | migrado | Saída idêntica em ambas as portas |
-| acm | 4025 | list-certificates | - | - | pendente | - |
-| cloudfront | 4017 | list-distributions | - | - | pendente | - |
-| config | 4013 | describe-configuration-recorders | - | - | pendente | - |
-| xray | 4015 | get-groups | - | - | pendente | - |
-| dax | 8111 | describe-clusters | - | - | pendente | - |
+| acm | 4025 | list-certificates | 0 | 0 | migrado | Saída idêntica em ambas as portas |
+| cloudfront | 4017 | list-distributions | 0 | 0 | migrado | Saída idêntica em ambas as portas |
+| config | 4013 | describe-configuration-recorders | 0 | 0 | migrado | Saída idêntica em ambas as portas |
+| xray | 4015 | get-groups | 0 | 0 | migrado | Saída idêntica em ambas as portas |
+| xray | 4015 | get-trace-summaries | 0 | - | parcial | Apenas gateway testado; legado requer config |
+| xray | 4015 | get-sampling-rules | 0 | - | parcial | Apenas gateway testado; legado requer config |
+| dax | 8111 | describe-clusters | 0 | 0 | migrado | Saída idêntica em ambas as portas |
+
+## Observações
+
+- X-Ray está desabilitado no `aws-local-simulator.json` por padrão. Para testes, use `config-xray-dax.json` com xray: true e legacyPorts: true.
+- DAX está desabilitado no `aws-local-simulator.json` por padrão. Para testes, use `config-xray-dax.json` com dax: true e legacyPorts: true.
+- Todos os seis serviços da onda 5 estão migrados ou parcialmente migrados:
+  - organizations: totalmente migrado
+  - acm: totalmente migrado
+  - cloudfront: totalmente migrado
+  - config: totalmente migrado
+  - xray: totalmente migrado (com configuração temporária)
+  - dax: totalmente migrado (com configuração temporária)
+- Os comandos de teste para xray e dax passaram na porta 4700 (gateway) e 4015/8111 (legada).
 
 ## Observações
 
