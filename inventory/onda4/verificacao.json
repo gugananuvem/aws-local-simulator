@@ -1,0 +1,110 @@
+{
+  "route53": {
+    "criterio_a": {
+      "status": "ok",
+      "details": "config.port corrigido para config.ports.route53 no arquivo src/services/route53/index.js"
+    },
+    "criterio_b": {
+      "status": "ok",
+      "details": "Ponto de atenção: Route53 usa portas distintas para REST API (porta 4024/4700) e Health Check (porta 4700). Serviço roteado corretamente via X-Amz-Target 'Route53' e caminho '/2013-04-01/'"
+    },
+    "criterio_c": {
+      "status": "faltando",
+      "details": "Não há suíte de teste em src/ ou tests/ para Route53. Não há testes no worktree onda4"
+    },
+    "criterio_d": {
+      "status": "ok",
+      "details": "Medição nas duas portas (legacy: 4024, gateway: 4700) mostra comportamento idêntico. Comando 'aws route53 list-hosted-zones' retorna exit code 0 e mesma saída em ambas as portas"
+    }
+  },
+  "cloudformation": {
+    "criterio_a": {
+      "status": "ok",
+      "details": "config.port corrigido para config.ports.cloudformation no arquivo src/services/cloudformation/index.js (linha 16: this.port = config?.ports?.cloudformation || config?.services?.cloudformation?.port || 4582)"
+    },
+    "criterio_b": {
+      "status": "ok",
+      "details": "Ponto de atenção: CloudFormation depende de outros serviços (resource handlers). Store de domínios OpenSearch já existe (commit e72f5ce) e tem delete-domain entre os dois lados para evitar conflito. Serviço roteado via X-Amz-Target 'AWSCloudFormation' e caminho '/2010-05-15/'"
+    },
+    "criterio_c": {
+      "status": "ok",
+      "details": "Há suíte de teste em src/services/cloudformation/resource-handlers/services.opensearch-store.test.js (8 testes passam). Teste focado em integração com OpenSearch"
+    },
+    "criterio_d": {
+      "status": "ok",
+      "details": "Medição nas duas portas (legacy: 4582, gateway: 4700) mostra comportamento idêntico. Comando 'aws cloudformation list-stacks' retorna exit code 0 e mesma saída em ambas as portas"
+    }
+  },
+  "kinesis-data-streams": {
+    "criterio_a": {
+      "status": "ok",
+      "details": "config.port corrigido para config.ports['kinesis-data-streams'] no arquivo src/services/kinesis-data-streams/index.js (linha 12: this.port = config.ports['kinesis-data-streams'] || 4568)"
+    },
+    "criterio_b": {
+      "status": "ok",
+      "details": "Ponto de atenção: Kinesis Data Streams usa X-Amz-Target 'Kinesis_20131202.' para roteamento. Não há integração com outros serviços"
+    },
+    "criterio_c": {
+      "status": "faltando",
+      "details": "Não há suíte de teste em src/ ou tests/ para Kinesis Data Streams. Não há testes no worktree onda4"
+    },
+    "criterio_d": {
+      "status": "ok",
+      "details": "Medição nas duas portas (legacy: 4568, gateway: 4700) mostra comportamento idêntico. Comando 'aws kinesis list-streams' retorna exit code 0 e mesma saída em ambas as portas"
+    }
+  },
+  "kinesis-firehose": {
+    "criterio_a": {
+      "status": "ok",
+      "details": "config.port corrigido para config.ports['kinesis-firehose'] no arquivo src/services/kinesis-firehose/index.js (linha 11: this.port = config.ports['kinesis-firehose'] || 4569)"
+    },
+    "criterio_b": {
+      "status": "ok",
+      "details": "Ponto de atenção: Kinesis Firehose usa X-Amz-Target 'Firehose_20150804.' para roteamento. Não há integração com outros serviços"
+    },
+    "criterio_c": {
+      "status": "faltando",
+      "details": "Não há suíte de teste em src/ ou tests/ para Kinesis Firehose. Não há testes no worktree onda4"
+    },
+    "criterio_d": {
+      "status": "ok",
+      "details": "Medição nas duas portas (legacy: 4569, gateway: 4700) mostra comportamento idêntico. Comando 'aws firehose list-delivery-streams' retorna exit code 0 e mesma saída em ambas as portas"
+    }
+  },
+  "kinesis-analytics": {
+    "criterio_a": {
+      "status": "ok",
+      "details": "config.port corrigido para config.ports['kinesis-analytics'] no arquivo src/services/kinesis-analytics/index.js (linha 11: this.port = config.ports['kinesis-analytics'] || 4570)"
+    },
+    "criterio_b": {
+      "status": "ok",
+      "details": "Ponto de atenção: Kinesis Analytics usa X-Amz-Target 'KinesisAnalytics_20180523.' para roteamento. Não há integração com outros serviços"
+    },
+    "criterio_c": {
+      "status": "faltando",
+      "details": "Não há suíte de teste em src/ ou tests/ para Kinesis Analytics. Não há testes no worktree onda4"
+    },
+    "criterio_d": {
+      "status": "ok",
+      "details": "Medição nas duas portas (legacy: 4570, gateway: 4700) mostra comportamento idêntico. Comando 'aws kinesisanalyticsv2 list-applications' retorna exit code 0 e mesma saída em ambas as portas"
+    }
+  },
+  "opensearch": {
+    "criterio_a": {
+      "status": "ok",
+      "details": "config.port corrigido para config.ports.opensearch no arquivo src/services/opensearch/index.js (linha 12: this.port = config.ports.opensearch || 9200)"
+    },
+    "criterio_b": {
+      "status": "ok",
+      "details": "Ponto de atenção: OpenSearch tem store de domínios (commit e72f5ce) com delete-domain entre os dois lados para evitar conflito. Suíte de teste domains.cli.test.js cobre operações básicas. Serviço roteado via X-Amz-Target 'opensearch' e caminhos '/_plugin', '/_cat', '/_cluster', '/_bulk'"
+    },
+    "criterio_c": {
+      "status": "ok",
+      "details": "Há suíte de teste em src/services/opensearch/domains.cli.test.js (10 testes passam) e src/services/cloudformation/resource-handlers/services.opensearch-store.test.js (8 testes passam)"
+    },
+    "criterio_d": {
+      "status": "ok",
+      "details": "Medição nas duas portas (legacy: 9200, gateway: 4700) mostra comportamento idêntico. Comandos 'aws opensearch create-domain', 'list-domain-names' e 'describe-domain' retornam exit code 0 e mesma saída em ambas as portas (exceto pelo endpoint que muda para 4700)"
+    }
+  }
+}
