@@ -74,7 +74,7 @@ class AutoScalingResponseFormatter {
           ProtectedFromScaleIn: false
         }))
       ),
-      CreatedTime: asg.CreationTime || new Date().toISOString(),
+      CreatedTime: new Date(asg.CreationTime || Date.now()).toISOString(),
       SuspendedProcesses: this._members([]),
       VPCZoneIdentifier: vpcZoneIdentifier,
       EnabledMetrics: this._members(asg.EnabledMetrics || []),

@@ -157,12 +157,8 @@ class ASGServer {
           if (!name) throw new Error('AutoScalingGroupName is required');
 
           const launchTemplate = req.body.LaunchTemplate || {};
-          let launchTemplateId = launchTemplate.LaunchTemplateId;
-          if (!launchTemplateId && launchTemplate.LaunchTemplateName) {
-            const found = findLaunchTemplateByName(launchTemplate.LaunchTemplateName);
-            launchTemplateId = found && found.LaunchTemplateId;
-          }
-          if (!launchTemplateId) {
+          const launchTemplateRef = launchTemplate.LaunchTemplateId || launchTemplate.LaunchTemplateName;
+          if (!launchTemplateRef) {
             throw new Error('LaunchTemplate.LaunchTemplateId or LaunchTemplateName is required');
           }
 
@@ -173,7 +169,7 @@ class ASGServer {
                 .filter(Boolean)
             : [];
 
-          const asg = simulator.createAutoScalingGroup(name, launchTemplateId, {
+          const asg = simulator.createAutoScalingGroup(name, launchTemplateRef, {
             minSize: Number(req.body.MinSize) || 0,
             maxSize: Number(req.body.MaxSize) || 0,
             desiredCapacity:
