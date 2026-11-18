@@ -170,6 +170,7 @@ class ASGServer {
             : [];
 
           const asg = simulator.createAutoScalingGroup(name, launchTemplateRef, {
+            launchTemplateVersion: launchTemplate.Version,
             minSize: Number(req.body.MinSize) || 0,
             maxSize: Number(req.body.MaxSize) || 0,
             desiredCapacity:

@@ -32,6 +32,17 @@ describe('ASG resolves launch templates created by EC2', () => {
         SecurityGroupIds: ['sg-0123456789abcdef0'],
       },
     });
+    ec2Sim.createLaunchTemplate({
+      LaunchTemplateName: 'asg-test-lt-versions',
+      LaunchTemplateData: {
+        ImageId: 'ami-0123456789abcdef0',
+        InstanceType: 't3.micro',
+      },
+    });
+    ec2Sim
+      .describeLaunchTemplates()
+      .find((t) => t.LaunchTemplateName === 'asg-test-lt-versions')
+      .addVersion({ ImageId: 'ami-0fedcba9876543210', InstanceType: 't3.large' }, 'versao 2', false);
 
     asgSim = new ASGSimulator({});
     await asgSim.initialize();
@@ -102,6 +113,49 @@ describe('ASG resolves launch templates created by EC2', () => {
     expect(() => asgSim.createAutoScalingGroup('asg-sim-missing', 'no-such-lt', {})).toThrow(
       'Launch Template no-such-lt not found'
     );
+  });
+
+  test('simulator uses the requested launch template version, not the default one', () => {
+    const asg = asgSim.createAutoScalingGroup('asg-sim-version', 'asg-test-lt-versions', {
+      minSize: 0,
+      maxSize: 1,
+      launchTemplateVersion: '2',
+    });
+
+    expect(asg.LaunchTemplate.VersionNumber).toBe(2);
+    expect(asg.LaunchTemplate.ImageId).toBe('ami-0fedcba9876543210');
+    expect(asg.LaunchTemplate.InstanceType).toBe('t3.large');
+  });
+
+  test('simulator rejects a launch template version that does not exist', () => {
+    expect(() =>
+      asgSim.createAutoScalingGroup('asg-sim-bad-version', 'asg-test-lt-versions', {
+        minSize: 0,
+        maxSize: 1,
+        launchTemplateVersion: '9',
+      })
+    ).toThrow(/não encontrada/);
+  });
+
+  test('CreateAutoScalingGroup with LaunchTemplate.Version 2 keeps that version in the response', async () => {
+    const created = await query('CreateAutoScalingGroup', {
+      AutoScalingGroupName: 'asg-http-version',
+      'LaunchTemplate.LaunchTemplateName': 'asg-test-lt-versions',
+      'LaunchTemplate.Version': '2',
+      MinSize: '0',
+      MaxSize: '1',
+      AvailabilityZones: 'us-east-1a',
+    });
+    expect(created.status).toBe(200);
+
+    const described = await query('DescribeAutoScalingGroups', {
+      'AutoScalingGroupNames.member.1': 'asg-http-version',
+    });
+    expect(described.body).toContain('<Version>2</Version>');
+    expect(described.body).not.toContain('<Version>1</Version>');
+
+    const deleted = await query('DeleteAutoScalingGroup', { AutoScalingGroupName: 'asg-http-version' });
+    expect(deleted.status).toBe(200);
   });
 
   test('CreateAutoScalingGroup with LaunchTemplateName from the AWS CLI query protocol succeeds', async () => {

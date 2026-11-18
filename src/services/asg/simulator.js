@@ -157,9 +157,9 @@ class ASGSimulator {
   /**
    * Resolve o template usado por um ASG (por ID ou nome). Procura primeiro no
    * armazenamento do ASG e depois nos launch templates do EC2. O template do EC2
-   * é copiado com a versão padrão, mantendo o ID, o nome e a versão originais.
+   * é copiado na versão pedida (padrão: $Default), mantendo o ID, o nome e o número da versão.
    */
-  _resolveLaunchTemplate(idOrName) {
+  _resolveLaunchTemplate(idOrName, version) {
     const own =
       this.launchTemplates.get(idOrName) ||
       Array.from(this.launchTemplates.values()).find(lt => lt.LaunchTemplateName === idOrName);
@@ -175,7 +175,8 @@ class ASGSimulator {
       throw new Error(`Launch Template ${idOrName} not found`);
     }
 
-    const data = ec2Template.getVersion('$Default').LaunchTemplateData;
+    const ec2Version = ec2Template.getVersion(version || '$Default');
+    const data = ec2Version.LaunchTemplateData;
     const lt = new LaunchTemplate(ec2Template.LaunchTemplateName, data.ImageId, data.InstanceType, {
       keyName: data.KeyName,
       securityGroupIds: data.SecurityGroupIds,
@@ -184,7 +185,7 @@ class ASGSimulator {
       monitoring: data.Monitoring
     });
     lt.LaunchTemplateId = ec2Template.LaunchTemplateId;
-    lt.VersionNumber = ec2Template.DefaultVersionNumber;
+    lt.VersionNumber = ec2Version.VersionNumber;
     return lt;
   }
 
@@ -200,7 +201,7 @@ class ASGSimulator {
   // ========== Auto Scaling Group Operations ==========
 
   createAutoScalingGroup(name, launchTemplateId, config = {}) {
-    const lt = this._resolveLaunchTemplate(launchTemplateId);
+    const lt = this._resolveLaunchTemplate(launchTemplateId, config.launchTemplateVersion);
 
     const asg = new AutoScalingGroup(name, lt, {
       minSize: config.minSize !== undefined ? config.minSize : 1,
