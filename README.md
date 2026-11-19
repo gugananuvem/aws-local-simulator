@@ -3,6 +3,7 @@
 [![npm version](https://badge.fury.io/js/aws-local-simulator.svg)](https://badge.fury.io/js/aws-local-simulator)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/aws-local-simulator.svg)](https://nodejs.org)
+*Requires Node.js >=20.19.0*
 
 Simulador local completo para serviços AWS. Desenvolva e teste suas aplicações AWS localmente sem custos!
 
@@ -13,7 +14,20 @@ Simulador local completo para serviços AWS. Desenvolva e teste suas aplicaçõe
 3. **Configurar**: Crie `aws-local-simulator.json`
 4. **Conectar**: aponte o AWS CLI ou o SDK para `http://localhost:4700`, a porta única do gateway. Ver [portas e gateway](docs/setup/ports.md)
 
-📚 **[Guia de Instalação Completo](docs/setup/installation.md)**
+📚 **[Guia de Instalação Completa](docs/setup/installation.md)**
+
+## 🔐 Segurança e Autenticação
+
+O simulador inclui suporte a autenticação SigV4 e IAM com STS temporary credentials, mas está **desabilitado por padrão** (`authentication.enabled: false` no `aws-local-simulator.json`).
+
+**Por que está desabilitado?**
+- O sistema de autenticação foi adicionado como recurso opcional para quem precisa de controle de acesso mais rigoroso
+- Para uso local e desenvolvimento, o comportamento sem autenticação (sem checks) é mais prático
+- Caso precise, habilite em `aws-local-simulator.json` e configure as políticas IAM apropriadas
+
+Para mais detalhes sobre autenticação e autorização, consulte [Segurança e IAM](docs/setup/authentication.md) (se disponível) ou a [Guia de Policy Enforcement](docs/guides/security.md) para controle de acesso com IAM policies.
+
+## 🔌 32 Serviços Suportados
 
 ## 🔌 32 Serviços Suportados
 
