@@ -35,7 +35,11 @@ function installExitHook() {
   if (exitHookInstalled) return;
   exitHookInstalled = true;
   process.on("exit", () => {
-    for (const w of liveWorkers) killTreeSync(w.child);
+    for (const w of liveWorkers) {
+      if (!w.disposed && w.child) {
+        killTreeSync(w.child);
+      }
+    }
   });
 }
 
@@ -459,6 +463,7 @@ class PersistentWorker {
     }
     if (!child || this.status === "stopped" || this.status === "crashed") {
       this.status = "stopped";
+      this.disposed = true;
       if (child) await killTreeAsync(child); // limpa eventuais netos
       if (this.killing) await this.killing;
       liveWorkers.delete(this);

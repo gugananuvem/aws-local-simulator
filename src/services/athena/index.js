@@ -48,10 +48,15 @@ class AthenaService {
   }
 
   async stop() {
-    if (!this.isRunning || !this._server) return;
+    if (!this.isRunning || !this._server) {
+      this.isRunning = false;
+      this._server = null;
+      return;
+    }
     return new Promise((resolve) => {
       this._server.close(() => {
         this.isRunning = false;
+        this._server = null;
         resolve();
       });
     });

@@ -97,9 +97,19 @@ class AuroraService {
   }
 
   async stop() {
-    if (!this.isRunning) return;
+    if (!this.isRunning) {
+      // Server may still be running; ensure it's stopped
+      if (this.server) {
+        await this.server.stop();
+      }
+      this.isRunning = false;
+      return;
+    }
     await this.server.stop();
-    if (this.dbEngine) this.dbEngine.close();
+    // Close SQLite connections AFTER server stops to ensure all HTTP connections are terminated
+    if (this.dbEngine) {
+      this.dbEngine.close();
+    }
     if (this.clusterManager?.metaDb) {
       this.clusterManager.metaDb.close();
       this.clusterManager.metaDb = null;
