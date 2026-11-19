@@ -21,11 +21,16 @@
     "cloudfront": true,
     "xray": false,
     "config": true,
-    "athena": false,
+    "athena": true,
+    "aurora": true,
     "vpc": true,
     "route53": true,
     "acm": true,
-    "iam":true
+    "iam": true,
+    "opensearch": true,
+    "kinesis-data-streams": true,
+    "kinesis-firehose": true,
+    "kinesis-analytics": true
   },
   "global": {
     "timeout": 30,
