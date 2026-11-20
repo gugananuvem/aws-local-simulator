@@ -55,10 +55,10 @@ Atualizar o frontend (React/Vite) para usar a porta 4700 como padrão para todas
 **Entregável:** README.md atualizado com documentação de portas. Concluído em 2026-11-20: `src/frontend/README.md` com seção "Port Configuration", variáveis suportadas, exemplos e troubleshooting.
 
 ### 8.5 Merge & Finalize
-- [ ] Commit com mensagens convencionais (feat(frontend): update to gateway port 4700)
-- [ ] Merge para feature-v3.0.2
-- [ ] Atualizar taskplan8.md com status de conclusão
-- [ ] Atualizar taskplan.md principal com Wave 8 completa
+- [x] Commit com mensagens convencionais (frontend: `dba626c` — feat(frontend): use gateway 4700 for AWS SDK calls; backend/docs: `09b12df` — docs: register frontend wave 8 migration)
+- [x] Merge para feature-v3.0.2 (os dois repositórios já estavam na branch `feature-v3.0.2`; commits feitos diretamente nela)
+- [x] Atualizar taskplan8.md com status de conclusão
+- [x] Atualizar taskplan.md principal com Wave 8 completa
 
 **Entregável:** Branch feature-v3.0.2 atualizado com changes da Wave 8
 
@@ -75,6 +75,6 @@ Plan → Build-loop (code + review, máximo 2 iterações) → Docs → Merge �
 
 ## Contexto adicional
 - Backend Wave 7 completada: better-sqlite3 upgraded, DbEngine.close() idempotent, ClusterManager.close() implemented, athena/aurora enabled
-- Backend branch: feature-v3.0.2 (tip 8b937ec)
+- Backend branch: feature-v3.0.2 (tip 09b12df; base da Wave 8: 8b937ec)
 - Frontend path: c:\Projetos\aws-local-simulator\src\frontend
 - Frontend stack: React 18 + Vite + AWS SDK v3
