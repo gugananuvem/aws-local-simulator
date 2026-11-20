@@ -44,7 +44,7 @@ Atualizar o frontend (React/Vite) para usar a porta 4700 como padrão para todas
 - [x] Testar pelo menos 3 serviços diferentes (ex: DynamoDB, S3, SQS)
 - [x] Documentar qualquer quebra encontrada
 
-**Entregável:** Relatório `build-test-wave8.md` com resultados dos testes. Concluído em 2026-11-20: build OK, 469 testes OK, smoke test com DynamoDB/S3/SQS pela porta 4700. Relatório: `C:\Projetos\aws-local-simulator\inventory\onda8\build-test-wave8.md`.
+**Entregável:** Relatório `build-test-wave8.md` com resultados dos testes. Concluído em 2026-11-20: build OK, 469 testes OK, smoke test com DynamoDB/S3/SQS pela porta 4700. ESLint 9 adotado no frontend em 2026-11-20 (`npm run lint` → 0 erros, 0 avisos). Relatório: `C:\Projetos\aws-local-simulator\inventory\onda8\build-test-wave8.md`.
 
 ### 8.4 Documentação
 - [x] Atualizar README.md do frontend com instruções de configuração de portas
@@ -55,7 +55,7 @@ Atualizar o frontend (React/Vite) para usar a porta 4700 como padrão para todas
 **Entregável:** README.md atualizado com documentação de portas. Concluído em 2026-11-20: `src/frontend/README.md` com seção "Port Configuration", variáveis suportadas, exemplos e troubleshooting.
 
 ### 8.5 Merge & Finalize
-- [x] Commit com mensagens convencionais (frontend: `dba626c` — feat(frontend): use gateway 4700 for AWS SDK calls; `dc99895` — fix(frontend): route DAX and Aurora through gateway; backend/docs: `09b12df` — docs: register frontend wave 8 migration; `d62081e` — docs: record wave 8 commits in taskplans)
+- [x] Commit com mensagens convencionais (frontend: `dba626c` — feat(frontend): use gateway 4700 for AWS SDK calls; `dc99895` — fix(frontend): route DAX and Aurora through gateway; `91d6250` — chore(frontend): add eslint and fix reported issues; backend/docs: `09b12df` — docs: register frontend wave 8 migration; `d62081e` — docs: record wave 8 commits in taskplans; `a7d1249` — docs: record final wave 8 frontend fix)
 - [x] Merge para feature-v3.0.2 (os dois repositórios já estavam na branch `feature-v3.0.2`; commits feitos diretamente nela)
 - [x] Atualizar taskplan8.md com status de conclusão
 - [x] Atualizar taskplan.md principal com Wave 8 completa
