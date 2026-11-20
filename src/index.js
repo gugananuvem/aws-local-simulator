@@ -21,6 +21,7 @@ const { XRayService } = require('./services/xray');
 const { SecretManagerService } = require('./services/secret-manager');
 const { ParameterStoreService } = require('./services/parameter-store');
 const { ConfigService } = require('./services/config');
+const { SqlServerService } = require('./services/rds-sqlserver');
 
 // Exporta utilitários
 const LocalStore = require('./utils/local-store');
@@ -118,6 +119,10 @@ class AWSLocalSimulator {
   getLambda() {
     return this.getService('lambda')?.getSimulator();
   }
+
+  getRdsSqlServer() {
+    return this.getService('rds-sqlserver')?.getSimulator();
+  }
 }
 
 // Exporta classes e utilitários
@@ -138,6 +143,7 @@ module.exports = {
   SecretManagerService,
   ParameterStoreService,
   ConfigService,
+  SqlServerService,
   LocalStore,
   HandlerLoader,
   RouteRegistry

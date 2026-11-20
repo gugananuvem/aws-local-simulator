@@ -23,6 +23,7 @@ const { ParameterStoreService } = require('./parameter-store');
 const { ConfigService } = require('./config');
 const { AthenaService } = require('./athena');
 const { AuroraService } = require('./aurora');
+const { SqlServerService } = require('./rds-sqlserver');
 const IAMService = require('./iam');
 const EC2Service = require('./ec2');
 const ALBService = require('./alb');
@@ -58,6 +59,7 @@ module.exports = {
   ConfigService,
   AthenaService,
   AuroraService,
+  SqlServerService,
   IAMService,
   EC2Service,
   ALBService,

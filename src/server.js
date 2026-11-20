@@ -33,6 +33,7 @@ const { ParameterStoreService } = require("./services/parameter-store");
 const { ConfigService } = require("./services/config");
 const { AthenaService } = require("./services/athena");
 const { AuroraService } = require("./services/aurora");
+const { SqlServerService } = require("./services/rds-sqlserver");
 const IAMService = require("./services/iam");
 const EC2Service = require("./services/ec2");
 const ALBService = require("./services/alb");
@@ -292,6 +293,8 @@ class Server {
       { name: "iam", class: IAMService, depends: ["sts"], category: 'Segurança & Identidade' },
       { name: "kms", class: KMSService, depends: [], category: 'Segurança & Identidade' },
       { name: "secret-manager", class: SecretManagerService, depends: [], category: 'Segurança & Identidade' },
+      // Registrado após KMS/Secret Manager para garantir ordem e injeção de dependências.
+      { name: "rds-sqlserver", class: SqlServerService, depends: ['kms', 'secret-manager'], category: 'Armazenamento & Banco de Dados' },
       { name: "parameter-store", class: ParameterStoreService, depends: [], category: 'Segurança & Identidade' },
 
       //Mensageria

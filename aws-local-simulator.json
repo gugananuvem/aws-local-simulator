@@ -23,6 +23,7 @@
     "config": true,
     "athena": true,
     "aurora": true,
+    "rds-sqlserver": false,
     "vpc": true,
     "route53": true,
     "acm": true,

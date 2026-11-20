@@ -42,6 +42,7 @@ alterada em `ports`.
 | **DynamoDB** | `dynamodb` | 8000 | ✅ | [Documentação](docs/services/DynamoDB.md) |
 | **DAX** | `dax` | 8111 | ✅ (depende do DynamoDB) | - |
 | **Aurora** (SQLite local) | `aurora` | 4510 | ⚙️ (depende de KMS e Secrets Manager) | - |
+| **RDS SQL Server** (SQLite + TDS) | `rds-sqlserver` | 4511 / TDS 1433 | ⚙️ (opt-in; depende de KMS e Secrets Manager) | [Documentação](docs/services/RDS-SQLServer.md) |
 | **Athena** | `athena` | 4599 | ⚙️ | [Documentação](docs/services/Athena.md) |
 | **OpenSearch** | `opensearch` | 9200 | ✅ | [Documentação](docs/services/OpenSearch.md) |
 
@@ -505,6 +506,7 @@ As portas por serviço abaixo são só compatibilidade. Elas ficam abertas com `
 | API Gateway | 4567 |
 | Kinesis | 4568-4570 |
 | Athena | 4599 |
+| RDS SQL Server (HTTP / TDS) | 4511 / 1433 |
 | CloudFormation | 4582 |
 | Organizations/Control Tower | 4581 |
 | AWS Config | 4013 |

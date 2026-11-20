@@ -43,6 +43,21 @@ aws dynamodb list-tables
 
 Testado: o comando funcionou sem `--endpoint-url`.
 
+#### Prefixo por serviço: RDS SQL Server
+
+Alguns serviços precisam de um prefixo no caminho para não colidir com regras antigas do gateway.
+É o caso do RDS SQL Server, porque `rds`, `rds-data` e `RDSDataService.*` são roteados para Aurora:
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4700/rds-sqlserver"
+aws rds describe-db-clusters
+```
+
+Testado: com `AWS_ENDPOINT_URL` contendo `/rds-sqlserver`, o AWS CLI 2.37.10 preservou o caminho
+na requisição; o gateway encaminha para o serviço correto antes de analisar target/assinatura.
+O serviço é opt-in (`AWS_LOCAL_SIMULATOR_RDS_SQLSERVER=true`) e abre também o listener TDS na
+porta 1433. Ver [RDS SQL Server](../services/RDS-SQLServer.md).
+
 ### AWS_LOCAL_SIMULATOR_GATEWAY_PORT
 
 ```powershell
@@ -344,6 +359,8 @@ Valores do `default-config.js`. Quando a chave não existe na configuração, o 
 | S3 | 4566 | |
 | Athena | 4599 | |
 | Aurora | 4510 | |
+| RDS SQL Server (HTTP) | 4511 | Requer `AWS_ENDPOINT_URL=http://localhost:4700/rds-sqlserver` no gateway |
+| RDS SQL Server (TDS) | 1433 | Cliente nativo; fora do gateway |
 | Lambda | 3001 | |
 | Cognito | 9229 | |
 | STS | 9326 | |

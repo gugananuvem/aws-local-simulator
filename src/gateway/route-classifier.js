@@ -5,6 +5,7 @@
  * dos simuladores (bucket existe, apiId existe). Devolve o nome interno do servico ou um erro.
  *
  * Regras, na ordem. A primeira que casa vence:
+ *   R0  Prefixo de caminho reservado para um servico explicito (ex.: /rds-sqlserver).
  *   R1  X-Amz-Target (prefixo do protocolo JSON).
  *   R2  Escopo da assinatura (Authorization ou X-Amz-Credential na query).
  *   R3  Protocolo query: Action + Version (query string ou corpo de formulario).
@@ -15,6 +16,11 @@
 
 const querystring = require('querystring');
 const { bucketFromHost } = require('../services/s3/host-bucket');
+
+/** R0: prefixos de caminho que identificam um servico explicitamente (antes de target/escopo). */
+const SERVICE_PATH_PREFIXES = [
+  { prefix: '/rds-sqlserver', service: 'rds-sqlserver' },
+];
 
 /** R1: prefixo do X-Amz-Target -> servico. A chave inclui o ponto final. */
 const TARGET_PREFIXES = {
@@ -195,6 +201,15 @@ function matchPath(path) {
   return null;
 }
 
+/** R0: caminhos reservados nao dependem de assinatura, target nem Action. */
+function matchServicePath(path) {
+  for (const { prefix, service } of SERVICE_PATH_PREFIXES) {
+    const base = prefix.replace(/\/$/, '');
+    if (path === base || path.startsWith(base + '/')) return service;
+  }
+  return null;
+}
+
 /**
  * Classifica uma requisicao.
  * @param {{method: string, url: string, headers: object, form?: object}} request
@@ -209,6 +224,10 @@ function classify(request, lookup = {}) {
   const form = request.form || {};
   const bucketExists = lookup.bucketExists || (() => false);
   const apiExists = lookup.apiExists || (() => false);
+
+  // R0
+  const fromServicePath = matchServicePath(path);
+  if (fromServicePath) return { service: fromServicePath, rule: 'R0' };
 
   // R1
   const fromTarget = matchTarget(headers['x-amz-target']);
@@ -256,6 +275,7 @@ module.exports = {
   TARGET_PREFIXES,
   SCOPE_SERVICES,
   VERSION_SERVICES,
+  SERVICE_PATH_PREFIXES,
   PATH_PREFIXES,
   UNKNOWN_SERVICE,
 };

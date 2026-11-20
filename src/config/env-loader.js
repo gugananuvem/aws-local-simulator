@@ -44,7 +44,11 @@ class EnvLoader {
       sns: this.getEnvBool('AWS_LOCAL_SIMULATOR_SNS', false),
       lambda: this.getEnvBool('AWS_LOCAL_SIMULATOR_LAMBDA', true),
       apigateway: this.getEnvBool('AWS_LOCAL_SIMULATOR_APIGATEWAY', false),
-      eventbridge: this.getEnvBool('AWS_LOCAL_SIMULATOR_EVENTBRIDGE', false)
+      eventbridge: this.getEnvBool('AWS_LOCAL_SIMULATOR_EVENTBRIDGE', false),
+      'rds-sqlserver': this.getEnvBool(
+        'AWS_LOCAL_SIMULATOR_RDS_SQLSERVER',
+        this.getEnvBool('AWS_LOCAL_SIMULATOR_RDS_SQLSERVER_ENABLED', false)
+      )
     };
     
     // Carrega portas
@@ -55,7 +59,9 @@ class EnvLoader {
       lambda: this.getEnvInt('AWS_LOCAL_SIMULATOR_LAMBDA_PORT', 3001),
       sns: this.getEnvInt('AWS_LOCAL_SIMULATOR_SNS_PORT', 9911),
       apigateway: this.getEnvInt('AWS_LOCAL_SIMULATOR_APIGATEWAY_PORT', 4567),
-      eventbridge: this.getEnvInt('AWS_LOCAL_SIMULATOR_EVENTBRIDGE_PORT', 4010)
+      eventbridge: this.getEnvInt('AWS_LOCAL_SIMULATOR_EVENTBRIDGE_PORT', 4010),
+      'rds-sqlserver': this.getEnvInt('AWS_LOCAL_SIMULATOR_RDS_SQLSERVER_PORT', 4511),
+      'rds-sqlserver-tds': this.getEnvInt('AWS_LOCAL_SIMULATOR_RDS_SQLSERVER_TDS_PORT', 1433)
     };
     
     // Carrega diretório de dados

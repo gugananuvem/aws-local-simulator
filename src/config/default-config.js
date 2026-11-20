@@ -30,6 +30,7 @@ module.exports = {
     organizations: true,
     route53: true,
     acm: true,
+    "rds-sqlserver": false,
   },
 
   // Portas padrão
@@ -61,6 +62,8 @@ module.exports = {
     cloudformation: 4582,
     route53: 4024,
     acm: 4025,
+    "rds-sqlserver": 4511,
+    "rds-sqlserver-tds": 1433,
   },
   apigateway: {
     defaultCors: {
