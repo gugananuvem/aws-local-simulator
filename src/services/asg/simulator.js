@@ -72,9 +72,26 @@ class ASGSimulator {
       if (Array.isArray(asgsData)) {
         logger.info(`📂 Carregando ${asgsData.length} ASGs do storage...`);
         for (const asgData of asgsData) {
+          // O ASG persistido guarda o LaunchTemplate como objeto aninhado (resultado de
+          // LaunchTemplate.toJSON()). Reconstruir a instância real para que toJSON() funcione.
+          const ltData = asgData.LaunchTemplate || {};
+          const launchTemplateId = asgData.LaunchTemplateId || ltData.LaunchTemplateId;
+          let launchTemplate = launchTemplateId ? this.launchTemplates.get(launchTemplateId) : null;
+          if (!launchTemplate) {
+            launchTemplate = new LaunchTemplate(
+              ltData.LaunchTemplateName || asgData.AutoScalingGroupName,
+              ltData.ImageId || asgData.ImageId,
+              ltData.InstanceType || asgData.InstanceType
+            );
+            if (launchTemplateId) {
+              launchTemplate.LaunchTemplateId = launchTemplateId;
+            }
+            this.launchTemplates.set(launchTemplate.LaunchTemplateId, launchTemplate);
+          }
+
           const asg = new AutoScalingGroup(
             asgData.AutoScalingGroupName,
-            { LaunchTemplateId: asgData.LaunchTemplateId, ImageId: asgData.ImageId, InstanceType: asgData.InstanceType },
+            launchTemplate,
             {
               minSize: asgData.MinSize,
               maxSize: asgData.MaxSize,

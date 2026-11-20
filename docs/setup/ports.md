@@ -280,14 +280,14 @@ aws elbv2 describe-load-balancers --endpoint-url http://localhost:4700
 
 ## Portas por serviço (compatibilidade)
 
-As portas por serviço só ficam abertas com uma destas opções:
+Cada serviço sempre escuta na própria porta (`config.ports` ou o default do serviço). O que muda é a interface:
 
-- `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true` (também aceita `1` ou `yes`).
-- `"gateway": { "legacyPorts": true }` em `aws-local-simulator.json`.
+- Sem `legacyPorts` (padrão), cada serviço escuta apenas em loopback (`127.0.0.1`) e o acesso externo passa pelo gateway (`4700`).
+- Com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true` (também aceita `1` ou `yes`) ou `"gateway": { "legacyPorts": true }` em `aws-local-simulator.json`, o serviço também aceita conexões de qualquer interface (`0.0.0.0`).
 
-Sem a opção, cada serviço escuta em uma porta livre de loopback (`127.0.0.1`) que só o gateway usa. Com a opção, cada serviço também escuta na própria porta, em todas as interfaces (`0.0.0.0`). Ver `serviceConfigFor` em `src/server.js` e `src/gateway/internal-host.js`.
+Ver `src/server.js` e `src/gateway/internal-host.js`.
 
-Testado com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`:
+Testado (modo padrão, sem `legacyPorts`): as portas respondem em `localhost`.
 
 ```bash
 aws dynamodb list-tables --endpoint-url http://localhost:8000
@@ -295,9 +295,9 @@ aws lambda list-functions --endpoint-url http://localhost:3001
 aws organizations list-roots --endpoint-url http://localhost:4581
 ```
 
-Testado sem a opção: `http://localhost:3001/2015-03-31/functions` não conectou (código de saída do curl 7).
+Testado: `GET http://localhost:4566/__admin/buckets` e `GET http://localhost:8000/__admin/tables` retornaram 200.
 
-Para mudar a porta legada de um serviço, use `ports` em `aws-local-simulator.json` (por exemplo `"ports": { "s3": 5000 }`). Isso só vale com `legacyPorts` ligado. Não testado neste ciclo.
+Para mudar a porta de um serviço, use `ports` em `aws-local-simulator.json` (por exemplo `"ports": { "s3": 5000 }`).
 
 ## S3 em path-style (modo principal)
 
@@ -342,7 +342,7 @@ Requisição que não casa com nenhuma regra recebe HTTP 400 com `UnknownService
 
 - A Management API escuta em `adminPort`, padrão `9999` (`src/server.js`, `startManagementServer`). Testado: `GET http://localhost:9999/__admin/services` retornou a lista de serviços.
 - O gateway não roteia `/__admin`. Testado: `GET http://localhost:4700/__admin/functions` retornou HTTP 400 `UnknownService`.
-- Para as rotas `/__admin` de um serviço, use a porta legada com `legacyPorts` ligado. Testado: `POST http://localhost:3001/__admin/functions` com corpo `{"name":"fn-url","code":"exports.handler = async () => ({ statusCode: 200, body: \"ok\" });"}` respondeu 201. Com corpo `{}`, a rota respondeu 400 (`src/services/lambda/server.js`, `setupAdminRoutes`).
+- Para as rotas `/__admin` de um serviço, use a porta do próprio serviço (por exemplo `GET http://localhost:4566/__admin/buckets`). Testado: `POST http://localhost:3001/__admin/functions` com corpo `{"name":"fn-url","code":"exports.handler = async () => ({ statusCode: 200, body: \"ok\" });"}` respondeu 201. Com corpo `{}`, a rota respondeu 400 (`src/services/lambda/server.js`, `setupAdminRoutes`).
 
 ## URL de função Lambda
 
@@ -394,6 +394,6 @@ ECS (`8080`) fica desligado por padrão (`services.ecs: false`, `src/config/defa
 
 ## Problemas comuns
 
-- **Connection refused em uma porta legada.** Confirme `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Sem essa opção, a porta do serviço não fica aberta.
+- **Connection refused em uma porta de serviço.** Confirme que o serviço está habilitado e que a porta não está ocupada; cada serviço escuta sempre na própria porta (loopback no modo padrão).
 - **Porta em uso.** Verifique no Windows com `Get-NetTCPConnection -State Listen -LocalPort 4700`. Em Linux/macOS, use `lsof -i :4700`.
 - **AWS_ENDPOINT_URL inválida.** O simulador para na inicialização com a mensagem `AWS_ENDPOINT_URL invalida` (`src/config/env-loader.js`).

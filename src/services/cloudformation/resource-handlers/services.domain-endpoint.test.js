@@ -1,5 +1,5 @@
 const { configurePublicBase } = require('../../../gateway/public-base');
-const EnvLoader = require('../../../config/env-loader');
+const EnvLoader = require('@/config/env-loader');
 const domain = require('./services')['AWS::OpenSearchService::Domain'];
 
 const ENV_KEYS = ['AWS_ENDPOINT_URL', 'AWS_LOCAL_SIMULATOR_GATEWAY_PORT', 'AWS_LOCAL_SIMULATOR_LEGACY_PORTS'];

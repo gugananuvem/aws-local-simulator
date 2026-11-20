@@ -47,32 +47,9 @@ const CloudFrontService = require("./services/cloudfront");
 const Route53Service = require("./services/route53");
 const ACMService = require("./services/acm");
 const { initializeCloudShell } = require("./services/cloudshell");
-const net = require("net");
 const { GatewayServer } = require("./gateway/gateway-server");
 const { configureInternalHost } = require("./gateway/internal-host");
 const { configurePublicBase, publicBaseUrl } = require("./gateway/public-base");
-
-/** Chave em config.ports usada por cada servico (nem sempre igual ao nome do registro). */
-const PORT_KEYS = {
-  "secret-manager": "secretManager",
-  "parameter-store": "parameterStore",
-};
-
-function portKeyFor(name) {
-  return PORT_KEYS[name] || name;
-}
-
-/** Porta livre em 127.0.0.1, escolhida pelo sistema. Libera antes do uso (ver plano, item e). */
-function allocateFreePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.on("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-}
 
 class Server {
   constructor(config) {
@@ -347,8 +324,7 @@ class Server {
             dependencies[dep] = this.servicesMap.get(dep);
           }
 
-          const serviceConfig = await this.serviceConfigFor(serviceDef.name);
-          const service = new serviceDef.class(serviceConfig, dependencies);
+          const service = new serviceDef.class(this.config, dependencies);
           await service.initialize();
 
           this.services.push(service);
@@ -377,16 +353,6 @@ class Server {
     logger.success("\n🎉 Todos os serviços foram iniciados com sucesso!");
   }
 
-  /**
-   * Config entregue a um servico. Sem legacyPorts, o servico recebe uma porta livre em loopback
-   * (so o gateway chega nela). Com legacyPorts, recebe a propria porta antiga (config.ports ou o
-   * default do construtor). O config.ports do Server nao muda.
-   */
-  async serviceConfigFor(name) {
-    if (this.config.gateway?.legacyPorts) return this.config;
-    const port = await allocateFreePort();
-    return { ...this.config, ports: { ...(this.config.ports || {}), [portKeyFor(name)]: port } };
-  }
   bucketExists(name) {
     const s3 = this.getService("s3");
     return !!(s3?.simulator?.getBucket?.(name) || s3?.server?.simulator?.getBucket?.(name));
@@ -504,8 +470,7 @@ class Server {
     }
 
     try {
-      const serviceConfig = await this.serviceConfigFor(name);
-      const service = new serviceDef.class(serviceConfig);
+      const service = new serviceDef.class(this.config);
       await service.initialize();
       await service.start();
 
