@@ -128,15 +128,20 @@ sqlcmd -S tcp:localhost,1433 -U admin -P 'Senha123456' -d master -Q "SELECT GETD
 > Validado com `sqlcmd` do Microsoft ODBC Driver 17: login, `CREATE TABLE`, `INSERT`,
 > `SELECT` e `USE <database>`. Use uma instrução por `-Q` (o driver rejeita múltiplas).
 > Conexões com `Encrypt=yes` não são suportadas (o servidor responde `NOT_SUP` no PRELOGIN).
+> Também validado com **SSMS 19**: o batch de descoberta de servidor enviado no login é
+> reconhecido e devolvido como um resultset de metadados sintéticos.
 
 Suporte atual:
 
 - PRELOGIN/LOGIN7 com SQL Authentication e TDS 7.4;
 - SQL Batch (`SELECT`, DML, DDL, `USE <database>`), tokens COLMETADATA/ROW/DONE;
-- RPC `sp_executesql` em melhor esforço; outros RPCs retornam erro explícito.
+- RPC `sp_executesql` em melhor esforço; outros RPCs retornam erro explícito;
+- subconjunto procedural de inicialização de clientes (ver abaixo).
 
 Limitações do listener: sem TLS, sem Windows/Integrated Auth, sem MARS. A compatibilidade com
 `sqlcmd`, ODBC, JDBC e `tedious` é melhor esforço; o caminho mais previsível é SQL Batch.
+O Object Explorer do SSMS pode não exibir todos os nós: consultas de catálogo do sistema
+(`sys.databases`, `sys.objects`, `SERVERPROPERTY`, etc.) não são emuladas.
 
 ## Tradução T-SQL → SQLite
 
@@ -150,9 +155,14 @@ Limitações do listener: sem TLS, sem Windows/Integrated Auth, sem MARS. A comp
 | `MERGE`, `UPDATE ... JOIN` simples | Reescrita para UPSERT/subquery |
 | `CREATE VIEW`, `CREATE TRIGGER` | Repassados quando o SQLite suporta |
 | `DECLARE`/`SET` literais e batches com `GO` | Subconjunto straight-line |
+| `sysname` em DDL | Mapeado para `TEXT` |
+| `IF EXISTS (...)` / `IF (...)` com comando simples ou bloco `BEGIN...END` | Condição descartada; corpo executado |
+| `BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH` | Executa o `TRY`, descarta o `CATCH` |
+| `EXEC sp_executesql N'...'` (literal ou variável) | SQL extraído e executado |
+| Batch de descoberta de servidor do SSMS (`xp_msver` + `#SVer`) | Substituído por resultset sintético |
 | `dbo.` / `[dbo].` em nomes de objetos | Removido (SQLite não tem esquemas) |
 | `SET` de sessão do ODBC (`ANSI_WARNINGS`, `TEXTSIZE`, `XACT_ABORT`, etc.) | Ignorado |
-| `IF`/`WHILE`/`BEGIN...END` complexos, procedures com OUTPUT, TRY/CATCH, CLR | Erro claro (`BadRequestException`) |
+| `WHILE`, `GOTO`, `RETURN`, `THROW`, `RAISERROR`, procedures com OUTPUT, CLR | Erro claro (`BadRequestException`) |
 
 Erros de SQL são devolvidos como `BadRequestException` no JSON ou `<Code>BadRequestException</Code>`
 no protocolo query.

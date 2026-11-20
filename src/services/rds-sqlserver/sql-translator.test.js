@@ -396,6 +396,55 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         "SELECT '@name' AS texto FROM t"
       );
     });
+
+    test('desembrulha IF EXISTS usado na inicialização de clientes', () => {
+      const resultado = translator.translate(
+        "IF EXISTS (SELECT 1 FROM sys.databases WHERE name = 'master') SELECT 7 AS ok"
+      );
+      expect(resultado).toBe('SELECT 7 AS ok');
+    });
+
+    test('desembrulha IF com condição entre parênteses', () => {
+      const resultado = translator.translate(
+        "IF (OBJECT_ID('tempdb..#tmp') IS NOT NULL) DROP TABLE #tmp; SELECT 9 AS ok"
+      );
+      expect(resultado).toBe('DROP TABLE #tmp; SELECT 9 AS ok');
+    });
+
+    test('desembrulha BEGIN TRY/CATCH mantendo apenas o TRY', () => {
+      const resultado = translator.translate(
+        'BEGIN TRY SELECT 1 AS ok END TRY BEGIN CATCH SELECT 2 AS erro END CATCH'
+      );
+      expect(resultado).toBe('SELECT 1 AS ok');
+    });
+
+    test('desembrulha EXEC sp_executesql com literal', () => {
+      expect(translator.translate("EXEC sp_executesql N'SELECT 1 AS ok'")).toBe(
+        'SELECT 1 AS ok'
+      );
+    });
+
+    test('desembrulha EXEC sp_executesql com SQL vindo de variável', () => {
+      const resultado = translator.translate(
+        "DECLARE @sql NVARCHAR(100) = N'SELECT GETDATE() AS agora'; EXEC sp_executesql @sql"
+      );
+      expect(resultado).toBe("SELECT datetime('now') AS agora");
+    });
+
+    test('substitui o batch de descoberta de servidor do SSMS', () => {
+      const resultado = translator.translate(
+        'CREATE TABLE #SVer(ID int, Name sysname); ' +
+          "INSERT #SVer EXEC master.dbo.xp_msver; " +
+          "IF EXISTS (SELECT 1 FROM sys.all_objects WHERE name = 'dm_os_host_info') " +
+          'BEGIN INSERT #SVer SELECT 1001, host_platform FROM sys.dm_os_host_info END; ' +
+          "SELECT CAST(serverproperty(N'Servername') AS sysname) AS [Server_Name]; " +
+          'DROP TABLE #SVer'
+      );
+
+      expect(resultado).toContain("'LOCAL' AS [Server_Name]");
+      expect(resultado).toContain("'16.00.4035.2' AS [VersionString]");
+      expect(resultado).not.toMatch(/xp_msver|sys\.all_objects|serverproperty/i);
+    });
   });
 
   describe('construtos não suportados', () => {

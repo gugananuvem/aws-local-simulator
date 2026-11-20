@@ -8,6 +8,7 @@
 const net = require('net');
 
 const { TdsServer } = require('./tds-server');
+const { SqlTranslator } = require('./sql-translator');
 const {
   HEADER_SIZE,
   TYPE,
@@ -462,6 +463,61 @@ describe('TdsServer', () => {
     expect(payload.includes(TOKEN.ROW)).toBe(true);
     expect(payload.includes(TOKEN.DONE)).toBe(true);
     expect(dbEngine.execute).toHaveBeenCalledWith('testdb', 'SELECT 1', []);
+  });
+
+  test('SQL Batch aceita IF EXISTS de inicialização do SSMS', async () => {
+    const socket = await conectarNoServidor();
+    await autenticar(socket);
+
+    const tradutor = new SqlTranslator('sqlserver-se');
+    let sqlTraduzido;
+    dbEngine.execute.mockImplementationOnce((database, sql) => {
+      sqlTraduzido = tradutor.translate(sql);
+      return {
+        type: 'select',
+        columns: [{ name: 'ok', type: 'INTEGER' }],
+        rows: [{ ok: 7 }],
+        changes: 0
+      };
+    });
+
+    const sql = "IF EXISTS (SELECT 1 FROM sys.databases WHERE name = 'master') SELECT 7 AS ok";
+    const resposta = await coletar(socket, () => {
+      socket.write(buildPacket(TYPE.SQLBATCH, Buffer.from(sql, 'utf16le')));
+    });
+
+    const payload = resposta.subarray(HEADER_SIZE);
+    expect(payload.includes(TOKEN.ERROR)).toBe(false);
+    expect(payload.includes(TOKEN.COLMETADATA)).toBe(true);
+    expect(sqlTraduzido).toBe('SELECT 7 AS ok');
+  });
+
+  test('SQL Batch aceita o batch de descoberta de servidor do SSMS', async () => {
+    const socket = await conectarNoServidor();
+    await autenticar(socket);
+
+    const tradutor = new SqlTranslator('sqlserver-se');
+    let sqlTraduzido;
+    dbEngine.execute.mockImplementationOnce((database, sql) => {
+      sqlTraduzido = tradutor.translate(sql);
+      return {
+        type: 'select',
+        columns: [{ name: 'Server_Name', type: 'NVARCHAR' }],
+        rows: [{ Server_Name: 'LOCAL' }],
+        changes: 0
+      };
+    });
+
+    const sql = 'CREATE TABLE #SVer(ID int, Name sysname); INSERT #SVer EXEC master.dbo.xp_msver; ' +
+      "SELECT CAST(serverproperty(N'Servername') AS sysname) AS [Server_Name]; DROP TABLE #SVer";
+    const resposta = await coletar(socket, () => {
+      socket.write(buildPacket(TYPE.SQLBATCH, Buffer.from(sql, 'utf16le')));
+    });
+
+    const payload = resposta.subarray(HEADER_SIZE);
+    expect(payload.includes(TOKEN.ERROR)).toBe(false);
+    expect(payload.includes(TOKEN.COLMETADATA)).toBe(true);
+    expect(sqlTraduzido).toContain("'LOCAL' AS [Server_Name]");
   });
 
   test('SQL Batch ignora o bloco All Headers enviado por sqlcmd/ODBC', async () => {

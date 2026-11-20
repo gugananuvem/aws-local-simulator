@@ -9,7 +9,9 @@
  * - converter TOP em LIMIT, reposicionando-o após ORDER BY;
  * - converter IDENTITY em AUTOINCREMENT e tipos de dados em comandos DDL;
  * - traduzir MERGE simples e UPDATE ... JOIN simples;
- * - remover blocos procedurais simples (DECLARE/SET) e rejeitar o restante.
+ * - reconhecer o batch de descoberta de servidor do SSMS e devolver metadados sintéticos;
+ * - remover DECLARE/SET e desembrulhar o subconjunto procedural usado por SSMS
+ *   (IF com condição entre parênteses, TRY/CATCH e EXEC sp_executesql literal).
  *
  * IMPORTANTE: translate() nunca altera a string recebida. As substituições são
  * feitas sobre máscaras de mesmo tamanho, que ignoram literais de texto,
@@ -27,6 +29,7 @@ const TIPOS_DDL = [
   [/\bNCHAR\s*\(\s*\d+\s*\)/i, 'TEXT'],
   [/\bCHAR\s*\(\s*\d+\s*\)/i, 'TEXT'],
   [/\bUNIQUEIDENTIFIER\b/i, 'TEXT'],
+  [/\bSYSNAME\b/i, 'TEXT'],
   [/\bXML\b/i, 'TEXT'],
   [/\bTEXT\b/i, 'TEXT'],
   [/\bSMALLDATETIME\b/i, 'TEXT'],
@@ -119,6 +122,7 @@ class SqlTranslator {
     let resultado = this._removerComentarios(sql);
     resultado = this.splitBatches(resultado).join(' ');
     resultado = this._normalizarWhitespace(resultado);
+    resultado = this._traduzirMetadadosCliente(resultado);
     resultado = this._removerRuido(resultado);
     resultado = this._removerEsquema(resultado);
     resultado = this._traduzirProcedural(resultado);
@@ -498,24 +502,55 @@ class SqlTranslator {
   }
 
   /**
-   * Suporte procedural conservador: apenas DECLARE/SET em sequência linear.
-   * Qualquer desvio (IF, WHILE, BEGIN...END etc.) é rejeitado explicitamente.
+   * Substitui o batch de descoberta de servidor enviado pelo SSMS ao conectar.
+   * A consulta original usa xp_msver, tabelas de sistema e funções de servidor
+   * que não existem no SQLite. Devolvemos um resultset com as mesmas colunas e
+   * valores representativos do cluster simulado.
+   * @private
+   */
+  _traduzirMetadadosCliente(sql) {
+    const código = this._mascarar(sql).code;
+    if (!/\bxp_msver\b/i.test(código) || !/#SVer\b/i.test(código)) {
+      return sql;
+    }
+
+    return (
+      "SELECT 'LOCAL' AS [Server_Name], " +
+      "'Server[@Name=''LOCAL'']' AS [Server_Urn], " +
+      'NULL AS [Server_ServerType], ' +
+      '0 AS [Server_IsContainedAuthentication], ' +
+      '16 AS [VersionMajor], ' +
+      '0 AS [VersionMinor], ' +
+      '4035 AS [BuildNumber], ' +
+      '0 AS [IsSingleUser], ' +
+      "'Standard Edition (64-bit)' AS [Edition], " +
+      '2 AS [EngineEdition], ' +
+      '0 AS [IsXTPSupported], ' +
+      "'16.00.4035.2' AS [VersionString], " +
+      "'windows' AS [HostPlatform], " +
+      '0 AS [IsFullTextInstalled]'
+    );
+  }
+
+  /**
+   * Suporte procedural conservador: DECLARE/SET lineares e o subconjunto usado
+   * por clientes como o SSMS durante a conexão (IF com condição entre
+   * parênteses, BEGIN TRY/CATCH e EXEC sp_executesql com literal).
+   * Loops e EXEC de procedures arbitrários continuam sendo rejeitados.
    * @private
    */
   _traduzirProcedural(sql) {
-    const máscara = this._mascarar(sql);
-    const ehTrigger = /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\b/i.test(máscara.code);
+    const ehTrigger = /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\b/i.test(this._mascarar(sql).code);
+    let resultado = sql;
 
     if (!ehTrigger) {
-      if (/\b(?:IF|WHILE|BEGIN|GOTO|RETURN|THROW|RAISERROR|EXEC|EXECUTE)\b/i.test(máscara.code)) {
-        throw this._badRequest(
-          'Blocos procedurais T-SQL (IF, WHILE, BEGIN...END, EXEC) não suportados pelo tradutor SQL Server para SQLite.'
-        );
-      }
+      resultado = this._desembrulharTryCatch(resultado);
+      resultado = this._desembrulharIfCondicional(resultado);
+      resultado = this._desembrulharExecSql(resultado);
+      this._validarProceduralResidual(resultado);
     }
 
     const variáveis = new Map();
-    let resultado = sql;
 
     resultado = this._substituirTodos(
       resultado,
@@ -548,8 +583,151 @@ class SqlTranslator {
     );
 
     resultado = this._resolverVariaveis(resultado, variáveis);
+
+    if (!ehTrigger) {
+      resultado = this._desembrulharExecSql(resultado);
+      this._validarProceduralResidual(resultado);
+    }
+
     // Remove ponto e vírgula órfão deixado por uma declaração no início do lote.
     return resultado.replace(/^(?:\s*;+\s*)+/, '');
+  }
+
+  /** Garante que nenhum construto procedural não suportado permaneça. @private */
+  _validarProceduralResidual(sql) {
+    const código = this._mascarar(sql).code.replace(
+      /\bEXEC(?:UTE)?\s+(?:sys\.)?sp_executesql\b/gi,
+      ' '
+    );
+    const restanteProcedural =
+      /\b(?:IF|WHILE|GOTO|RETURN|THROW|RAISERROR|EXEC|EXECUTE)\b/i.test(código) ||
+      /\bBEGIN\b(?!\s+TRAN(?:ACTION)?\b)/i.test(código);
+
+    if (restanteProcedural) {
+      throw this._badRequest(
+        'Blocos procedurais T-SQL (IF, WHILE, BEGIN...END, EXEC) não suportados pelo tradutor SQL Server para SQLite.'
+      );
+    }
+  }
+
+  /** Remove BEGIN TRY/END TRY e descarta o bloco CATCH. @private */
+  _desembrulharTryCatch(sql) {
+    let resultado = sql;
+
+    for (let tentativa = 0; tentativa < 20; tentativa += 1) {
+      const código = this._mascarar(resultado).code;
+      const inícioTry = /\bBEGIN\s+TRY\b/i.exec(código);
+      if (!inícioTry) break;
+
+      const afterTry = inícioTry.index + inícioTry[0].length;
+      const fimTry = /\bEND\s+TRY\b/i.exec(código.slice(afterTry));
+      if (!fimTry) break;
+      const fimTryAbs = afterTry + fimTry.index;
+
+      const inícioCatch = /\bBEGIN\s+CATCH\b/i.exec(código.slice(fimTryAbs + fimTry[0].length));
+      if (!inícioCatch) break;
+      const inícioCatchAbs = fimTryAbs + fimTry[0].length + inícioCatch.index;
+      const afterCatch = inícioCatchAbs + inícioCatch[0].length;
+
+      const fimCatch = /\bEND\s+CATCH\b/i.exec(código.slice(afterCatch));
+      if (!fimCatch) break;
+      const fimCatchAbs = afterCatch + fimCatch.index + fimCatch[0].length;
+
+      const corpo = resultado.slice(afterTry, fimTryAbs).trim();
+      resultado = resultado.slice(0, inícioTry.index) + corpo + resultado.slice(fimCatchAbs);
+    }
+
+    return resultado;
+  }
+
+  /**
+   * Transforma IF (<condição>) <comando> e IF EXISTS (<consulta>) <comando>
+   * no comando interno. Condições de metadados usadas por clientes são tratadas
+   * como verdadeiras; IF com expressão simples permanece rejeitado.
+   * @private
+   */
+  _desembrulharIfCondicional(sql) {
+    let resultado = sql;
+
+    for (let tentativa = 0; tentativa < 50; tentativa += 1) {
+      const código = this._mascarar(resultado).code;
+      const condição = /\bIF\s+(?:EXISTS\s*)?\(/i.exec(código);
+      if (!condição) break;
+
+      const abertura = condição.index + condição[0].length - 1;
+      const fechamento = this._parenCorespondente(código, abertura);
+      if (fechamento < 0) break;
+
+      let inícioCorpo = fechamento + 1;
+      while (inícioCorpo < código.length && /\s/.test(código[inícioCorpo])) {
+        inícioCorpo += 1;
+      }
+
+      const restante = código.slice(inícioCorpo);
+      const bloco = /^BEGIN\b/i.exec(restante);
+      let fimCorpo;
+
+      if (bloco && !/^BEGIN\s+(?:TRY|CATCH|TRAN|TRANSACTION)\b/i.test(restante)) {
+        const fimBloco = this._fimBlocoBeginEnd(código, inícioCorpo);
+        if (fimBloco < 0) break;
+        inícioCorpo += bloco[0].length;
+        fimCorpo = fimBloco - 3;
+      } else {
+        fimCorpo = this._proximoPontoVirgula(código, inícioCorpo);
+        if (fimCorpo < 0) fimCorpo = resultado.length;
+      }
+
+      const corpo = resultado.slice(inícioCorpo, fimCorpo).trim();
+      resultado = resultado.slice(0, condição.index) + corpo + resultado.slice(fimCorpo);
+    }
+
+    return resultado;
+  }
+
+  /** Desembrulha EXEC/EXECUTE sp_executesql com SQL literal. @private */
+  _desembrulharExecSql(sql) {
+    return sql.replace(
+      /\bEXEC(?:UTE)?\s+(?:sys\.)?sp_executesql\s*\(?\s*N?'((?:''|[^'])*)'\s*\)?(?:\s*,[^;]*)?/gi,
+      (correspondência, texto) => texto.replace(/''/g, "'")
+    );
+  }
+
+  /** Encontra o END que fecha o BEGIN em `inicio`. @private */
+  _fimBlocoBeginEnd(código, inicio) {
+    const regex = /\b(?:BEGIN|END)\b/gi;
+    regex.lastIndex = inicio;
+    let profundidade = 0;
+    let correspondência;
+
+    while ((correspondência = regex.exec(código)) !== null) {
+      if (/^BEGIN$/i.test(correspondência[0])) {
+        profundidade += 1;
+      } else {
+        profundidade -= 1;
+        if (profundidade === 0) {
+          return correspondência.index + correspondência[0].length;
+        }
+      }
+    }
+
+    return -1;
+  }
+
+  /** Encontra o próximo ponto e vírgula de nível superior. @private */
+  _proximoPontoVirgula(código, inicio) {
+    let profundidade = 0;
+
+    for (let i = inicio; i < código.length; i += 1) {
+      if (código[i] === '(') {
+        profundidade += 1;
+      } else if (código[i] === ')' && profundidade > 0) {
+        profundidade -= 1;
+      } else if (código[i] === ';' && profundidade === 0) {
+        return i;
+      }
+    }
+
+    return -1;
   }
 
   /** Substitui referências a variáveis já declaradas fora de literais. @private */
