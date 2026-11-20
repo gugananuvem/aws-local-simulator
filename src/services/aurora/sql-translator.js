@@ -39,6 +39,21 @@ class SqlTranslator {
     // Work on a copy - never mutate the original
     let result = sql.trim();
 
+    // SQLite não tem CREATE OR REPLACE VIEW / ALTER VIEW: recria a view.
+    const replaceView = /^CREATE\s+OR\s+REPLACE\s+VIEW\s+([`"]?[\w]+[`"]?)\s+AS\s+([\s\S]+)$/i.exec(result);
+    if (replaceView) {
+      const name = replaceView[1];
+      const definition = replaceView[2].trim().replace(/;\s*$/, '');
+      return `DROP VIEW IF EXISTS ${name}; CREATE VIEW ${name} AS ${definition}`;
+    }
+
+    const alterView = /^ALTER\s+VIEW\s+([`"]?[\w]+[`"]?)\s+AS\s+([\s\S]+)$/i.exec(result);
+    if (alterView) {
+      const name = alterView[1];
+      const definition = alterView[2].trim().replace(/;\s*$/, '');
+      return `DROP VIEW IF EXISTS ${name}; CREATE VIEW ${name} AS ${definition}`;
+    }
+
     // Step 1: Normalize whitespace and remove comments
     result = this._removeComments(result);
     result = this._normalizeWhitespace(result);

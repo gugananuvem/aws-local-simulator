@@ -42,6 +42,11 @@ class DbEngine {
     this.databases.set(dbName, db);
     logger.debug(`[Aurora DbEngine] Database '${dbName}' created/opened at ${dbPath}`);
 
+    // Rotinas persistidas precisam ser registradas em toda nova conexão.
+    if (typeof this.onDatabaseOpen === 'function') {
+      this.onDatabaseOpen(dbName, db);
+    }
+
     return db;
   }
 
@@ -175,6 +180,9 @@ class DbEngine {
     }
     this.databases.clear();
     this.transactions.clear();
+    if (typeof this.onDatabasesClosed === 'function') {
+      this.onDatabasesClosed();
+    }
     logger.debug('[Aurora DbEngine] All connections closed');
   }
 

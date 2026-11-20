@@ -12,6 +12,7 @@ const { DbEngine } = require('./db-engine');
 const { ClusterManager } = require('./cluster-manager');
 const { DataApiHandler } = require('./data-api');
 const { RdsApiHandler } = require('./rds-api');
+const { RoutineService } = require('./routines');
 const LocalStore = require('../../utils/local-store');
 
 class AuroraService {
@@ -22,6 +23,7 @@ class AuroraService {
     this.server = null;
     this.dbEngine = null;
     this.clusterManager = null;
+    this.routineService = null;
     this.dataApiHandler = null;
     this.rdsApiHandler = null;
     this.isRunning = false;
@@ -47,9 +49,11 @@ class AuroraService {
     this.dbEngine = new DbEngine(dataDir);
     this.clusterManager = new ClusterManager(dataDir, store);
     this.clusterManager.initialize();
+    this.routineService = new RoutineService(this.dbEngine);
 
     // 2. Create handlers with dependencies
     this.dataApiHandler = new DataApiHandler(this.dbEngine, null, this.clusterManager, logger);
+    this.dataApiHandler.routineService = this.routineService;
     this.rdsApiHandler = new RdsApiHandler(this.clusterManager, this.dbEngine, logger);
 
     // 3. Create server and wire handlers
@@ -58,6 +62,7 @@ class AuroraService {
     this.server.rdsApiHandler = this.rdsApiHandler;
     this.server.clusterManager = this.clusterManager;
     this.server.dbEngine = this.dbEngine;
+    this.server.routineService = this.routineService;
     await this.server.initialize();
 
     logger.debug('Aurora Service inicializado');
@@ -156,7 +161,8 @@ class AuroraService {
       dataApiHandler: this.dataApiHandler,
       rdsApiHandler: this.rdsApiHandler,
       clusterManager: this.clusterManager,
-      dbEngine: this.dbEngine
+      dbEngine: this.dbEngine,
+      routineService: this.routineService
     };
   }
 

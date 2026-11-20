@@ -28,6 +28,59 @@ class DataApiHandler {
     this.secretManagerService = null;
     this.cloudWatchService = null;
     this.cloudTrailService = null;
+    this.routineService = null;
+  }
+
+  /**
+   * Formata o resultado de uma execução no formato da Data API.
+   *
+   * @param {object} result
+   * @param {string} sql
+   * @param {boolean} includeResultMetadata
+   */
+  formatExecutionResult(result, sql, includeResultMetadata) {
+    const response = {};
+
+    if (result.type === 'select') {
+      const formatted = this.formatResults(result.rows || [], result.columns || []);
+      response.records = formatted.records;
+      if (includeResultMetadata) response.columnMetadata = formatted.columnMetadata;
+      response.numberOfRecordsUpdated = 0;
+    } else if (result.type === 'dml') {
+      response.numberOfRecordsUpdated = result.changes;
+      response.generatedFields = [];
+      const isInsert = (sql || '').trim().toUpperCase().startsWith('INSERT');
+      if (isInsert && result.lastInsertRowid && result.lastInsertRowid > 0) {
+        response.generatedFields.push({ longValue: result.lastInsertRowid });
+      }
+      if (includeResultMetadata) response.columnMetadata = [];
+    } else {
+      response.numberOfRecordsUpdated = 0;
+      response.generatedFields = [];
+      if (includeResultMetadata) response.columnMetadata = [];
+    }
+
+    return response;
+  }
+
+  /**
+   * Emite a métrica de requisições da Data API quando o CloudWatch está disponível.
+   */
+  emitDataApiMetric(cluster) {
+    if (!this.cloudWatchService) return;
+    try {
+      this.cloudWatchService.putMetricData({
+        namespace: 'AWS/RDS',
+        metricData: [{
+          metricName: 'DataAPIRequests',
+          value: 1,
+          unit: 'Count',
+          dimensions: [{ name: 'DBClusterIdentifier', value: cluster.DBClusterIdentifier }]
+        }]
+      });
+    } catch (e) {
+      // Não falha a requisição por causa de métrica.
+    }
   }
 
   /**
@@ -48,11 +101,12 @@ class DataApiHandler {
         return this.commitTransaction(body);
       case 'RDSDataService.RollbackTransaction':
         return this.rollbackTransaction(body);
-      default:
+      default: {
         const error = new Error(`Unknown target: ${target}`);
         error.code = 'BadRequestException';
         error.statusCode = 400;
         throw error;
+      }
     }
   }
 
@@ -127,21 +181,41 @@ class DataApiHandler {
       throw error;
     }
 
-    // 4. Determine engine mode and create translator
+    // 4. Determine engine mode
     const engineMode = cluster.Engine; // 'aurora-mysql' or 'aurora-postgresql'
+
+    // 5. Rotinas: parser próprio, sem passar pelo tradutor de SQL comum.
+    const routineKind = this.routineService?.classify(sql) || null;
+    if (routineKind) {
+      let routineResult;
+      if (routineKind === 'create') {
+        this.routineService.create(dbName, engineMode, sql);
+        routineResult = { type: 'ddl' };
+      } else if (routineKind === 'drop') {
+        this.routineService.drop(dbName, sql);
+        routineResult = { type: 'ddl' };
+      } else if (routineKind === 'call') {
+        const { boundSql, bindings } = this.bindParameters(sql, parameters);
+        routineResult = this.routineService.call(dbName, { sql: boundSql, bindings, transactionId });
+      } else {
+        routineResult = this.routineService.catalog(dbName, sql, transactionId) || { type: 'ddl' };
+      }
+
+      this.emitDataApiMetric(cluster);
+      return this.formatExecutionResult(routineResult, sql, includeResultMetadata);
+    }
+
+    // 6. Translate SQL
     const SqlTranslator = require('./sql-translator');
     const translator = new SqlTranslator(engineMode);
-
-    // 5. Translate SQL
     const translatedSql = translator.translate(sql);
 
-    // 6. Bind parameters
+    // 7. Bind parameters
     const { boundSql, bindings } = this.bindParameters(translatedSql, parameters);
 
-    // 7. Execute
+    // 8. Execute
     let result;
     if (transactionId) {
-      // Check transaction exists
       const txn = this.transactions.get(transactionId);
       if (!txn) {
         const error = new Error(`Transaction ${transactionId} is not found`);
@@ -154,53 +228,8 @@ class DataApiHandler {
       result = this.dbEngine.execute(dbName, boundSql, bindings);
     }
 
-    // 8. Format response
-    const response = {};
-
-    if (result.type === 'select') {
-      response.records = this.formatResults(result.rows, result.columns).records;
-      if (includeResultMetadata) {
-        response.columnMetadata = this.formatResults(result.rows, result.columns).columnMetadata;
-      }
-      response.numberOfRecordsUpdated = 0;
-    } else if (result.type === 'dml') {
-      response.numberOfRecordsUpdated = result.changes;
-      response.generatedFields = [];
-      // Only include lastInsertRowid for INSERT statements
-      const isInsert = boundSql.trim().toUpperCase().startsWith('INSERT');
-      if (isInsert && result.lastInsertRowid && result.lastInsertRowid > 0) {
-        response.generatedFields.push({ longValue: result.lastInsertRowid });
-      }
-      if (includeResultMetadata) {
-        response.columnMetadata = [];
-      }
-    } else {
-      // DDL
-      response.numberOfRecordsUpdated = 0;
-      response.generatedFields = [];
-      if (includeResultMetadata) {
-        response.columnMetadata = [];
-      }
-    }
-
-    // 9. Emit CloudWatch metric (if available)
-    if (this.cloudWatchService) {
-      try {
-        this.cloudWatchService.putMetricData({
-          namespace: 'AWS/RDS',
-          metricData: [{
-            metricName: 'DataAPIRequests',
-            value: 1,
-            unit: 'Count',
-            dimensions: [{ name: 'DBClusterIdentifier', value: cluster.DBClusterIdentifier }]
-          }]
-        });
-      } catch (e) {
-        // Don't fail the request if CloudWatch fails
-      }
-    }
-
-    return response;
+    this.emitDataApiMetric(cluster);
+    return this.formatExecutionResult(result, boundSql, includeResultMetadata);
   }
 
   /**
@@ -226,13 +255,43 @@ class DataApiHandler {
       throw error;
     }
 
-    // 4. Translate SQL
+    // 4. Rotinas no batch (CALL por parameter set; DDL/catálogo uma vez)
     const engineMode = cluster.Engine;
+    const routineKind = this.routineService?.classify(sql) || null;
+    if (routineKind) {
+      const updateResults = [];
+      if (routineKind === 'call') {
+        for (let i = 0; i < (parameterSets || []).length; i++) {
+          try {
+            const { boundSql, bindings } = this.bindParameters(sql, parameterSets[i]);
+            const result = this.routineService.call(dbName, { sql: boundSql, bindings, transactionId });
+            updateResults.push({
+              generatedFields: result.lastInsertRowid > 0 ? [{ longValue: result.lastInsertRowid }] : [],
+            });
+          } catch (err) {
+            const error = new Error(`Error at parameter set index ${i}: ${err.message}`);
+            error.code = err.code || 'BadRequestException';
+            error.statusCode = err.statusCode || 400;
+            throw error;
+          }
+        }
+      } else if (routineKind === 'create') {
+        this.routineService.create(dbName, engineMode, sql);
+      } else if (routineKind === 'drop') {
+        this.routineService.drop(dbName, sql);
+      } else {
+        this.routineService.catalog(dbName, sql, transactionId);
+      }
+      this.emitDataApiMetric(cluster);
+      return { updateResults };
+    }
+
+    // 5. Translate SQL
     const SqlTranslator = require('./sql-translator');
     const translator = new SqlTranslator(engineMode);
     const translatedSql = translator.translate(sql);
 
-    // 5. Execute once for each parameter set
+    // 6. Execute once for each parameter set
     const updateResults = [];
     const paramSets = parameterSets || [];
 

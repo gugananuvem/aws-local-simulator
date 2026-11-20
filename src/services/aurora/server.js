@@ -184,6 +184,82 @@ class AuroraServer {
       }
     });
 
+    const requireRoutineService = (res) => {
+      if (!this.routineService || !this.dbEngine) {
+        res.status(503).json({ error: 'Serviço de rotinas não inicializado' });
+        return false;
+      }
+      return true;
+    };
+
+    const readDatabase = (req, res) => {
+      const database = String(req.query.database || '');
+      if (!database || !this.dbEngine.listDatabases().includes(database)) {
+        res.status(400).json({ error: 'Parâmetro database inválido' });
+        return null;
+      }
+      return database;
+    };
+
+    this.app.get('/__admin/routines', (req, res) => {
+      if (!requireRoutineService(res)) return;
+      const database = readDatabase(req, res);
+      if (!database) return;
+      const kind = String(req.query.kind || 'all');
+      if (!['all', 'procedure', 'function'].includes(kind)) {
+        return res.status(400).json({ error: 'kind deve ser all, procedure ou function' });
+      }
+      try {
+        res.json({ routines: this.routineService.list(database, kind) });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/__admin/routines/:kind/:name', (req, res) => {
+      if (!requireRoutineService(res)) return;
+      const database = readDatabase(req, res);
+      if (!database) return;
+      const kind = String(req.params.kind);
+      if (!['procedure', 'function'].includes(kind)) {
+        return res.status(400).json({ error: 'kind deve ser procedure ou function' });
+      }
+      try {
+        const routine = this.routineService.get(database, kind, String(req.params.name));
+        if (!routine) return res.status(404).json({ error: 'Rotina não encontrada' });
+        res.json({ routine });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    this.app.delete('/__admin/routines/:kind/:name', (req, res) => {
+      if (!requireRoutineService(res)) return;
+      const database = readDatabase(req, res);
+      if (!database) return;
+      const kind = String(req.params.kind);
+      if (!['procedure', 'function'].includes(kind)) {
+        return res.status(400).json({ error: 'kind deve ser procedure ou function' });
+      }
+      try {
+        this.routineService.dropByName(database, kind, String(req.params.name));
+        res.json({ message: 'Rotina removida com sucesso' });
+      } catch (error) {
+        res.status(error.statusCode || 500).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/__admin/views', (req, res) => {
+      if (!requireRoutineService(res)) return;
+      const database = readDatabase(req, res);
+      if (!database) return;
+      try {
+        res.json({ views: this.routineService.listViews(database) });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     this.app.post('/__admin/reset', async (req, res) => {
       try {
         if (this.clusterManager) await this.clusterManager.reset();
