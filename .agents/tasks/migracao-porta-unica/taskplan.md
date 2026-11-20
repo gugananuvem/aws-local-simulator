@@ -68,10 +68,17 @@ Base: feature-v3.0.2 (tip 4c7eafa). Gateway na porta 4700 já existe.
 - [x] athena (habilitar no aws-local-simulator.json). Concluído em 2026-11-19. Medição igual nas duas portas (4700 e 4599), código de saída 0. Não requer correção de código. Relatório: C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\baseline\athena.md
 - [x] aurora (habilitar no aws-local-simulator.json). Concluído em 2026-11-19. Medição igual nas duas portas (4700 e 4510), código de saída 0. Não requer correção de código. Relatório: C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\baseline\aurora.md
 
+## Onda 8. Frontend para o gateway 4700
+
+- [x] Inventário de configuração de endpoints no frontend. Concluído em 2026-11-20. Relatório: `C:\Projetos\aws-local-simulator\inventory\onda8\inventory-wave8.md`.
+- [x] Configuração centralizada em `src/frontend/src/shared/config/endpoints.js` (único export `AWS_CONFIG`): padrão `http://localhost:4700`, `AWS_ENDPOINT_URL`/`VITE_AWS_ENDPOINT_URL` e fallback para portas legadas com `AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true`. Concluído em 2026-11-20.
+- [x] Build e testes do frontend: `npm run build` OK, `npm test` com 469 testes aprovados, smoke test com DynamoDB, S3 e SQS pela porta 4700. Concluído em 2026-11-20. Relatório: `C:\Projetos\aws-local-simulator\inventory\onda8\build-test-wave8.md`.
+- [x] Documentação de portas em `src/frontend/README.md` e exemplos de CLI atualizados para o gateway. Concluído em 2026-11-20.
+
 ## Fora do escopo
 
 - [ ] Remoção do código das portas legadas (não planejada)
-- [ ] Frontend (tratado depois do backend)
+- [x] Frontend (tratado na onda 8)
 
 ## Registro de execuções
 
@@ -84,3 +91,4 @@ Base: feature-v3.0.2 (tip 4c7eafa). Gateway na porta 4700 já existe.
 | 4 | wf_b1b1cd10f269ceae | concluída em 2025-01-10 | C:\Projetos\aws-local-simulator\inventory\onda4\relatorio.md |
 | 5 | wf_7a1da7c895192fd1 | concluída em 2025-01-10 | C:\Projetos\aws-local-simulator\src\backend\inventory\onda5\relatorio.md (worktree onda5 removido após aprovação) |
 | 6 | wf_fc5a1624bf172154 | concluída em 2026-11-19. Investigação do abort realizada. athena e aurora medidos: mesmo comportamento nas portas 4700 e legada, código de saída 0. Não requerem correção de código. Uncommitted changes: nenhuma. Pipeline cleanup: não aplicável (apenas medição, sem alteração de código). | C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\baseline\athena.md e aurora.md |
+| 8 | wf_f34cf29ac63ac433 | concluída em 2026-11-20. Frontend migrado para o gateway 4700: config centralizada, build e 469 testes OK, integração validada com DynamoDB/S3/SQS, README e taskplans atualizados. Sem alteração de código no backend. | C:\Projetos\aws-local-simulator\inventory\onda8\build-test-wave8.md |
