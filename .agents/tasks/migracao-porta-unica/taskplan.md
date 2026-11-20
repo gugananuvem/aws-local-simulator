@@ -64,9 +64,9 @@ Base: feature-v3.0.2 (tip 4c7eafa). Gateway na porta 4700 já existe.
 
 ## Onda 6. Depois da investigação do abort de startup
 
-- [ ] Investigação do abort "Assertion failed: (env) != nullptr" com athena e aurora ligados (executada após a onda 5)
-- [ ] athena (habilitar no aws-local-simulator.json)
-- [ ] aurora (habilitar no aws-local-simulator.json)
+- [x] Investigação do abort "Assertion failed: (env) != nullptr" com athena e aurora ligados (executada após a onda 5)
+- [x] athena (habilitar no aws-local-simulator.json). Concluído em 2026-11-19. Medição igual nas duas portas (4700 e 4599), código de saída 0. Não requer correção de código. Relatório: C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\baseline\athena.md
+- [x] aurora (habilitar no aws-local-simulator.json). Concluído em 2026-11-19. Medição igual nas duas portas (4700 e 4510), código de saída 0. Não requer correção de código. Relatório: C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\baseline\aurora.md
 
 ## Fora do escopo
 
@@ -79,7 +79,8 @@ Base: feature-v3.0.2 (tip 4c7eafa). Gateway na porta 4700 já existe.
 |---|---|---|---|
 | 0 | wf_098ea3c980c53d52 | concluída em 2026-11-17 | C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\baseline\baseline.md |
 | 1 | wf_facbc0e4d18fb514 | parcial em 2026-11-17 (revisão 1 concluída). iam migrado. kms, secret-manager, parameter-store e cloudtrail migrados; (d) dispensado pela exceção aprovada pelo usuário em 2026-11-17. cognito não migrado: causa de ambiente, correção do usuário em e72f5ce com caminho dependente do cwd (pendente). Commits da onda em feature-v3.0.2 (3de6b96, fad2075, 92263ee, 2900174, 50bbf8d, 67ee608) e commits do usuário c8c8039 e e72f5ce. Checkout em e72f5ce, graphify EXIT=0 | C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\onda1\onda1.md |
-| 2 | wf_efcde74155a2d224 | parcial em 2026-11-17 (revisão 1 concluída: suíte de apigateway em tests/ rodada e passa). dynamodb, s3, lambda, sqs e apigateway migrados. sns com (d) pendente (sem suíte). Correção de GET /restapis (item além de items), commit 656ece0. Commits da onda em migracao-onda2: 656ece0, adde11b, 4fb3d32; fast-forward de feature-v3.0.2 para 4fb3d32, graphify EXIT=0 | C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\onda2\relatorio.md |
+| 2 | wf_efcde74155a2d224 | parcial em 2026-11-17 (revisão 1 concluída: suíte de apigateway em tests/ rodada e passa). dynamodb, s3, lambda, sqs e apigateway migrados. sns com (d) pendente (sem suíte). Correção de GET /restapis (item além de items), commit 656ece0. Commits da onda em migracao-onda2: 656ece0, adde11b, 4fb3d32; fast-forward de feature-v3.0.2 para 4fb3d32, graphify código 0 | C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\onda2\relatorio.md |
 | 3 | wf_5643124ede7073ec + ajuste em 2026-11-17: sts, ec2 e alb migrados; sts com (d) corrigido (ajuste nos testes, sem defeito de código). eventbridge e cloudwatch migrados com exceção aprovada (sem suíte no repositório). asg com create, describe e delete corrigidos (sem suíte, critério d pendente, mas correção aplicada conforme item 3). Commits da onda em migracao-onda3: 43a913c, ce44958, b6dea74; fast-forward de feature-v3.0.2 para b6dea74, graphify código 0. EventBridge e CloudWatch registrados como exceção aprovada (sem suíte), com medição igual nas duas portas e roteamento. | C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\onda3\relatorio.md |
 | 4 | wf_b1b1cd10f269ceae | concluída em 2025-01-10 | C:\Projetos\aws-local-simulator\inventory\onda4\relatorio.md |
 | 5 | wf_7a1da7c895192fd1 | concluída em 2025-01-10 | C:\Projetos\aws-local-simulator\src\backend\inventory\onda5\relatorio.md (worktree onda5 removido após aprovação) |
+| 6 | wf_fc5a1624bf172154 | concluída em 2026-11-19. Investigação do abort realizada. athena e aurora medidos: mesmo comportamento nas portas 4700 e legada, código de saída 0. Não requerem correção de código. Uncommitted changes: nenhuma. Pipeline cleanup: não aplicável (apenas medição, sem alteração de código). | C:\Projetos\aws-local-simulator\src\backend\.agents\tasks\migracao-porta-unica\inventory\baseline\athena.md e aurora.md |

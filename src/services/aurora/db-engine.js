@@ -16,6 +16,7 @@ class DbEngine {
     this.dataDir = dataDir;
     this.databases = new Map(); // dbName → better-sqlite3 Database instance
     this.transactions = new Map(); // transactionId → { db, dbName, startedAt }
+    this.isClosed = false;
 
     // Ensure data directory exists
     fs.mkdirSync(dataDir, { recursive: true });
@@ -162,6 +163,9 @@ class DbEngine {
    * Closes all open SQLite connections and clears the databases Map.
    */
   close() {
+    if (this.isClosed) return;
+    this.isClosed = true;
+
     for (const [dbName, db] of this.databases) {
       try {
         db.close();
