@@ -1,0 +1,26 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Add isClosed flag and new close() method to ClusterManager, update reset() to call close(), and fix direct metaDb access in AuroraService.stop()",
+  "status": "completed",
+  "steps": [
+    "Add 'this.isClosed = false;' in ClusterManager constructor in src/backend/src/services/aurora/cluster-manager.js (after store initialization)",
+    "Add new ClusterManager.close() method after reset() method that checks isClosed, closes metaDb with try-catch, nullifies metaDb, and returns early if already closed",
+    "Modify ClusterManager.reset() to call this.close() as the first line before executing DELETE statements",
+    "Modify AuroraService.stop() in src/backend/src/services/aurora/index.js to replace direct metaDb access with clusterManager.close() call"
+  ],
+  "acceptance_criteria": [
+    "ClusterManager.close() can be called multiple times without crashing",
+    "ClusterManager.reset() closes connections before deleting data",
+    "AuroraService.stop() no longer directly accesses clusterManager.metaDb field",
+    "Existing tests for ClusterManager and AuroraService continue to pass"
+  ],
+  "verification": [
+    "Run: npm test -- tests/services/aurora/rds-api.test.js",
+    "Run: npm test -- tests/services/aurora/execute-statement.test.js",
+    "Verify no 'Assertion failed: (env) != nullptr' errors occur during shutdown",
+    "Verify log shows '[Aurora ClusterManager] Error closing metaDb: ...' or '[Aurora ClusterManager] Initialized metadata.db' appropriately"
+  ],
+  "blocked_reason": null,
+  "findings": "FEAT-002 verified: All tests passed (70 total tests across rds-api.test.js and execute-statement.test.js). Implementation added idempotent close() method to ClusterManager that safely closes metaDb connection. Modified reset() to call close() first before executing DELETE statements. AuroraService.stop() now uses clusterManager.close() instead of direct metaDb access. Changes resolve potential 'Assertion failed: (env) != nullptr' errors during teardown by ensuring proper database connection cleanup."
+}

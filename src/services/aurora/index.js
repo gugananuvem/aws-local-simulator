@@ -110,9 +110,8 @@ class AuroraService {
     if (this.dbEngine) {
       this.dbEngine.close();
     }
-    if (this.clusterManager?.metaDb) {
-      this.clusterManager.metaDb.close();
-      this.clusterManager.metaDb = null;
+    if (this.clusterManager) {
+      this.clusterManager.close();
     }
     this.isRunning = false;
   }

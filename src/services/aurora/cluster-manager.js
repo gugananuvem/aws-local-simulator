@@ -41,6 +41,7 @@ class ClusterManager {
     this.dataDir = dataDir;
     this.metaDb = null;
     this.store = store;
+    this.isClosed = false;
 
     // Ensure data directory exists
     fs.mkdirSync(dataDir, { recursive: true });
@@ -466,9 +467,28 @@ class ClusterManager {
   // ─── Reset ──────────────────────────────────────────────────────────────────
 
   /**
+   * Closes the metadata database connection safely (idempotent).
+   */
+  close() {
+    if (this.isClosed) {
+      return;
+    }
+    try {
+      if (this.metaDb) {
+        this.metaDb.close();
+      }
+    } catch (err) {
+      logger.debug(`[Aurora ClusterManager] Error closing metaDb: ${err.message}`);
+    }
+    this.metaDb = null;
+    this.isClosed = true;
+  }
+
+  /**
    * Clears all metadata (clusters, instances, databases).
    */
   reset() {
+    this.close();
     this.metaDb.prepare('DELETE FROM databases').run();
     this.metaDb.prepare('DELETE FROM instances').run();
     this.metaDb.prepare('DELETE FROM clusters').run();
