@@ -4,6 +4,11 @@ Este arquivo é a fonte de verdade do progresso da Wave 8. Marcar `[x]` ao concl
 
 **Base:** feature-v3.0.2 (tip 8b937ec). Gateway backend na porta 4700 já existe e está completo (Waves 0-7).
 
+**Repository paths:**
+- Backend (git repo): `c:\Projetos\aws-local-simulator\src\backend`
+- Frontend (source): `c:\Projetos\aws-local-simulator\src\frontend`
+- Branch: feature-v3.0.2
+
 ## Regras
 - Backend gateway na porta 4700 (todos os serviços acessíveis através dele)
 - Portas legadas mantidas no backend para compatibilidade (AWS_LOCAL_SIMULATOR_LEGACY_PORTS=true)
