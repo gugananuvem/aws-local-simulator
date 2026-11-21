@@ -113,6 +113,26 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     ]);
   });
 
+  test('expõe fn_helpcollations usada pela aba Options do New Database', () => {
+    const resultado = engine.execute('master', `
+      SELECT cl.name AS [Name], cl.description AS [Description],
+             COLLATIONPROPERTY(cl.name, 'LCID') AS [LocaleID],
+             COLLATIONPROPERTY(cl.name, 'CodePage') AS [CodePage],
+             COLLATIONPROPERTY(cl.name, 'Version') AS [CollationVersion]
+      FROM sys.fn_helpcollations() cl
+      ORDER BY cl.name
+    `);
+    expect(resultado.rows.length).toBeGreaterThan(0);
+    expect(resultado.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        Name: 'SQL_Latin1_General_CP1_CI_AS',
+        LocaleID: 1033,
+        CodePage: 1252,
+        CollationVersion: 0
+      })
+    ]));
+  });
+
   test('migra configurações de catálogos criados por versões anteriores', () => {
     engine.execute('master', 'SELECT 1 AS ok');
     engine.close();

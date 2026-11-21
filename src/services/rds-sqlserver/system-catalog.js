@@ -242,6 +242,14 @@ const DDL_SISTEMA = `
     name TEXT NOT NULL
   );
 
+  -- O SMO usa fn_helpcollations() para preencher a aba Options do New Database.
+  -- No SQLite nao ha table-valued functions, entao o tradutor reescreve a
+  -- chamada para esta tabela do catalogo master.
+  CREATE TABLE IF NOT EXISTS fn_helpcollations (
+    name TEXT NOT NULL PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT 'SQL Server collation'
+  );
+
   CREATE TABLE IF NOT EXISTS server_permissions (
     grantee_principal_id INTEGER NOT NULL,
     type TEXT NOT NULL,
@@ -949,6 +957,19 @@ function popularTabelas(db, schema, nomesDatabases) {
     VALUES (?, ?, ?)
   `);
   IDIOMAS.forEach((idioma) => inserirIdiomaFullText.run(idioma[3], idioma[2], idioma[1]));
+  const inserirColacao = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.fn_helpcollations (name, description)
+    VALUES (?, ?)
+  `);
+  for (const nome of [
+    'SQL_Latin1_General_CP1_CI_AS',
+    'SQL_Latin1_General_CP1_CS_AS',
+    'Latin1_General_CI_AS',
+    'Latin1_General_CS_AS',
+    'Latin1_General_BIN2'
+  ]) {
+    inserirColacao.run(nome, 'Windows collation, sort order 52, case-insensitive');
+  }
   db.prepare(`
     INSERT OR IGNORE INTO ${schema}.sql_logins (principal_id) VALUES (1), (2)
   `).run();
@@ -1379,6 +1400,7 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     if (chave === 'LCID') return 1033;
     if (chave === 'CODEPAGE') return 1252;
     if (chave === 'COMPARISONSTYLE') return 196609;
+    if (chave === 'VERSION') return 0;
     return null;
   });
 

@@ -576,7 +576,7 @@ class DbEngine {
     if (!correspondencia) return erro;
 
     let nome = correspondencia[1].trim();
-    nome = nome.split('.').pop().replace(/^["'\[`]|["'\]`]$/g, '');
+    nome = nome.split('.').pop().replace(/^["'[`]|["'\]`]$/g, '');
     return this._erroTsql(2714, 1,
       `There is already an object named '${nome}' in the database.`);
   }

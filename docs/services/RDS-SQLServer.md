@@ -172,6 +172,10 @@ Suporte atual:
   `database_id` único globalmente. `CREATE` de database existente retorna erro 1801, `DROP` de
   database inexistente retorna erro 911 e `DROP` de database de sistema retorna erro 1805;
   `DROP DATABASE IF EXISTS` é aceito sem erro;
+- `CREATE TABLE` de objeto existente retorna erro 2714 (`There is already an object named ... in
+  the database.`), state 1, class 16 — o SQLite devolve apenas `table X already exists`, sem
+  número, e o cliente TDS transformaria isso em 50000;
+- `DROP TABLE IF EXISTS` é aceito (sintaxe válida no SQL Server e no SQLite);
 - lotes de refresh do SSMS contendo `CREATE TABLE #tmp...; SELECT ...` são divididos também por
   `;`, mesmo quando o tradutor fornece `splitBatches()` — sem isso o `CREATE` engolia o `SELECT`
   e o nó **Databases** voltava vazio após criar um database;
@@ -181,6 +185,9 @@ Suporte atual:
 - `sys.fulltext_languages`, `sys.database_scoped_configurations` e as linhas de
   `sys.configurations` com ids `115`, `124`, `1126`, `1127` e `1555` são criadas/migradas ao abrir
   a conexão — o pós-`Create()` do SMO lê essas tabelas logo após `Database.Create()`;
+- `sys.fn_helpcollations()` é reescrito para a tabela `sys.fn_helpcollations` do master: sem isso,
+  clicar em **Options** no diálogo **New Database** falha com
+  `no such table: sys.fn_helpcollations` (`Enumerate collations failed`);
 - subconjunto procedural de inicialização de clientes (ver abaixo).
 
 Limitações do listener: sem TLS, sem Windows/Integrated Auth, sem MARS. A compatibilidade com
@@ -204,7 +211,10 @@ Probes executados contra uma instância isolada do listener TDS (`127.0.0.1:1433
 - `Database.Create()` conclui sem erro: o database é lido de volta com `Containment`,
   `Collation`, configurações 115/124/1126/1127/1555 e `database_scoped_configurations`;
 - o lote de refresh do Object Explorer (`CREATE TABLE #tmp...; SELECT ...`) devolve os databases
-  de usuário — `Ultrapoints2` aparece em **Databases** após criar e dar refresh;
+  de usuário — `Ultrapoints2` aparece em **Databases** após criar e dar refresh (confirmação
+  visual após reconectar);
+- a aba **Options** do **New Database** lista as collations via `sys.fn_helpcollations()` sem erro;
+- `CREATE TABLE` repetido devolve erro 2714 com o nome do objeto duplicado;
 - duplo-clique em login no SSMS abre sem diálogo de erro.
 
 > O SSMS foi aberto com `-S 127.0.0.1,1433 -U admin -nosplash`; a senha é digitada no diálogo.
@@ -234,7 +244,8 @@ incluem `server_role_members`, `asymmetric_keys`, `certificates`, `credentials`,
 `cryptographic_providers`, `dm_cryptographic_provider_properties`, `syslanguages`,
 `server_permissions`, `sql_logins`, `database_mirroring`, `server_principal_credentials` e
 `dm_os_process_memory`, `database_recovery_status`, `change_tracking_databases`,
-`database_filestream_options`, `fulltext_languages` e `database_scoped_configurations`.
+`database_filestream_options`, `fulltext_languages`, `fn_helpcollations` e
+`database_scoped_configurations`.
 `sys.configurations` contém as linhas com ids `115`, `124`, `1126`, `1127` e `1555` usadas pelo
 SMO depois de `CREATE DATABASE`; catálogos antigos são migrados automaticamente ao abrir a
 conexão. `sys.databases` expõe collation/containment/acesso/usuário,
@@ -286,6 +297,9 @@ A instância se apresenta como `Standard Edition (64-bit)` / `EngineEdition = 2`
 | Verificação de AlwaysOn (`xp_qv`) | Devolve `AlwaysOn = -1` (instância não AlwaysOn) |
 | `@@MICROSOFTVERSION`, `@@SPID`, `@@TRANCOUNT`, `@@VERSION` | `268439491`, `1`, `0` e `'16.00.4035.2'` |
 | `CREATE TABLE #tmp...; SELECT ...` (refresh do SSMS) | As instruções são executadas separadamente por `;`, mesmo depois de `splitBatches()`; o `SELECT` final volta a retornar linhas |
+| `CREATE TABLE` de objeto existente | Erro TDS 2714, state 1, class 16, com o nome do objeto |
+| `DROP TABLE IF EXISTS` | Preservado (não é tratado como bloco procedural) |
+| `sys.fn_helpcollations()` | Reescrito para `sys.fn_helpcollations` (tabela real no catálogo master) |
 | `CAST(... AS sysname|UNIQUEIDENTIFIER|XML|DATETIME|DATETIME2|SMALLDATETIME|DATE|TIME)` | Mapeado para `TEXT` (timestamp ISO quando aplicável) |
 | `CAST(... AS DECIMAL/NUMERIC(p,s))` | Família `decimal`, TDS `0x6A` com `precision`/`scale` |
 | Literais hex `0x...` | Convertidos em decimal |

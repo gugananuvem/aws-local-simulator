@@ -160,6 +160,12 @@ class SqlTranslator {
       'fn_syspolicy_is_automation_enabled'
     );
     resultado = this._traduzirCatalogoLocal(resultado);
+    // fn_helpcollations() e uma table-valued function no SQL Server; no SQLite
+    // ela e uma tabela comum do catalogo master anexado como schema sys.
+    resultado = resultado.replace(
+      /\b(?:sys\s*\.\s*)?fn_helpcollations\s*\(\s*\)/gi,
+      'sys.fn_helpcollations'
+    );
     resultado = this._traduzirLiteraisHex(resultado);
     resultado = this._traduzirProcedural(resultado);
     resultado = this._traduzirVariaveisSistema(resultado);
@@ -1320,10 +1326,10 @@ class SqlTranslator {
 
   /** Garante que nenhum construto procedural não suportado permaneça. @private */
   _validarProceduralResidual(sql) {
-    const código = this._mascarar(sql).code.replace(
-      /\bEXEC(?:UTE)?\s+(?:sys\.)?sp_executesql\b/gi,
-      ' '
-    );
+    const código = this._mascarar(sql).code
+      .replace(/\bEXEC(?:UTE)?\s+(?:sys\.)?sp_executesql\b/gi, ' ')
+      // DROP TABLE IF EXISTS e sintaxe valida tanto no SQL Server quanto no SQLite.
+      .replace(/\bDROP\s+TABLE\s+IF\s+EXISTS\b/gi, 'DROP TABLE');
     const restanteProcedural =
       /\b(?:WHILE|GOTO|RETURN|THROW|RAISERROR|EXEC|EXECUTE)\b/i.test(código) ||
       /\bIF\b(?!\s+NOT\s+EXISTS\b)/i.test(código) ||

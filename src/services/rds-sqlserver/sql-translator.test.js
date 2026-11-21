@@ -435,6 +435,21 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       );
     });
 
+    test('aceita DROP TABLE IF EXISTS do SQL Server', () => {
+      expect(translator.translate('DROP TABLE IF EXISTS dbo.clientes')).toBe(
+        'DROP TABLE IF EXISTS clientes'
+      );
+    });
+
+    test('reescreve fn_helpcollations() para a tabela do catalogo sys', () => {
+      const resultado = translator.translate(
+        'SELECT cl.name FROM sys.fn_helpcollations() cl ORDER BY cl.name'
+      );
+      expect(resultado).toBe(
+        'SELECT cl.name FROM sys.fn_helpcollations cl ORDER BY cl.name'
+      );
+    });
+
     test('desembrulha BEGIN TRY/CATCH mantendo apenas o TRY', () => {
       const resultado = translator.translate(
         'BEGIN TRY SELECT 1 AS ok END TRY BEGIN CATCH SELECT 2 AS erro END CATCH'
