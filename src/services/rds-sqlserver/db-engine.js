@@ -572,6 +572,9 @@ class DbEngine {
     }
 
     db.exec(sql);
+    if (/^\s*(?:CREATE|ALTER|DROP)\s+(?:TABLE|VIEW|INDEX)\b/i.test(sql)) {
+      catalogoSistema.sincronizarCatalogoDatabase(db);
+    }
     return this._resultadoVazio('ddl');
   }
 

@@ -97,12 +97,21 @@ function readRpcValue(buffer, position) {
       return { value: new Date(1900, 0, 1, 0, 0, 0, 0), offset: pos + 8 };
     }
 
-    if (type === 0xE7) { // NVARCHAR
+    if (type === 0xE7) { // NVARCHAR com comprimentos de 2 bytes
       pos += 2; // tamanho maximo declarado
       pos += 5; // collation
       const bytes = buffer.readUInt16LE(pos);
       pos += 2;
       if (bytes === 0xFFFF) return { value: null, offset: pos };
+      return { value: buffer.toString('utf16le', pos, Math.min(pos + bytes, buffer.length)), offset: pos + bytes };
+    }
+
+    if (type === 0x63) { // NVARCHAR com comprimentos de 4 bytes (SqlClient/SMO)
+      pos += 4; // tamanho maximo declarado
+      pos += 5; // collation
+      const bytes = buffer.readUInt32LE(pos);
+      pos += 4;
+      if (bytes === 0xFFFFFFFF) return { value: null, offset: pos };
       return { value: buffer.toString('utf16le', pos, Math.min(pos + bytes, buffer.length)), offset: pos + bytes };
     }
 

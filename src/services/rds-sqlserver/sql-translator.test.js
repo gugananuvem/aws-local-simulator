@@ -421,7 +421,18 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       const resultado = translator.translate(
         "IF (OBJECT_ID('tempdb..#tmp') IS NOT NULL) DROP TABLE #tmp; SELECT 9 AS ok"
       );
-      expect(resultado).toBe('DROP TABLE #tmp; SELECT 9 AS ok');
+      expect(resultado).toBe('DROP TABLE _tmp_tmp; SELECT 9 AS ok');
+    });
+
+    test('converte DROP TABLE de temporarias do SMO em comandos SQLite validos', () => {
+      const resultado = translator.translate(
+        'drop table #tmp_db_ars drop table #tmp_db_ags drop table #tmp_sync_states'
+      );
+      expect(resultado).toBe(
+        'DROP TABLE IF EXISTS _tmp_tmp_db_ars; ' +
+        'DROP TABLE IF EXISTS _tmp_tmp_db_ags; ' +
+        'DROP TABLE IF EXISTS _tmp_tmp_sync_states'
+      );
     });
 
     test('desembrulha BEGIN TRY/CATCH mantendo apenas o TRY', () => {
@@ -554,9 +565,29 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
 
       expect(translator.columnTypesFor(
         'SELECT dtb.name AS [Name], dtb.state AS [State] FROM master.sys.databases dtb'
-      )).toEqual({ State: 'TINYINT' });
+      )).toMatchObject({ State: 'TINYINT' });
 
       expect(translator.columnTypesFor("SELECT 'x' AS [Name]")).toBeNull();
+    });
+
+    test('informa BIT nas colunas Boolean do PolicyStore do DMF', () => {
+      expect(translator.columnTypesFor(
+        "SELECT 'PolicyStore[@Name=' AS [Urn], " +
+          "CAST((SELECT current_value FROM msdb.dbo.syspolicy_configuration " +
+          "WHERE name = 'Enabled') AS bit) AS [Enabled], " +
+          "CAST((SELECT current_value FROM msdb.dbo.syspolicy_configuration " +
+          "WHERE name = 'LogOnSuccess') AS bit) AS [LogOnSuccess]"
+      )).toEqual({
+        Urn: 'TEXT',
+        Name: 'TEXT',
+        Enabled: 'BIT',
+        HistoryRetentionInDays: 'INT',
+        LogOnSuccess: 'BIT'
+      });
+
+      expect(translator.columnTypesFor('SELECT 1 AS [PolicyHealthState]')).toEqual({
+        PolicyHealthState: 'INT'
+      });
     });
 
     test('expande o batch de versao do SSMS em tres resultsets', () => {
@@ -758,6 +789,43 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(translator.translate(
         "select is_srvrolemember('sysadmin') * 1 + is_srvrolemember('serveradmin') * 2"
       )).toBe("select is_srvrolemember('sysadmin') * 1 + is_srvrolemember('serveradmin') * 2");
+    });
+  });
+
+  describe('shims de conexão do SSMS/SMO', () => {
+    test('reduz o batch de grupos de disponibilidade ao SELECT final', () => {
+      const entrada = [
+        'declare @HasViewPermission int',
+        "select @HasViewPermission = HAS_PERMS_BY_NAME(null, null, 'VIEW SERVER STATE')",
+        'create table #tmp_db_ars (replica_id uniqueidentifier, group_id uniqueidentifier, replica_server_name sysname)',
+        'create table #tmp_sync_states (database_id int, sync_state tinyint)',
+        'if (@HasViewPermission = 1) begin insert into #tmp_db_ars select replica_id, group_id, replica_server_name from master.sys.availability_replicas end',
+        'SELECT dtb.name AS [Database_Name], sync_state.sync_state FROM master.sys.databases AS dtb LEFT OUTER JOIN #tmp_sync_states AS sync_state ON dtb.database_id = sync_state.database_id',
+        'drop table #tmp_db_ars',
+        'drop table #tmp_sync_states'
+      ].join('\r\n');
+
+      const resultado = translator.translate(entrada);
+      expect(resultado).not.toMatch(/\bIF\s*\(|\bBEGIN\b|\bEXEC\b/i);
+      expect(resultado).toMatch(/CREATE TABLE IF NOT EXISTS _tmp_tmp_db_ars/i);
+      expect(resultado).toMatch(/CREATE TABLE IF NOT EXISTS _tmp_tmp_sync_states/i);
+      expect(resultado).toContain('AS [Database_Name]');
+      expect(resultado).toContain('JOIN _tmp_tmp_sync_states AS sync_state');
+      expect(resultado).toMatch(/drop table _tmp_tmp_db_ars\s*;\s*drop table _tmp_tmp_sync_states/i);
+    });
+
+    test('remove o bloco IF/EXECUTE de arquivamento remoto mantendo o SELECT', () => {
+      const entrada = [
+        'CREATE TABLE #tmp_extended_remote_data_archive_tables (object_id int not null)',
+        "IF EXISTS(SELECT 1 FROM master.sys.syscolumns WHERE Name = N'remote_data_archive_migration_state')",
+        "EXECUTE(N'INSERT INTO #tmp_extended_remote_data_archive_tables SELECT 1')",
+        'SELECT tbl.name AS [Name] FROM sys.tables tbl'
+      ].join('\r\n');
+
+      const resultado = translator.translate(entrada);
+      expect(resultado).toMatch(/CREATE TABLE IF NOT EXISTS _tmp_tmp_extended_remote_data_archive_tables/i);
+      expect(resultado).toContain('SELECT tbl.name AS [Name]');
+      expect(resultado).not.toMatch(/\bEXECUTE\b/i);
     });
   });
 

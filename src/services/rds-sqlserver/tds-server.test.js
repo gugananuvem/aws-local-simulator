@@ -99,6 +99,16 @@ function valorNvarchar(texto) {
   return Buffer.concat([cabecalho, bytes]);
 }
 
+/** Valor NVARCHAR com comprimentos de 4 bytes, enviado pelo SMO. */
+function valorNvarcharLongo(texto) {
+  const bytes = Buffer.from(texto, 'utf16le');
+  const cabecalho = Buffer.alloc(14);
+  cabecalho.writeUInt8(0x63, 0);
+  cabecalho.writeUInt32LE(bytes.length, 1);
+  cabecalho.writeUInt32LE(bytes.length, 10);
+  return Buffer.concat([cabecalho, bytes]);
+}
+
 /** Valor INT de um parametro RPC. */
 function valorInt(valor) {
   const cabecalho = Buffer.alloc(2);
@@ -781,6 +791,28 @@ describe('TdsServer', () => {
       Buffer.from([0xFF, 0xFF, 0x0A, 0x00, 0x00, 0x00]),
       semNome, valorNvarchar(sql),
       semNome, valorNvarchar('@p1 INT'),
+      semNome, valorInt(42)
+    ]);
+
+    const resposta = await coletar(socket, () => {
+      socket.write(buildPacket(TYPE.RPC, payloadRpc));
+    });
+
+    expect(resposta.subarray(HEADER_SIZE).includes(TOKEN.COLMETADATA)).toBe(true);
+    expect(dbEngine.execute).toHaveBeenCalledWith('testdb', sql, [42]);
+  });
+
+  test('RPC do SMO usa NVARCHAR com comprimento de 4 bytes', async () => {
+    const socket = await conectarNoServidor();
+    await autenticar(socket);
+
+    const sql = 'SELECT @p1 AS valor';
+    const semNome = Buffer.from([0x00, 0x00]);
+    const payloadRpc = Buffer.concat([
+      cabecalhoRpcSqlClient(),
+      Buffer.from([0xFF, 0xFF, 0x0A, 0x00, 0x00, 0x00]),
+      semNome, valorNvarcharLongo(sql),
+      semNome, valorNvarcharLongo('@p1 INT'),
       semNome, valorInt(42)
     ]);
 

@@ -84,6 +84,81 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       .toBe(1001);
   });
 
+  test('permite consultar objetos do msdb a partir de outro database', () => {
+    engine.execute('msdb', 'SELECT 1 AS ok');
+
+    const resultado = engine.execute('principal',
+      "SELECT current_value FROM msdb.dbo.syspolicy_configuration WHERE name = 'Enabled'"
+    );
+    expect(resultado.rows).toEqual([{ current_value: '1' }]);
+  });
+
+  test('publica tabelas e colunas do database em sys.tables e sys.all_columns', () => {
+    engine.execute('principal', 'CREATE TABLE clientes (id INT NOT NULL, nome NVARCHAR(50))');
+
+    const tabelas = engine.execute('principal', 'SELECT name, object_id FROM sys.tables');
+    expect(tabelas.rows.map((linha) => linha.name)).toEqual(['clientes']);
+
+    const colunas = engine.execute('principal',
+      'SELECT c.name AS nome, t.name AS tipo FROM sys.all_columns AS c ' +
+      'INNER JOIN sys.types AS t ON t.user_type_id = c.user_type_id ' +
+      'WHERE c.object_id = ? ORDER BY c.column_id',
+      [tabelas.rows[0].object_id]
+    );
+    expect(colunas.rows).toEqual([
+      { nome: 'id', tipo: 'int' },
+      { nome: 'nome', tipo: 'varchar' }
+    ]);
+
+    const indices = engine.execute('principal',
+      'SELECT index_id AS id, type_desc AS descricao FROM sys.indexes WHERE object_id = ?',
+      [tabelas.rows[0].object_id]
+    );
+    expect(indices.rows).toEqual([{ id: 0, descricao: 'HEAP' }]);
+  });
+
+  test('expõe server_role_members, default_constraints e politicas do msdb', () => {
+    const papeis = engine.execute('principal',
+      "SELECT r.name AS papel, p.name AS membro FROM sys.server_role_members m " +
+      'INNER JOIN sys.server_principals r ON r.principal_id = m.role_principal_id ' +
+      'INNER JOIN sys.server_principals p ON p.principal_id = m.member_principal_id ' +
+      "WHERE p.name = 'admin' ORDER BY r.name"
+    );
+    expect(papeis.rows.map((linha) => linha.papel)).toEqual(['public', 'sysadmin']);
+
+    engine.execute('principal', 'CREATE TABLE com_default (id INT NOT NULL, ativo BIT NOT NULL DEFAULT 1)');
+    const restricoes = engine.execute('principal',
+      'SELECT c.name AS coluna, d.name AS restricao, d.definition AS definicao ' +
+      'FROM sys.all_columns c INNER JOIN sys.default_constraints d ' +
+      'ON d.object_id = c.default_object_id ' +
+      'WHERE c.object_id = ?',
+      [engine.execute('principal', "SELECT object_id FROM sys.tables WHERE name = 'com_default'").rows[0].object_id]
+    );
+    expect(restricoes.rows).toEqual([{
+      coluna: 'ativo',
+      restricao: 'DF__com_default__ativo',
+      definicao: '1'
+    }]);
+
+    const saude = engine.execute('principal',
+      "SELECT target_query_expression_with_id AS alvo FROM msdb.syspolicy_system_health_state WHERE target_query_expression_with_id LIKE 'Server%'"
+    );
+    expect(saude.rows).toEqual([{ alvo: 'Server[@ID=2]%' }]);
+  });
+
+  test('expõe propriedades de login usadas pelo SMO', () => {
+    const resultado = engine.execute('principal',
+      "SELECT log.name AS Name, LOGINPROPERTY(log.name, N'IsLocked') AS IsLocked, " +
+      'sys.fn_varbintohexsubstring(0, log.sid, 1, 0) AS SidHexString ' +
+      'FROM sys.server_principals AS log ' +
+      'LEFT OUTER JOIN sys.syslanguages AS l ON l.name = log.default_language_name ' +
+      "WHERE log.name = 'admin'"
+    );
+    expect(resultado.rows).toEqual([{
+      Name: 'admin', IsLocked: 0, SidHexString: '0x02'
+    }]);
+  });
+
   test('expõe sys.configurations com SMO e DMO habilitado', () => {
     const resultado = engine.execute('principal',
       'SELECT name, configuration_id AS id, value AS valor, ' +
@@ -119,6 +194,15 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     );
     expect(collation.rows).toEqual([{ tipo: 2, descricao: 'SQL_COLLATION' }]);
 
+    const databases = engine.execute('principal',
+      'SELECT name, containment AS contencao, is_fulltext_enabled AS fulltext, ' +
+      'source_database_id AS origem, user_access AS acesso FROM sys.databases ' +
+      "WHERE name = 'master'"
+    );
+    expect(databases.rows).toEqual([{
+      name: 'master', contencao: 0, fulltext: 0, origem: null, acesso: 0
+    }]);
+
     const logins = engine.execute('principal',
       'SELECT log.name AS Name, log.principal_id AS ID ' +
       'FROM sys.server_principals AS log ' +
@@ -137,6 +221,24 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       'WHERE tr.parent_class = 100'
     );
     expect(gatilhos.rows).toEqual([]);
+
+    const papeis = engine.execute('principal',
+      'SELECT name, create_date AS criado, is_fixed_role AS fixo ' +
+      "FROM sys.server_principals WHERE type = 'R' ORDER BY name"
+    );
+    expect(papeis.rows.map((linha) => linha.name)).toContain('sysadmin');
+    expect(papeis.rows.every((linha) => linha.fixo === 1 && linha.criado)).toBe(true);
+
+    const cripto = engine.execute('principal',
+      'SELECT c.name FROM sys.cryptographic_providers AS c ' +
+      'INNER JOIN sys.dm_cryptographic_provider_properties AS cp ON cp.provider_id = c.provider_id'
+    );
+    expect(cripto.rows).toEqual([]);
+
+    const dispositivos = engine.execute('principal',
+      'SELECT name FROM sys.backup_devices'
+    );
+    expect(dispositivos.rows).toEqual([]);
   });
 
   test('traduz variaveis de sistema e CONVERT sem a ajuda de shims', () => {

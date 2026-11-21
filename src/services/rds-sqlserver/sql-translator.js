@@ -119,14 +119,41 @@ class SqlTranslator {
       return sql;
     }
 
-    let resultado = this._removerComentarios(sql);
+    // O SMO encerra consultas de disponibilidade com varios DROP TABLE sem
+    // ponto e virgula. No SQLite cada DROP precisa ser um comando separado e
+    // IF EXISTS evita falhar quando a tabela temporaria nunca foi criada.
+    const quedas = [...sql.matchAll(/\bdrop\s+table\s+(#{1,2}[A-Za-z_]\w*)/gi)];
+    const residuo = sql
+      .replace(/\bdrop\s+table\s+#{1,2}[A-Za-z_]\w*/gi, '')
+      .replace(/[\s;]/g, '');
+    if (quedas.length && !residuo) {
+      return quedas
+        .map((m) => `DROP TABLE IF EXISTS ${this._traduzirTabelasTemporarias(m[1])}`)
+        .join('; ');
+    }
+
+    let resultado = this._removerShimAvailabilityGroups(sql);
+    resultado = this._removerShimRemoteDataArchive(resultado);
+    resultado = resultado.replace(
+      /\bDROP\s+TABLE\s+#{1,2}[A-Za-z_]\w*/gi,
+      (correspondencia, deslocamento, texto) => {
+        let anterior = deslocamento - 1;
+        while (anterior >= 0 && /\s/.test(texto[anterior])) anterior -= 1;
+        return anterior < 0 || texto[anterior] === ';'
+          ? correspondencia
+          : `; ${correspondencia}`;
+      }
+    );
+    resultado = this._removerComentarios(resultado);
     resultado = this.splitBatches(resultado).join(' ');
     resultado = this._normalizarWhitespace(resultado);
     resultado = this._traduzirMetadadosCliente(resultado);
+    resultado = this._traduzirTabelasTemporarias(resultado);
     resultado = this._removerPrefixoN(resultado);
     resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
     resultado = this._removerEsquema(resultado);
+    resultado = this._traduzirCatalogoLocal(resultado);
     resultado = this._traduzirLiteraisHex(resultado);
     resultado = this._traduzirProcedural(resultado);
     resultado = this._traduzirVariaveisSistema(resultado);
@@ -391,6 +418,25 @@ class SqlTranslator {
   }
 
   /**
+   * Tabelas temporarias do T-SQL (#nome) nao sao identificadores validos no
+   * SQLite. O SMO usa #tmp_* em varios batches, inclusive em DROP TABLE.
+   * @private
+   */
+  _traduzirTabelasTemporarias(sql) {
+    const código = this._mascarar(sql).code;
+    let resultado = '';
+    let último = 0;
+    const temporaria = /#{1,2}[A-Za-z_]\w*/g;
+    let correspondência;
+    while ((correspondência = temporaria.exec(código)) !== null) {
+      resultado += sql.slice(último, correspondência.index);
+      resultado += `_tmp_${correspondência[0].replace(/^#+/, '')}`;
+      último = correspondência.index + correspondência[0].length;
+    }
+    return resultado + sql.slice(último);
+  }
+
+  /**
    * Converte parametros nomeados (@p, @nome) em placeholders quando o chamador
    * informou valores ligados. A mascara preserva `@` dentro de textos e nomes.
    * @param {string} sql
@@ -466,6 +512,81 @@ class SqlTranslator {
     }
 
     return resultado;
+  }
+
+  /**
+   * O SMO consulta Grupos de Disponibilidade criando tabelas temporarias e
+   * preenchendo-as dentro de blocos IF/BEGIN...END condicionados a
+   * HAS_PERMS_BY_NAME. Como nao ha suporte a procedurais, mantemos apenas as
+   * CREATE TABLE (vazias) e o SELECT final: os joins continuam validos e o
+   * campo de sincronizacao volta como NULL.
+   * @private
+   */
+  _removerShimAvailabilityGroups(sql) {
+    if (!/#tmp_db_ars\b/i.test(sql) || !/#tmp_sync_states\b/i.test(sql)) return sql;
+
+    const inicioCondicao = sql.search(/\bif\s*\(\s*@HasViewPermission\b/i);
+    if (inicioCondicao < 0) return sql;
+
+    const criacoes = sql
+      .slice(0, inicioCondicao)
+      .split(/(?=\bcreate\s+table\b)/i)
+      .filter((trecho) => /\bcreate\s+table\b/i.test(trecho))
+      .map((trecho) => trecho.trim().replace(/^create\s+table\b/i, 'CREATE TABLE IF NOT EXISTS'))
+      .join('; ');
+
+    const inicioSelecao = sql.search(/\bSELECT\s+dtb\.name\s+AS\s+\[Database_Name\]/i);
+    if (inicioSelecao < 0) return sql;
+    const selecao = sql.slice(inicioSelecao).trim();
+
+    return `${criacoes}; ${selecao}`;
+  }
+
+  /**
+   * O SMO cria uma tabela temporaria e preenche via IF/EXECUTE dinamico para
+   * consultar arquivamento remoto. Como nao ha suporte a EXEC, removemos esse
+   * bloco e deixamos a tabela vazia: os joins seguintes continuam validos.
+   * @private
+   */
+  _removerShimRemoteDataArchive(sql) {
+    if (!/#tmp_extended_remote_data_archive_tables/i.test(sql)) return sql;
+    if (!/\bIF\s+EXISTS\s*\(/i.test(sql) || !/\bEXECUTE\s*\(\s*N?'/i.test(sql)) return sql;
+
+    const inicio = sql.search(/\bIF\s+EXISTS\s*\(/i);
+    const fim = sql.search(/\bSELECT\s+tbl\.name\s+AS\s+\[Name\]/i);
+    if (inicio < 0 || fim <= inicio) return sql;
+    const criacao = sql
+      .slice(0, inicio)
+      .trim()
+      .replace(/\bCREATE\s+TABLE\b/i, (correspondencia) => `${correspondencia} IF NOT EXISTS`);
+    return `${criacao}; ${sql.slice(fim)}`;
+  }
+
+  /**
+   * sys.tables, sys.indexes e afins sao locais ao database no SQL Server. O
+   * catalogo dessas views fica no arquivo atual (main), enquanto sys.databases
+   * e as demais tabelas de instancia continuam no database master anexado.
+   * @private
+   */
+  _traduzirCatalogoLocal(sql) {
+    const semFuncao = sql.replace(
+      /\bsys\s*\.\s*fn_varbintohexsubstring\b/gi,
+      'fn_varbintohexsubstring'
+    );
+    const objetos = [
+      'tables', 'all_views', 'views', 'synonyms', 'objects', 'indexes',
+      'data_spaces', 'all_columns', 'columns', 'types', 'database_principals',
+      'sql_modules', 'system_sql_modules', 'extended_properties',
+      'default_constraints', 'index_columns', 'computed_columns',
+      'identity_columns', 'foreign_key_columns', 'column_encryption_keys',
+      'xml_schema_collections', 'sensitivity_classifications',
+      'change_tracking_tables', 'filetables', 'periods',
+      'remote_data_archive_tables', 'schemas'
+    ].join('|');
+    return semFuncao.replace(
+      new RegExp(`\\bsys\\s*\\.\\s*(${objetos})\\b`, 'gi'),
+      (_correspondencia, nome) => `main.${nome}`
+    );
   }
 
   /**
@@ -639,6 +760,115 @@ class SqlTranslator {
     // IsContainedAuthentication vêm de SERVERPROPERTY/CASE como INT — forçar
     // BIT aqui faria o SMO lançar "Specified cast is not valid" ao ler Int32.
 
+    if (/\bLOGINPROPERTY\b/i.test(sql) && /\bsys\.server_principals\b/i.test(sql)) {
+      return {
+        DenyWindowsLogin: 'BIT',
+        HasAccess: 'BIT',
+        IsLocked: 'BIT',
+        IsPasswordExpired: 'BIT',
+        MustChangePassword: 'BIT',
+        IsDisabled: 'BIT',
+        IsSystemObject: 'BIT',
+        PasswordExpirationEnabled: 'BIT',
+        PasswordPolicyEnforced: 'BIT',
+        LoginType: 'INT',
+        WindowsLoginAccessType: 'INT',
+        PasswordHashAlgorithm: 'INT',
+        CreateDate: 'DATETIME',
+        DateLastModified: 'DATETIME'
+      };
+    }
+
+    if (/\b(?:sys|main)\.all_columns\b/i.test(sql) && /\bas\s+\[DataType\]/i.test(sql)) {
+      return {
+        ID: 'INT',
+        Nullable: 'BIT',
+        Computed: 'BIT',
+        InPrimaryKey: 'BIT',
+        AnsiPaddingStatus: 'BIT',
+        RowGuidCol: 'BIT',
+        IsPersisted: 'BIT',
+        IsForeignKey: 'BIT',
+        Identity: 'BIT',
+        IdentitySeedAsDecimal: 'DECIMAL',
+        IdentityIncrementAsDecimal: 'DECIMAL',
+        IsDeterministic: 'BIT',
+        IsPrecise: 'BIT',
+        NotForReplication: 'BIT',
+        IsFullTextIndexed: 'BIT',
+        StatisticalSemantics: 'INT',
+        EncryptionType: 'INT',
+        ColumnEncryptionKeyID: 'INT',
+        IsFileStream: 'BIT',
+        IsSparse: 'BIT',
+        IsColumnSet: 'BIT',
+        Length: 'INT',
+        NumericPrecision: 'INT',
+        NumericScale: 'INT',
+        XmlDocumentConstraint: 'INT',
+        GeneratedAlwaysType: 'TINYINT',
+        IsHidden: 'BIT',
+        IsDroppedLedgerColumn: 'BIT',
+        IsMasked: 'BIT',
+        IsClassified: 'BIT',
+        GraphType: 'INT'
+      };
+    }
+
+    if (/\b(?:sys|main)\.(?:tables|all_views|views)\b/i.test(sql)) {
+      return {
+        ID: 'INT',
+        CreateDate: 'DATETIME',
+        DateLastModified: 'DATETIME',
+        IsSchemaOwned: 'BIT',
+        IsMemoryOptimized: 'BIT',
+        IsSystemObject: 'BIT',
+        HasAfterTrigger: 'BIT',
+        HasInsertTrigger: 'BIT',
+        HasDeleteTrigger: 'BIT',
+        HasInsteadOfTrigger: 'BIT',
+        HasUpdateTrigger: 'BIT',
+        HasIndex: 'BIT',
+        IsIndexable: 'BIT',
+        HasClusteredIndex: 'BIT',
+        HasNonClusteredIndex: 'BIT',
+        HasPrimaryClusteredIndex: 'BIT',
+        HasNonClusteredColumnStoreIndex: 'BIT',
+        HasClusteredColumnStoreIndex: 'BIT',
+        HasXmlIndex: 'BIT',
+        HasHeapIndex: 'BIT',
+        HasXmlData: 'BIT',
+        HasSpatialData: 'BIT',
+        AnsiNullsStatus: 'BIT',
+        QuotedIdentifierStatus: 'BIT',
+        FakeSystemTable: 'BIT',
+        Durability: 'TINYINT',
+        Replicated: 'BIT',
+        LockEscalation: 'TINYINT',
+        ChangeTrackingEnabled: 'BIT',
+        TrackColumnsUpdatedEnabled: 'BIT',
+        IsLedger: 'BIT',
+        LedgerType: 'INT',
+        IsDroppedLedgerTable: 'BIT',
+        IsSystemVersioned: 'BIT',
+        IsFileTable: 'BIT',
+        FileTableNamespaceEnabled: 'BIT',
+        IsPartitioned: 'BIT',
+        HistoryTableID: 'INT',
+        HasSystemTimePeriod: 'BIT',
+        TemporalType: 'TINYINT',
+        RemoteDataArchiveEnabled: 'BIT',
+        RemoteDataArchiveDataMigrationState: 'TINYINT',
+        RemoteTableProvisioned: 'BIT',
+        IsNode: 'BIT',
+        IsEdge: 'BIT',
+        IsExternal: 'BIT',
+        HasSparseColumn: 'BIT',
+        IsEncrypted: 'BIT',
+        IsSchemaBound: 'BIT'
+      };
+    }
+
     if (
       /\bIS_SRVROLEMEMBER\b/i.test(sql) &&
       /\bAdminConnection\b/i.test(sql) &&
@@ -647,8 +877,18 @@ class SqlTranslator {
       return { AdminConnection: 'BIT', SmoEnabled: 'BIT' };
     }
 
-    if (/^\s*SELECT\s+.*\bFROM\s+(?:master\.)?sys\.databases\s+\w+\s*;?\s*$/i.test(código)) {
-      return { State: 'TINYINT' };
+    if (/\b(?:master\.)?sys\.databases\b/i.test(código)) {
+      return {
+        State: 'TINYINT',
+        Database_Status: 'INT',
+        Database_CompatibilityLevel: 'INT',
+        Database_IsSqlDw: 'BIT',
+        Database_IsFullTextEnabled: 'BIT',
+        RecoveryModel: 'TINYINT',
+        UserAccess: 'TINYINT',
+        ReadOnly: 'BIT',
+        IsAccessible: 'BIT'
+      };
     }
 
     if (/\bFROM\s+(?:master\.)?sys\.configurations\b/i.test(código)) {
@@ -668,6 +908,23 @@ class SqlTranslator {
         IsHadrEnabled: 'BIT',
         IsPolyBaseInstalled: 'BIT'
       };
+    }
+
+    // PolicyStore (Microsoft.SqlServer.Dmf): Enabled/LogOnSuccess sao Boolean.
+    // Sem BIT explicito o cliente chama GetBoolean() em INTN e estoura
+    // "Specified cast is not valid. (Microsoft.SqlServer.Dmf)".
+    if (/\bsyspolicy_configuration\b/i.test(sql)) {
+      return {
+        Urn: 'TEXT',
+        Name: 'TEXT',
+        Enabled: 'BIT',
+        HistoryRetentionInDays: 'INT',
+        LogOnSuccess: 'BIT'
+      };
+    }
+
+    if (/\bPolicyHealthState\b/i.test(sql)) {
+      return { PolicyHealthState: 'INT' };
     }
 
     // Batch de descoberta do SMO: essas colunas vêm de CAST(... AS bit).
@@ -990,7 +1247,8 @@ class SqlTranslator {
       ' '
     );
     const restanteProcedural =
-      /\b(?:IF|WHILE|GOTO|RETURN|THROW|RAISERROR|EXEC|EXECUTE)\b/i.test(código) ||
+      /\b(?:WHILE|GOTO|RETURN|THROW|RAISERROR|EXEC|EXECUTE)\b/i.test(código) ||
+      /\bIF\b(?!\s+NOT\s+EXISTS\b)/i.test(código) ||
       /\bBEGIN\b(?!\s+TRAN(?:ACTION)?\b)/i.test(código);
 
     if (restanteProcedural) {
