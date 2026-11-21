@@ -721,6 +721,13 @@ const DDL_DATABASE = `
   CREATE VIEW IF NOT EXISTS views AS SELECT * FROM all_views;
   CREATE VIEW IF NOT EXISTS columns AS SELECT * FROM all_columns;
   CREATE VIEW IF NOT EXISTS all_objects AS SELECT * FROM objects;
+  -- O SSMS, ao abrir "Modify" de uma procedure, consulta sys.numbered_procedures
+  -- para descobrir o numero da rotina. Procedures comuns tem numero 1.
+  CREATE VIEW IF NOT EXISTS numbered_procedures AS
+    SELECT o.object_id, 1 AS procedure_number, o.name, m.definition
+    FROM all_objects AS o
+    LEFT JOIN sql_modules AS m ON m.object_id = o.object_id
+    WHERE o.type IN ('P', 'PC');
   CREATE VIEW IF NOT EXISTS system_views AS SELECT * FROM all_views WHERE is_ms_shipped = 1;
 `;
 
@@ -734,7 +741,7 @@ const OBJETOS_DO_CATALOGO = new Set([
   'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
-  'all_parameters', 'parameters', 'procedures', 'triggers', 'database_permissions',
+  'all_parameters', 'parameters', 'procedures', 'numbered_procedures', 'triggers', 'database_permissions',
   'assemblies', 'assembly_modules', 'table_types', 'assembly_types',
   'sysdac_instances', 'syspolicy_configuration'
 ]);

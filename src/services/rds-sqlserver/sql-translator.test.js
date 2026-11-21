@@ -1065,6 +1065,12 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(translator.translate('SELECT name FROM sys.all_objects')).toContain('FROM main.all_objects');
     });
 
+    test('traduz sys.numbered_procedures para o catalogo local', () => {
+      expect(
+        translator.translate('SELECT procedure_number FROM sys.numbered_procedures')
+      ).toContain('FROM main.numbered_procedures');
+    });
+
     test('informa os tipos TDS esperados pelo SMO nas views de sistema', () => {
       expect(translator.columnTypesFor(
         'SELECT CAST(CASE WHEN 1=1 THEN 1 ELSE 0 END AS bit) AS [IsEncrypted] ' +

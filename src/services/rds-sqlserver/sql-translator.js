@@ -767,7 +767,8 @@ class SqlTranslator {
       'change_tracking_tables', 'filetables', 'periods',
       'remote_data_archive_tables', 'schemas',
       'all_parameters', 'parameters', 'triggers', 'database_permissions',
-      'procedures', 'assemblies', 'assembly_modules', 'table_types', 'assembly_types'
+      'procedures', 'numbered_procedures', 'assemblies', 'assembly_modules',
+      'table_types', 'assembly_types'
     ].join('|');
     return semFuncao.replace(
       new RegExp(`\\bsys\\s*\\.\\s*(${objetos})\\b`, 'gi'),

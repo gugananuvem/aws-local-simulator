@@ -188,6 +188,23 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('sys.numbered_procedures informa o numero 1 ao abrir Modify no SSMS', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('principal', 'CREATE PROCEDURE PROC_NUMERADA AS SELECT 1');
+      const numeros = comTradutor.execute('principal', `
+        SELECT nsp.procedure_number AS [Number]
+        FROM sys.all_objects AS sp
+        INNER JOIN sys.numbered_procedures AS nsp ON nsp.object_id = sp.object_id
+        WHERE sp.name = 'PROC_NUMERADA'
+      `).rows;
+      expect(numeros).toEqual([{ Number: 1 }]);
+      comTradutor.execute('principal', 'DROP PROCEDURE PROC_NUMERADA');
+    } finally {
+      comTradutor.close();
+    }
+  });
+
   test('EXEC de procedure com parametros nomeados e valorPadrao', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {
