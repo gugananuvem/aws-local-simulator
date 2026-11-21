@@ -489,6 +489,43 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('query do Dependency Walker devolve tabelas ligadas por FK', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('principal', `
+        CREATE TABLE [dbo].[TB_DEP_PAI] ([Id] [nvarchar](21) NOT NULL PRIMARY KEY);
+        CREATE TABLE [dbo].[TB_DEP_FILHA] ([Id] [nvarchar](21) NOT NULL, [IdPai] [nvarchar](21) NULL);
+        ALTER TABLE [dbo].[TB_DEP_FILHA] WITH CHECK ADD CONSTRAINT [FK_DEP_1]
+          FOREIGN KEY([IdPai]) REFERENCES [dbo].[TB_DEP_PAI] ([Id]);
+      `);
+      comTradutor.execute('principal', `
+        CREATE TABLE #tempdep (objid int, objname sysname, objschema sysname, objdb sysname, objtype smallint);
+        INSERT INTO #tempdep SELECT object_id, name, 'dbo', DB_NAME(), 3
+          FROM sys.tables WHERE name = 'TB_DEP_PAI';
+      `);
+
+      const linhas = comTradutor.execute('principal', [
+        'declare @find_referencing_objects int',
+        'set @find_referencing_objects = 1',
+        '-- create table #tempdep (objid int NOT NULL, objtype smallint NOT NULL)',
+        'select objid from #tempdep',
+        'IF @@OPTIONS & 512 = 0 set nocount on'
+      ].join('\n')).rows;
+
+      expect(linhas).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          object_name: 'TB_DEP_FILHA',
+          relative_name: 'TB_DEP_PAI'
+        })
+      ]));
+    } finally {
+      for (const tabela of ['TB_DEP_FILHA', 'TB_DEP_PAI', '_tmp_tempdep']) {
+        comTradutor.execute('principal', `DROP TABLE IF EXISTS [${tabela}]`);
+      }
+      comTradutor.close();
+    }
+  });
+
   test('ADD CONSTRAINT FOREIGN KEY critica tabela/coluna ausente e FK duplicada', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     const ddl = (nome, tabela, coluna, referenciada, colunaRef) =>

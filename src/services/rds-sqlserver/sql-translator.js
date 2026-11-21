@@ -27,6 +27,58 @@ const EXPRESSAO_NEWID =
 // sys.databases, substituindo apenas as dependencias indisponiveis.
 const SHIM_PROPRIEDADES_DATABASE = "SELECT dtb.name AS [Name], 0 AS [ActiveConnections], dtb.is_auto_close_on AS [AutoClose], dtb.is_auto_shrink_on AS [AutoShrink], dtb.compatibility_level AS [CompatibilityLevel], dtb.create_date AS [CreateDate], CAST(0 AS float) AS [DataSpaceUsage], CAST(0 AS bit) AS [DboLogin], N'' AS [DefaultFileGroup], '' AS [DefaultSchema], dtb.database_id AS [ID], CAST(0 AS float) AS [IndexSpaceUsage], CAST(has_dbaccess(dtb.name) AS bit) AS [IsAccessible], CAST(0 AS bit) AS [IsDbAccessAdmin], CAST(0 AS bit) AS [IsDbBackupOperator], CAST(0 AS bit) AS [IsDbDatareader], CAST(0 AS bit) AS [IsDbDatawriter], CAST(0 AS bit) AS [IsDbDdlAdmin], CAST(0 AS bit) AS [IsDbDenyDatareader], CAST(0 AS bit) AS [IsDbDenyDatawriter], CAST(0 AS bit) AS [IsDbOwner], CAST(0 AS bit) AS [IsDbSecurityAdmin], dtb.is_fulltext_enabled AS [IsFullTextEnabled], CAST(case when NULL is null then 0 else 1 end AS bit) AS [IsMirroringEnabled], CAST( case when SERVERPROPERTY('EngineEdition') = 6 then cast(1 as bit) else cast(0 as bit) end AS bit) AS [IsSqlDw], CAST(case when dtb.name in ('master','model','msdb','tempdb') then 1 else dtb.is_distributor end AS bit) AS [IsSystemObject], ISNULL(suser_sname(dtb.owner_sid),'') AS [Owner], ISNULL(df.physical_name, N'') AS [PrimaryFilePath], (dtb.is_published*1+dtb.is_subscribed*2+dtb.is_merge_published*4) AS [ReplicationOptions], CAST(0 AS float) AS [Size], CAST(0 AS float) AS [SpaceAvailable], case when dtb.collation_name is null then 0x200 else 0 end | case when 1 = dtb.is_in_standby then 0x40 else 0 end | case dtb.state when 1 then 0x2 when 2 then 0x8 when 3 then 0x4 when 4 then 0x10 when 5 then 0x100 when 6 then 0x20 else 1 end AS [Status], '' AS [UserName], dtb.is_ansi_null_default_on AS [AnsiNullDefault], dtb.is_ansi_nulls_on AS [AnsiNullsEnabled], dtb.is_ansi_padding_on AS [AnsiPaddingEnabled], dtb.is_ansi_warnings_on AS [AnsiWarningsEnabled], dtb.is_arithabort_on AS [ArithmeticAbortEnabled], dtb.is_auto_create_stats_on AS [AutoCreateStatisticsEnabled], dtb.is_auto_update_stats_on AS [AutoUpdateStatisticsEnabled], CAST( case when CHARINDEX(N'_CS_', dtb.collation_name) > 0 then 1 when CHARINDEX(N'_BIN', dtb.collation_name) > 0 then 1 else 0 end AS bit) AS [CaseSensitive], dtb.is_cursor_close_on_commit_on AS [CloseCursorsOnCommitEnabled], dtb.collation_name AS [Collation], dtb.is_concat_null_yields_null_on AS [ConcatenateNullYieldsNull], dtb.is_db_chaining_on AS [DatabaseOwnershipChaining], CAST(( case LOWER(convert( nvarchar(128), DATABASEPROPERTYEX(dtb.name, 'Updateability'))) when 'read_write' then 1 else 0 end) AS bit) AS [IsUpdateable], NULL AS [LastBackupDate], NULL AS [LastDifferentialBackupDate], CAST(ISNULL(DATABASEPROPERTYEX(dtb.name, 'lastgoodcheckdbtime'), 0) AS datetime) AS [LastGoodCheckDbTime], NULL AS [LastLogBackupDate], dtb.is_local_cursor_default AS [LocalCursorsDefault], dtb.is_numeric_roundabort_on AS [NumericRoundAbortEnabled], dtb.page_verify_option AS [PageVerify], dtb.is_quoted_identifier_on AS [QuotedIdentifiersEnabled], dtb.is_read_only AS [ReadOnly], dtb.recovery_model AS [RecoveryModel], dtb.is_recursive_triggers_on AS [RecursiveTriggersEnabled], dtb.user_access AS [UserAccess], CAST(DATABASEPROPERTYEX(dtb.name, 'Version') AS int) AS [Version], dtb.is_auto_update_stats_async_on AS [AutoUpdateStatisticsAsync], dtb.is_broker_enabled AS [BrokerEnabled], drs.database_guid AS [DatabaseGuid], ISNULL(DB_NAME(dtb.source_database_id), N'') AS [DatabaseSnapshotBaseName], dtb.is_date_correlation_on AS [DateCorrelationOptimization], ISNULL(N'',N'') AS [DefaultFullTextCatalog], CAST((case when drs.last_log_backup_lsn is not null then 1 else 0 end) AS bit) AS [HasFullBackup], CAST(isnull(dtb.source_database_id, 0) AS bit) AS [IsDatabaseSnapshot], CAST(0 AS bit) AS [IsDatabaseSnapshotBase], 0 AS [IsMailHost], dtb.is_parameterization_forced AS [IsParameterizationForced], dtb.is_read_committed_snapshot_on AS [IsReadCommittedSnapshotOn], CAST(0 AS bit) AS [IsVarDecimalStorageFormatEnabled], ISNULL(dtb.log_reuse_wait,0) AS [LogReuseWaitStatus], ISNULL(0,0) AS [MirroringFailoverLogSequenceNumber], ISNULL(dmi.mirroring_guid,'00000000-0000-0000-0000-000000000000') AS [MirroringID], ISNULL(NULL,'') AS [MirroringPartner], ISNULL(N'','') AS [MirroringPartnerInstance], ISNULL((case N'UNLIMITED' when N'UNLIMITED' then 0 else 0 end),0) AS [MirroringRedoQueueMaxSize], ISNULL(dmi.mirroring_role,0) AS [MirroringRole], ISNULL(0,0) AS [MirroringRoleSequence], ISNULL(0 + 1, 0) AS [MirroringSafetyLevel], ISNULL(0,0) AS [MirroringSafetySequence], ISNULL(dmi.mirroring_state + 1, 0) AS [MirroringStatus], ISNULL(0,0) AS [MirroringTimeout], ISNULL(N'','') AS [MirroringWitness], ISNULL(dmi.mirroring_witness_state + 1, 0) AS [MirroringWitnessStatus], drs.recovery_fork_guid AS [RecoveryForkGuid], dtb.service_broker_guid AS [ServiceBrokerGuid], dtb.snapshot_isolation_state AS [SnapshotIsolationState], dtb.is_trustworthy_on AS [Trustworthy], CAST(ISNULL(ctb.is_auto_cleanup_on,0) AS bit) AS [ChangeTrackingAutoCleanUp], CAST(case when ctb.database_id is null then 0 else 1 end AS bit) AS [ChangeTrackingEnabled], ISNULL(ctb.retention_period,0) AS [ChangeTrackingRetentionPeriod], CAST(ISNULL(ctb.retention_period_units,0) AS tinyint) AS [ChangeTrackingRetentionPeriodUnits], N'' AS [DefaultFileStreamFileGroup], CAST(dtb.is_encrypted AS bit) AS [EncryptionEnabled], CAST(0 AS bit) AS [HasDatabaseEncryptionKey], CAST(dtb.is_honor_broker_priority_on AS bit) AS [HonorBrokerPriority], CAST(0 AS bit) AS [IsManagementDataWarehouse], case when 1=(SELECT CONVERT(bit, current_value) FROM msdb.dbo.syspolicy_configuration WHERE name = 'Enabled') and exists (select * from msdb.dbo.syspolicy_system_health_state where target_query_expression_with_id like 'Server'+ '/Database\\[@ID=' + convert(nvarchar(20),dtb.database_id) + '\\]%' ESCAPE '\\') then 1 else 0 end AS [PolicyHealthState], NULL AS [AvailabilityDatabaseSynchronizationState], dtb.containment AS [ContainmentType], dtb.default_fulltext_language_lcid AS [DefaultFullTextLanguageLcid], ISNULL(dtb.default_fulltext_language_name,N'') AS [DefaultFullTextLanguageName], dtb.default_language_lcid AS [DefaultLanguageLcid], dtb.default_language_name AS [DefaultLanguageName], ISNULL(fsopt.directory_name , N'') AS [FilestreamDirectoryName], ISNULL(fsopt.non_transacted_access , 0) AS [FilestreamNonTransactedAccess], CAST(dtb.is_nested_triggers_on AS bit) AS [NestedTriggersEnabled], dtb.target_recovery_time_in_seconds AS [TargetRecoveryTime], CAST(dtb.is_transform_noise_words_on AS bit) AS [TransformNoiseWords], dtb.two_digit_year_cutoff AS [TwoDigitYearCutoff], dtb.is_auto_create_stats_incremental_on AS [AutoCreateIncrementalStatisticsEnabled], dtb.delayed_durability AS [DelayedDurability], 0 AS [HasFileInCloud], 0 AS [HasMemoryOptimizedObjects], CAST(0 AS float) AS [MemoryAllocatedToMemoryOptimizedObjectsInKB], CAST(0 AS float) AS [MemoryUsedByMemoryOptimizedObjectsInKB], 0 AS [LegacyCardinalityEstimation], 2 AS [LegacyCardinalityEstimationForSecondary], 0 AS [MaxDop], NULL AS [MaxDopForSecondary], 0 AS [ParameterSniffing], 2 AS [ParameterSniffingForSecondary], 0 AS [QueryOptimizerHotfixes], 2 AS [QueryOptimizerHotfixesForSecondary], NULL AS [RemoteDataArchiveCredential], CAST(dtb.is_remote_data_archive_enabled AS bit) AS [RemoteDataArchiveEnabled], NULL AS [RemoteDataArchiveEndpoint], NULL AS [RemoteDataArchiveLinkedServer], 0 AS [RemoteDataArchiveUseFederatedServiceAccount], NULL AS [RemoteDatabaseName], CAST(dtb.is_accelerated_database_recovery_on AS bit) AS [AcceleratedRecoveryEnabled], dtb.catalog_collation_type AS [CatalogCollation], N'' AS [PersistentVersionStoreFileGroup], 0 AS [PersistentVersionStoreSizeKB], CAST(ISNULL(dtb.is_ledger_on, 0) AS bit) AS [IsLedger], dtb.name AS [DatabaseName], dtb.name AS [DatabaseName2], dtb.containment AS [ContainmentType2], dtb.name AS [DatabaseName3], dtb.name AS [DatabaseName4], dtb.name AS [DatabaseName5], dtb.name AS [DatabaseName6] FROM master.sys.databases AS dtb LEFT OUTER JOIN sys.database_mirroring AS dmi ON dmi.database_id = dtb.database_id LEFT OUTER JOIN sys.master_files AS df ON df.database_id = dtb.database_id and 1=df.data_space_id and 1 = df.file_id LEFT OUTER JOIN sys.database_recovery_status AS drs ON drs.database_id = dtb.database_id LEFT OUTER JOIN sys.change_tracking_databases AS ctb ON ctb.database_id = dtb.database_id LEFT OUTER JOIN sys.database_filestream_options AS fsopt ON fsopt.database_id = dtb.database_id WHERE (dtb.name=@_msparam_3)";
 
+// Resultset final do sp_MSdependencies usado pelo Dependency Walker do SMO.
+// A linha "self" identifica o objeto raiz; as demais trazem a tabela que
+// referencia (object) e a referenciada (relative), como no procedimento real.
+const SHIM_DEPENDENCIAS = `
+  WITH dependentes AS (
+    SELECT
+      t.objid AS object_id, t.objname AS object_name,
+      ISNULL(t.objschema, '') AS object_schema,
+      ISNULL(t.objdb, '') AS object_db,
+      '' AS object_svr,
+      t.objtype AS object_type,
+      0 AS relative_id, '' AS relative_name,
+      '' AS relative_schema, '' AS relative_db,
+      '' AS relative_svr, 0 AS relative_type,
+      0 AS schema_bound, 1 AS rank
+    FROM #tempdep t
+    UNION ALL
+    SELECT
+      tp.object_id, tp.name, ISNULL(SCHEMA_NAME(tp.schema_id), ''),
+      DB_NAME(), '', 3,
+      t.objid, t.objname, ISNULL(t.objschema, ''), ISNULL(t.objdb, ''), '',
+      t.objtype, 1, 2
+    FROM #tempdep t
+    JOIN sys.tables AS tr ON tr.object_id = t.objid
+    JOIN sys.foreign_keys AS fk ON fk.referenced_object_id = tr.object_id
+    JOIN sys.tables AS tp ON tp.object_id = fk.parent_object_id
+    WHERE t.objtype = 3 AND t.objdb = DB_NAME()
+    UNION ALL
+    SELECT
+      tr.object_id, tr.name, ISNULL(SCHEMA_NAME(tr.schema_id), ''),
+      DB_NAME(), '', 3,
+      t.objid, t.objname, ISNULL(t.objschema, ''), ISNULL(t.objdb, ''), '',
+      t.objtype, 1, 2
+    FROM #tempdep t
+    JOIN sys.tables AS tp ON tp.object_id = t.objid
+    JOIN sys.foreign_keys AS fk ON fk.parent_object_id = tp.object_id
+    JOIN sys.tables AS tr ON tr.object_id = fk.referenced_object_id
+    WHERE t.objtype = 3 AND t.objdb = DB_NAME()
+  )
+  SELECT
+    object_id AS [object_id], object_name AS [object_name],
+    object_schema AS [object_schema], object_db AS [object_db],
+    object_svr AS [object_svr], object_type AS [object_type],
+    relative_id AS [relative_id], relative_name AS [relative_name],
+    relative_schema AS [relative_schema], relative_db AS [relative_db],
+    relative_svr AS [relative_svr], relative_type AS [relative_type],
+    schema_bound AS [schema_bound],
+    0 AS [ptype], '' AS [pname], '' AS [pschema]
+  FROM dependentes
+  ORDER BY rank DESC
+`;
+
 // Tipos convertidos somente dentro de CREATE TABLE / ALTER TABLE.
 // A ordem importa: formas mais específicas vêm primeiro.
 const TIPOS_DDL = [
@@ -1886,21 +1938,15 @@ class SqlTranslator {
 
     // sp_MSdependencies: o Dependency Walker do SMO cria #tempdep com os
     // objetos de origem e executa esse procedimento de 60 KB cheio de IF/EXEC.
-    // O simulador nao registra dependencias entre objetos, entao manter a
-    // tabela com os objetos de origem e devolver um resultset vazio basta para
-    // montar a arvore sem repetir o batch e sem estourar o erro 2714.
+    // O batch original insere em #t1 uma linha "self" por objeto e uma linha
+    // por relacionamento (object = tabela que referencia, relative = tabela
+    // referenciada). Reproduzimos isso lendo sys.foreign_keys do catalogo para
+    // que o "+" do View Dependencies apareca com as tabelas dependentes.
     if (
       /\bdeclare\s+@find_referencing_objects\b/i.test(código) &&
       /#tempdep\b/i.test(código)
     ) {
-      return (
-        'SELECT objid AS [object_id], objname AS [object_name], ' +
-        "ISNULL(objschema, '') AS [object_schema], objdb AS [object_db], " +
-        "'' AS [object_svr], objtype AS [object_type], 0 AS [relative_id], " +
-        "'' AS [relative_name], '' AS [relative_schema], '' AS [relative_db], " +
-        "'' AS [relative_svr], 0 AS [relative_type], 0 AS [schema_bound], " +
-        "0 AS [ptype], '' AS [pname], '' AS [pschema] FROM #tempdep"
-      );
+      return SHIM_DEPENDENCIAS;
     }
 
     // Batch de espaco livre em disco enviado pelo SMO ao montar Filegroups.

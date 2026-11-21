@@ -777,6 +777,8 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(traduzido).toContain('FROM _tmp_tempdep');
       expect(traduzido).toContain('AS [object_id]');
       expect(traduzido).toContain('AS [relative_id]');
+      expect(traduzido).toContain('JOIN main.foreign_keys');
+      expect(traduzido).toContain('JOIN main.tables');
       expect(traduzido).not.toMatch(/\bIF\b|\bWHILE\b|\bBEGIN\b|\bEXEC\b/i);
       expect(translator.columnTypesFor(sql)).toMatchObject({
         object_id: 'INT',
