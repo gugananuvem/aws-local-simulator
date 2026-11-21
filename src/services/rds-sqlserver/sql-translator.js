@@ -671,12 +671,17 @@ class SqlTranslator {
     // ja e o "main". Remove-se o qualificador do database, mas preservando os
     // databases de sistema anexados (master, msdb, tempdb, model) e o proprio
     // dbo, que tem tratamento proprio logo abaixo.
-    const qualificadorDatabase = [
+    const identificadorNaoSistema = [
       '(?:',
       '\\[(?!master\\]|msdb\\]|tempdb\\]|model\\]|sys\\]|dbo\\])[^\\]]+\\]',
       '|"(?!master"|msdb"|tempdb"|model"|sys"|dbo")[^"]+"',
       '|\\b(?!master\\b|msdb\\b|tempdb\\b|model\\b|sys\\b|dbo\\b)[A-Za-z_][\\w$#@]*',
-      ')',
+      ')'
+    ].join('');
+    const qualificadorDatabase = [
+      // Aceita tambem o nome de quatro partes (servidor.database.dbo.tabela).
+      `(?:${identificadorNaoSistema}\\s*\\.\\s*)?`,
+      identificadorNaoSistema,
       '\\s*\\.\\s*(?:\\[dbo\\]|"dbo"|dbo)\\s*\\.\\s*'
     ].join('');
     let resultado = this._substituirTodos(sql, qualificadorDatabase, () => '', true);

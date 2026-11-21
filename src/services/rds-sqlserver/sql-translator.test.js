@@ -1067,6 +1067,10 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         .toBe('SELECT * FROM [TB000]');
       expect(translator.translate('SELECT * FROM [Ultrapoints2].dbo.[TB000] AS t'))
         .toBe('SELECT * FROM [TB000] AS t');
+      expect(translator.translate('SELECT * FROM LOCAL.Ultrapoints2.dbo.TB000'))
+        .toBe('SELECT * FROM TB000');
+      expect(translator.translate('SELECT * FROM [LOCAL].[Ultrapoints2].[dbo].[TB000]'))
+        .toBe('SELECT * FROM [TB000]');
     });
 
     test('preserva databases de sistema qualificados', () => {
