@@ -163,6 +163,11 @@ describe('DbEngine (RDS SQL Server)', () => {
       comTradutor.execute('principal', 'CREATE PROCEDURE TESTE AS SELECT GETDATE() AS agora');
       expect(comTradutor.execute('principal', 'SELECT name FROM sys.procedures').rows)
         .toEqual([{ name: 'TESTE' }]);
+      const objeto = comTradutor.execute(
+        'principal',
+        "SELECT object_id FROM sys.procedures WHERE name = 'TESTE'"
+      );
+      expect(objeto.rows[0].object_id).toBeGreaterThan(0);
 
       const definicao = comTradutor.execute('principal', `
         SELECT m.definition FROM sys.sql_modules AS m
@@ -215,6 +220,28 @@ describe('DbEngine (RDS SQL Server)', () => {
 
       const tabelas = comTradutor.execute('principal', 'SELECT name FROM sys.tables').rows;
       expect(tabelas).toEqual([{ name: 'clientes' }]);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('aceita o CREATE TABLE gerado pelo designer do SSMS', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('principal', `CREATE TABLE [dbo].[TB000](
+        [Id] [int] IDENTITY(1,1) NOT NULL,
+        [IdUsuario] [nvarchar](21) NULL,
+        [DataHora] [int] NOT NULL,
+        [Acao] [text] NULL,
+        CONSTRAINT [PKTB000] PRIMARY KEY CLUSTERED
+        ([Id] ASC)WITH (PAD_INDEX = OFF, IGNORE_DUP_KEY = OFF) ON [PRIMARY]
+        ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]`);
+
+      comTradutor.execute('principal',
+        "INSERT INTO TB000 (IdUsuario, DataHora, Acao) VALUES ('admin', 1, 'teste')");
+      const linhas = comTradutor.execute('principal',
+        'SELECT Id, IdUsuario, Acao FROM TB000').rows;
+      expect(linhas).toEqual([{ Id: 1, IdUsuario: 'admin', Acao: 'teste' }]);
     } finally {
       comTradutor.close();
     }

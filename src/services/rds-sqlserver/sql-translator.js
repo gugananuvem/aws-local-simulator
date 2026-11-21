@@ -681,14 +681,14 @@ class SqlTranslator {
       'all_objects', 'indexes',
       'data_spaces', 'filegroups', 'database_files', 'all_columns', 'columns',
       'types', 'database_principals',
-      'sql_modules', 'system_sql_modules', 'extended_properties',
+      'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
       'default_constraints', 'index_columns', 'computed_columns',
       'identity_columns', 'foreign_key_columns', 'column_encryption_keys',
       'xml_schema_collections', 'sensitivity_classifications',
       'change_tracking_tables', 'filetables', 'periods',
       'remote_data_archive_tables', 'schemas',
       'all_parameters', 'parameters', 'triggers', 'database_permissions',
-      'procedures', 'assemblies', 'table_types', 'assembly_types'
+      'procedures', 'assemblies', 'assembly_modules', 'table_types', 'assembly_types'
     ].join('|');
     return semFuncao.replace(
       new RegExp(`\\bsys\\s*\\.\\s*(${objetos})\\b`, 'gi'),
@@ -1794,6 +1794,7 @@ class SqlTranslator {
       let traduzido = this._traduzirTipos(trecho);
       traduzido = this._removerOnPrimary(traduzido);
       traduzido = this._traduzirIdentity(traduzido);
+      traduzido = this._removerChavePrimariaRedundante(traduzido);
       resultado = resultado.slice(0, início) + traduzido + resultado.slice(fim);
     }
 
@@ -1802,7 +1803,13 @@ class SqlTranslator {
 
   /** Aplica a tabela de tipos ao trecho DDL informado. @private */
   _traduzirTipos(sql) {
-    let resultado = sql;
+    // O SSMS escreve os tipos entre colchetes ([int], [nvarchar](50)).
+    // Normaliza antes de aplicar a tabela, porque _mascarar() esconde os
+    // identificadores entre colchetes e impediria o casamento dos tipos.
+    let resultado = sql.replace(
+      /\[(NVARCHAR|VARCHAR|NCHAR|CHAR|UNIQUEIDENTIFIER|SYSNAME|XML|TEXT|SMALLDATETIME|DATETIME2|DATETIME|DATE|TIME|SMALLMONEY|MONEY|DECIMAL|NUMERIC|DOUBLE(?:\s+PRECISION)?|FLOAT|REAL|VARBINARY|BINARY|IMAGE|BIGINT|SMALLINT|TINYINT|INTEGER|INT|BIT)\](?=\s*(?:$|[(),]|\b))/gi,
+      (_correspondencia, tipo) => tipo
+    );
     for (const [regex, tipo] of TIPOS_DDL) {
       // Tipos sem argumentos não devem casar com funções já traduzidas,
       // como datetime('now'), gerada a partir de GETDATE().
@@ -1814,11 +1821,29 @@ class SqlTranslator {
     return resultado;
   }
 
-  /** Remove a cláusula ON [PRIMARY] de um trecho DDL. @private */
+  /** Remove as cláusulas ON/TEXTIMAGE_ON [PRIMARY] de um trecho DDL. @private */
   _removerOnPrimary(sql) {
     return this._substituirTodos(
       sql,
-      '\\s+ON\\s+(?:\\[PRIMARY\\]|"PRIMARY"|PRIMARY)(?!\\w)',
+      '\\s+(?:TEXTIMAGE_ON|ON)\\s+(?:\\[PRIMARY\\]|"PRIMARY"|PRIMARY)(?!\\w)',
+      () => '',
+      true
+    );
+  }
+
+  /**
+   * Remove a PRIMARY KEY em nivel de tabela quando a coluna IDENTITY ja virou
+   * INTEGER PRIMARY KEY AUTOINCREMENT. O SSMS gera as duas declaracoes.
+   * @private
+   */
+  _removerChavePrimariaRedundante(sql) {
+    if (!/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/i.test(this._mascarar(sql).code)) {
+      return sql;
+    }
+    return this._substituirTodos(
+      sql,
+      ',\\s*CONSTRAINT\\s+(?:\\[[^\\]]+\\]|"[^"]+"|\\w+)\\s+PRIMARY\\s+KEY\\s+' +
+        '(?:CLUSTERED|NONCLUSTERED)?\\s*\\([^)]*\\)(?:\\s*WITH\\s*\\([^)]*\\))?',
       () => '',
       true
     );

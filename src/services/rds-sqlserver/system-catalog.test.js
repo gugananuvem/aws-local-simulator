@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const { DbEngine } = require('./db-engine');
 const { SqlTranslator } = require('./sql-translator');
+const catalogoSistema = require('./system-catalog');
 
 describe('Catálogo de sistema do SQL Server simulado', () => {
   let dataDir;
@@ -519,5 +520,72 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       "SELECT DB_NAME(1) AS db, @@TRANCOUNT AS tr, CONVERT(nvarchar(40), 'abc') AS texto"
     );
     expect(resultado.rows[0]).toEqual({ db: 'master', tr: 0, texto: 'abc' });
+  });
+
+  test('usa object_id positivo e corrige procedures legadas com id negativo', () => {
+    engine.execute('principal', 'CREATE PROCEDURE ANTIGA AS SELECT 1 AS ok');
+    const db = engine.getOrCreateDatabase('principal');
+    const original = db.prepare(
+      "SELECT object_id FROM main.procedures WHERE name = 'ANTIGA'"
+    ).get().object_id;
+    expect(original).toBeGreaterThan(0);
+
+    for (const tabela of ['all_parameters', 'sql_modules', 'procedures', 'objects']) {
+      db.prepare(`UPDATE main.${tabela} SET object_id = -999 WHERE object_id = ?`).run(original);
+    }
+    catalogoSistema.sincronizarCatalogoDatabase(db);
+
+    const corrigido = db.prepare(
+      "SELECT object_id FROM main.procedures WHERE name = 'ANTIGA'"
+    ).get().object_id;
+    expect(corrigido).toBeGreaterThan(0);
+    expect(db.prepare('SELECT object_id FROM main.objects WHERE name = ?')
+      .get('ANTIGA').object_id).toBe(corrigido);
+    expect(db.prepare('SELECT object_id FROM main.sql_modules WHERE object_id = ?')
+      .get(corrigido)).toBeDefined();
+  });
+
+  test('responde a consulta de procedures usada pelo SSMS', () => {
+    engine.execute('principal', 'CREATE PROCEDURE TESTE AS SELECT 1 AS ok');
+
+    const linhas = engine.execute('principal', `
+      SELECT sp.name AS [Name], sp.object_id AS [ID], sp.modify_date AS [DateLastModified],
+             ISNULL(ssp.name, N'') AS [Owner],
+             CAST(ISNULL(OBJECTPROPERTYEX(sp.object_id, N'ExecIsAnsiNullsOn'), 0) AS bit) AS [AnsiNullsStatus],
+             CAST(ISNULL(OBJECTPROPERTYEX(sp.object_id, N'ExecIsQuotedIdentOn'), 0) AS bit) AS [QuotedIdentifierStatus],
+             SCHEMA_NAME(sp.schema_id) AS [Schema],
+             CAST(CASE WHEN ISNULL(smsp.definition, ssmsp.definition) IS NULL
+                  THEN 1 ELSE 0 END AS bit) AS [IsEncrypted],
+             CAST(COALESCE(smsp.is_recompiled, ssmsp.is_recompiled) AS bit) AS [Recompile],
+             case when amsp.object_id is null then N'' else asmblsp.name end AS [AssemblyName],
+             case when amsp.object_id is null then N'' else amsp.assembly_class end AS [ClassName],
+             case when amsp.object_id is null then N'' else amsp.assembly_method end AS [MethodName],
+             case when amsp.object_id is null
+                  then ISNULL(USER_NAME(smsp.execute_as_principal_id), N'')
+                  else ISNULL(USER_NAME(amsp.execute_as_principal_id), N'') end AS [Contexto],
+             CAST(COALESCE(spp.is_auto_executed, 0) AS bit) AS [Startup],
+             ISNULL(sm.uses_native_compilation, 0) AS [IsNativelyCompiled]
+      FROM sys.all_objects AS sp
+      LEFT OUTER JOIN sys.database_principals AS ssp
+        ON ssp.principal_id = ISNULL(sp.principal_id, (OBJECTPROPERTY(sp.object_id, 'OwnerId')))
+      LEFT OUTER JOIN sys.sql_modules AS smsp ON smsp.object_id = sp.object_id
+      LEFT OUTER JOIN sys.system_sql_modules AS ssmsp ON ssmsp.object_id = sp.object_id
+      LEFT OUTER JOIN sys.assembly_modules AS amsp ON amsp.object_id = sp.object_id
+      LEFT OUTER JOIN sys.assemblies AS asmblsp ON asmblsp.assembly_id = amsp.assembly_id
+      LEFT OUTER JOIN sys.procedures AS spp ON spp.object_id = sp.object_id
+      LEFT OUTER JOIN sys.all_sql_modules AS sm ON sm.object_id = sp.object_id
+      WHERE (sp.type = 'P' OR sp.type = 'RF' OR sp.type = 'PC')
+        AND sp.name = 'TESTE' AND SCHEMA_NAME(sp.schema_id) = 'dbo'
+    `).rows;
+
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0].Name).toBe('TESTE');
+    expect(linhas[0].ID).toBeGreaterThan(0);
+    expect(linhas[0].Schema).toBe('dbo');
+    expect(linhas[0].AnsiNullsStatus).toBe(0);
+    expect(linhas[0].QuotedIdentifierStatus).toBe(0);
+    expect(linhas[0].IsEncrypted).toBe(0);
+    expect(linhas[0].AssemblyName).toBe('');
+    expect(linhas[0].Startup).toBe(0);
   });
 });

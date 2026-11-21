@@ -392,6 +392,7 @@ const DDL_DATABASE = `
     type TEXT NOT NULL,
     type_desc TEXT NOT NULL,
     create_date DATETIME,
+    modify_date DATETIME,
     parent_object_id INTEGER,
     is_ms_shipped BIT NOT NULL DEFAULT 0
   );
@@ -477,7 +478,8 @@ const DDL_DATABASE = `
     modify_date DATETIME,
     is_ms_shipped BIT NOT NULL DEFAULT 0,
     is_published BIT NOT NULL DEFAULT 0,
-    is_schema_published BIT NOT NULL DEFAULT 0
+    is_schema_published BIT NOT NULL DEFAULT 0,
+    is_auto_executed BIT NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS database_permissions (
@@ -489,6 +491,14 @@ const DDL_DATABASE = `
   CREATE TABLE IF NOT EXISTS assemblies (
     assembly_id INTEGER NOT NULL PRIMARY KEY,
     name TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS assembly_modules (
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    assembly_id INTEGER,
+    assembly_class TEXT,
+    assembly_method TEXT,
+    execute_as_principal_id INTEGER
   );
 
   CREATE VIEW IF NOT EXISTS table_types AS
@@ -569,13 +579,21 @@ const DDL_DATABASE = `
 
   CREATE TABLE IF NOT EXISTS sql_modules (
     object_id INTEGER NOT NULL PRIMARY KEY,
-    definition TEXT
+    definition TEXT,
+    is_recompiled BIT NOT NULL DEFAULT 0,
+    execute_as_principal_id INTEGER
   );
 
   CREATE TABLE IF NOT EXISTS system_sql_modules (
     object_id INTEGER NOT NULL PRIMARY KEY,
-    definition TEXT
+    definition TEXT,
+    is_recompiled BIT NOT NULL DEFAULT 0,
+    execute_as_principal_id INTEGER
   );
+
+  CREATE VIEW IF NOT EXISTS all_sql_modules AS
+    SELECT object_id, definition, 0 AS uses_native_compilation
+    FROM sql_modules;
 
   CREATE TABLE IF NOT EXISTS extended_properties (
     major_id INTEGER NOT NULL,
@@ -691,13 +709,13 @@ const OBJETOS_DO_CATALOGO = new Set([
   'schemas', 'database_principals', 'objects', 'all_objects', 'tables', 'all_views',
   'views', 'system_views', 'synonyms', 'indexes', 'data_spaces', 'types',
   'filegroups', 'database_files', 'all_columns', 'columns',
-  'sql_modules', 'system_sql_modules', 'extended_properties',
+  'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
   'default_constraints', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
   'all_parameters', 'parameters', 'procedures', 'triggers', 'database_permissions',
-  'assemblies', 'table_types', 'assembly_types',
+  'assemblies', 'assembly_modules', 'table_types', 'assembly_types',
   'sysdac_instances', 'syspolicy_configuration'
 ]);
 
@@ -751,7 +769,14 @@ const VIEWS_DO_SISTEMA = Object.freeze({
   all_columns: [['column_id', 'INT', 4], ['user_type_id', 'INT', 4], ['max_length', 'SMALLINT', 2], ['is_nullable', 'BIT', 1]],
   all_objects: [['parent_object_id', 'INT', 4], ['is_ms_shipped', 'BIT', 1]],
   all_parameters: [['parameter_id', 'INT', 4], ['name', 'NVARCHAR', 128]],
+  all_sql_modules: [['definition', 'NVARCHAR', 4000], ['uses_native_compilation', 'BIT', 1]],
   assemblies: [['assembly_id', 'INT', 4], ['clr_name', 'NVARCHAR', 4000]],
+  assembly_modules: [
+    ['assembly_id', 'INT', 4],
+    ['assembly_class', 'NVARCHAR', 128],
+    ['assembly_method', 'NVARCHAR', 128],
+    ['execute_as_principal_id', 'INT', 4]
+  ],
   assembly_types: [['assembly_id', 'INT', 4], ['is_user_defined', 'BIT', 1]],
   all_views: [['ledger_view_type', 'TINYINT', 1], ['is_dropped_ledger_view', 'BIT', 1]],
   check_constraints: [['parent_object_id', 'INT', 4], ['definition', 'NVARCHAR', 4000]],
@@ -772,13 +797,21 @@ const VIEWS_DO_SISTEMA = Object.freeze({
   key_constraints: [['parent_object_id', 'INT', 4], ['type', 'CHAR', 2]],
   objects: [['parent_object_id', 'INT', 4], ['is_ms_shipped', 'BIT', 1]],
   partitions: [['partition_id', 'BIGINT', 8], ['index_id', 'INT', 4], ['rows', 'BIGINT', 8]],
-  procedures: [['is_ms_shipped', 'BIT', 1]],
+  procedures: [['is_ms_shipped', 'BIT', 1], ['is_auto_executed', 'BIT', 1]],
   schemas: [['schema_id', 'INT', 4], ['principal_id', 'INT', 4]],
   server_principals: [['principal_id', 'INT', 4], ['is_disabled', 'BIT', 1]],
-  sql_modules: [['definition', 'NVARCHAR', 4000]],
+  sql_modules: [
+    ['definition', 'NVARCHAR', 4000],
+    ['is_recompiled', 'BIT', 1],
+    ['execute_as_principal_id', 'INT', 4]
+  ],
   synonyms: [['base_object_name', 'NVARCHAR', 1032]],
   table_types: [['is_table_type', 'BIT', 1], ['is_user_defined', 'BIT', 1]],
-  system_sql_modules: [['definition', 'NVARCHAR', 4000]],
+  system_sql_modules: [
+    ['definition', 'NVARCHAR', 4000],
+    ['is_recompiled', 'BIT', 1],
+    ['execute_as_principal_id', 'INT', 4]
+  ],
   tables: [['lob_data_space_id', 'INT', 4], ['temporal_type', 'TINYINT', 1], ['is_memory_optimized', 'BIT', 1]],
   triggers: [['parent_id', 'INT', 4], ['is_disabled', 'BIT', 1]],
   types: [['user_type_id', 'INT', 4], ['system_type_id', 'TINYINT', 1], ['max_length', 'SMALLINT', 2]],
@@ -1075,6 +1108,20 @@ function nomeDatabaseLocal(db, dbName) {
 function sincronizarCatalogoDatabase(db, dbName) {
   db.exec(DDL_DATABASE);
 
+  // As tabelas objects/sql_modules/all_parameters sao reconstruidas abaixo.
+  // Guarda as rotinas registradas para reinstalla-las depois da reconstrucao.
+  const rotinasSalvas = db.prepare(`
+    SELECT p.name, p.object_id, p.schema_id, p.principal_id, p.create_date,
+           p.modify_date, p.is_ms_shipped, m.definition
+    FROM main.procedures AS p
+    LEFT JOIN main.sql_modules AS m ON m.object_id = p.object_id
+  `).all();
+  const parametrosSalvos = db.prepare(`
+    SELECT a.* FROM main.all_parameters AS a
+    INNER JOIN main.procedures AS p ON p.object_id = a.object_id
+    ORDER BY a.object_id, a.parameter_id
+  `).all();
+
   const nomeDb = nomeDatabaseLocal(db, dbName);
   const diretorioDados = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
   const arquivoDados = path.join(diretorioDados, `${nomeDb}.mdf`);
@@ -1111,7 +1158,8 @@ function sincronizarCatalogoDatabase(db, dbName) {
   }
 
   migrarColunas(db, 'main', 'objects', [
-    ['parent_object_id', 'INTEGER']
+    ['parent_object_id', 'INTEGER'],
+    ['modify_date', 'DATETIME']
   ]);
   migrarColunas(db, 'main', 'tables', [
     ['modify_date', 'DATETIME'],
@@ -1155,6 +1203,15 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['default_value', 'TEXT'],
     ['is_readonly', 'BIT NOT NULL DEFAULT 0']
   ]);
+  migrarColunas(db, 'main', 'procedures', [
+    ['is_auto_executed', 'BIT NOT NULL DEFAULT 0']
+  ]);
+  for (const tabela of ['sql_modules', 'system_sql_modules']) {
+    migrarColunas(db, 'main', tabela, [
+      ['is_recompiled', 'BIT NOT NULL DEFAULT 0'],
+      ['execute_as_principal_id', 'INTEGER']
+    ]);
+  }
   migrarColunas(db, 'main', 'synonyms', [
     ['base_object_name', "TEXT DEFAULT ''"]
   ]);
@@ -1176,7 +1233,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
     'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
     'sensitivity_classifications', 'change_tracking_tables', 'filetables',
     'periods', 'remote_data_archive_tables',
-    'all_parameters', 'triggers', 'database_permissions', 'assemblies'
+    'all_parameters', 'triggers', 'database_permissions', 'assemblies', 'assembly_modules'
   ]) {
     db.exec(`DELETE FROM main.${tabela}`);
   }
@@ -1383,6 +1440,8 @@ function sincronizarCatalogoDatabase(db, dbName) {
       columnId += 1;
     }
   }
+
+  restaurarProcedimentos(db, rotinasSalvas, parametrosSalvos);
 }
 
 /**
@@ -1464,13 +1523,33 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     if (identificador === 4) return 'sys';
     return identificador === 1 ? 'dbo' : null;
   });
+  // USER_NAME e usado pelo SSMS para resolver o principal de execucao das
+  // procedures. Sem argumento, o SQL Server devolve o usuario atual (dbo).
+  db.function('USER_NAME', { varargs: true }, (id) => {
+    if (id == null) return 'dbo';
+    return Number(id) === 1 || String(id).toLowerCase() === 'dbo' ? 'dbo' : null;
+  });
+
+  // Prepara a consulta uma unica vez: chamar db.prepare() de dentro de uma UDF
+  // enquanto outra instrucao esta em execucao faz o better-sqlite3 lanocar
+  // "This database connection is busy executing a query".
+  let existeObjeto = null;
+  try {
+    existeObjeto = db.prepare('SELECT 1 AS existe FROM main.objects WHERE object_id = ?');
+  } catch {
+    existeObjeto = null;
+  }
   const objectProperty = (id, propriedade) => {
     const nome = String(propriedade || '').toLowerCase();
     if (nome === 'ownerid') return 1;
     if (nome === 'isindexed' || nome === 'isindexable') return 1;
     if (nome.startsWith('is')) return 0;
-    return db.prepare('SELECT 1 AS existe FROM main.objects WHERE object_id = ?')
-      .get(Number(id)) ? 1 : 0;
+    if (!existeObjeto) return 0;
+    try {
+      return existeObjeto.get(Number(id)) ? 1 : 0;
+    } catch {
+      return 0;
+    }
   };
   db.function('OBJECTPROPERTY', { varargs: true }, objectProperty);
   db.function('OBJECTPROPERTYEX', { varargs: true }, objectProperty);
@@ -1734,6 +1813,62 @@ function nomeSimplesProcedimento(nome) {
     .replace(/^"|"$/g, '');
 }
 
+/** Proximo object_id positivo livre (objetos de sistema usam ids negativos). @private */
+function proximoObjectIdUsuario(db) {
+  const linha = db.prepare(`
+    SELECT COALESCE(MAX(CASE WHEN object_id > 0 THEN object_id ELSE 0 END), 0) + 1 AS id
+    FROM main.objects
+  `).get();
+  return Math.max(Number(linha && linha.id) || 1, 100);
+}
+
+/** Reinstala no catalogo as procedures preservadas antes da reconstrucao. @private */
+function restaurarProcedimentos(db, rotinas, parametros) {
+  if (!rotinas.length) return;
+  const inserirObjeto = db.prepare(`
+    INSERT INTO main.objects
+      (name, object_id, schema_id, principal_id, type, type_desc, create_date, is_ms_shipped)
+    VALUES (?, ?, ?, ?, 'P', 'SQL_STORED_PROCEDURE', ?, ?)
+  `);
+  const inserirModulo = db.prepare(`
+    INSERT INTO main.sql_modules (object_id, definition) VALUES (?, ?)
+  `);
+  const inserirParametro = db.prepare(`
+    INSERT INTO main.all_parameters
+      (object_id, parameter_id, name, user_type_id, is_output, has_default_value, default_value)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const rotina of rotinas) {
+    const objectId = rotina.object_id > 0 ? rotina.object_id : proximoObjectIdUsuario(db);
+    db.prepare('UPDATE main.procedures SET object_id = ? WHERE object_id = ?')
+      .run(objectId, rotina.object_id);
+    db.prepare('DELETE FROM main.objects WHERE object_id = ?').run(objectId);
+    db.prepare('DELETE FROM main.sql_modules WHERE object_id = ?').run(objectId);
+    db.prepare('DELETE FROM main.all_parameters WHERE object_id = ?').run(objectId);
+    inserirObjeto.run(
+      rotina.name, objectId, rotina.schema_id || 1, rotina.principal_id || 1,
+      rotina.create_date || dataHoraAtualSql(), rotina.is_ms_shipped || 0
+    );
+    inserirModulo.run(objectId, rotina.definition || '');
+    parametros
+      .filter((parametro) => parametro.object_id === rotina.object_id)
+      .forEach((parametro) => inserirParametro.run(
+        objectId,
+        parametro.parameter_id,
+        parametro.name,
+        parametro.user_type_id,
+        parametro.is_output,
+        parametro.has_default_value,
+        parametro.default_value
+      ));
+  }
+}
+
+function dataHoraAtualSql() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+
 /**
  * Registra uma stored procedure no catalogo do database, tornando-a visivel
  * em sys.procedures/sys.objects e guardando o corpo em sys.sql_modules.
@@ -1753,10 +1888,8 @@ function criarProcedimento(db, { nome, definicao, parametros = [], alterar = fal
     throw erroTsqlProcedimento(2714, 1, `There is already an object named '${nomeProc}' in the database.`);
   }
 
-  const data = '2023-01-01 00:00:00';
-  const objectId = existente
-    ? existente.object_id
-    : Number(db.prepare('SELECT COALESCE(MAX(object_id), 0) + 1 AS id FROM main.objects').get().id);
+  const data = dataHoraAtualSql();
+  const objectId = existente ? existente.object_id : proximoObjectIdUsuario(db);
 
   db.prepare('DELETE FROM main.all_parameters WHERE object_id = ?').run(objectId);
   db.prepare('DELETE FROM main.sql_modules WHERE object_id = ?').run(objectId);
