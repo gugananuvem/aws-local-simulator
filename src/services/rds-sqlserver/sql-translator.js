@@ -123,9 +123,14 @@ class SqlTranslator {
     resultado = this.splitBatches(resultado).join(' ');
     resultado = this._normalizarWhitespace(resultado);
     resultado = this._traduzirMetadadosCliente(resultado);
+    resultado = this._removerPrefixoN(resultado);
+    resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
     resultado = this._removerEsquema(resultado);
+    resultado = this._traduzirLiteraisHex(resultado);
     resultado = this._traduzirProcedural(resultado);
+    resultado = this._traduzirVariaveisSistema(resultado);
+    resultado = this._traduzirConcatenacao(resultado);
     resultado = this._traduzirMerge(resultado);
     resultado = this._traduzirUpdateJoin(resultado);
     resultado = this._traduzirFuncoes(resultado);
@@ -352,16 +357,97 @@ class SqlTranslator {
       'XACT_ABORT'
     ].join('|');
 
-    return this._substituirTodos(
+    let resultado = this._substituirTodos(
       sql,
       `\\bSET\\s+(?:${opcoesSessao})\\s+(?:ON|OFF|-?\\d+)\\b`,
       () => ''
     );
+
+    // Opções com valores textuais ou multinível enviadas pelo SqlClient/SSMS.
+    resultado = this._substituirTodos(
+      resultado,
+      '\\bSET\\s+(?:ROWCOUNT|LOCK_TIMEOUT|QUERY_GOVERNOR_COST_LIMIT)\\s+-?\\d+\\b|' +
+        '\\bSET\\s+DEADLOCK_PRIORITY\\s+(?:LOW|NORMAL|HIGH|-?\\d+)\\b|' +
+        '\\bSET\\s+TRANSACTION\\s+ISOLATION\\s+LEVEL\\s+' +
+        '(?:READ\\s+(?:UNCOMMITTED|COMMITTED|REPEATABLE|SNAPSHOT)|SERIALIZABLE)\\b',
+      () => ''
+    );
+
+    return resultado;
   }
 
-  /** Remove o prefixo de esquema `dbo.` (SQLite nao tem esquemas). @private */
+  /** Remove o prefixo `N` das literais Unicode (N'texto'). @private */
+  _removerPrefixoN(sql) {
+    return sql.replace(/\bN(?=')/gi, '');
+  }
+
+  /**
+   * O SFC/SMO envia sp_executesql com parametros nomeados @_msparam_N. O SQLite
+   * so entende placeholders posicionais, e o DbEngine ja recebe os valores.
+   * @private
+   */
+  _traduzirParametrosSmo(sql) {
+    return sql.replace(/@_msparam_\d+\b/gi, '?');
+  }
+
+  /**
+   * Converte parametros nomeados (@p, @nome) em placeholders quando o chamador
+   * informou valores ligados. A mascara preserva `@` dentro de textos e nomes.
+   * @param {string} sql
+   * @param {number} quantidade
+   * @returns {string}
+   */
+  substituirParametros(sql, quantidade) {
+    if (!quantidade || typeof sql !== 'string') return sql;
+    const código = this._mascarar(sql).code;
+    let resultado = '';
+    let último = 0;
+    const parametro = /@[A-Za-z_][\w]*/g;
+    let correspondência;
+    while ((correspondência = parametro.exec(código)) !== null) {
+      resultado += sql.slice(último, correspondência.index) + '?';
+      último = correspondência.index + correspondência[0].length;
+    }
+    return resultado + sql.slice(último);
+  }
+
+  /**
+   * Converte literais hexadecimal (0x1000000) em decimais. O SQLite interpreta
+   * 0x... como BLOB, o que faz calculos de versao e bitmask do SMO retornarem 0.
+   * A mascara evita alterar digitos dentro de textos e identificadores.
+   * @private
+   */
+  _traduzirLiteraisHex(sql) {
+    const código = this._mascarar(sql).code;
+    let resultado = '';
+    let último = 0;
+    const hexadecimal = /0x([0-9a-f]+)/gi;
+    let correspondência;
+    while ((correspondência = hexadecimal.exec(código)) !== null) {
+      resultado += sql.slice(último, correspondência.index);
+      resultado += String(parseInt(correspondência[1], 16));
+      último = correspondência.index + correspondência[0].length;
+    }
+    return resultado + sql.slice(último);
+  }
+
+  /** Traduz as variáveis globais do T-SQL para literais SQLite. @private */
+  _traduzirVariaveisSistema(sql) {
+    return sql
+      .replace(/@@MICROSOFTVERSION\b/gi, '268439491')
+      .replace(/@@SPID\b/gi, '1')
+      .replace(/@@TRANCOUNT\b/gi, '0')
+      .replace(/@@VERSION\b/gi, "'16.00.4035.2'");
+  }
+
+  /**
+   * Remove `dbo.` e normaliza `master.sys.` para `sys.` — no SQLite o catálogo
+   * de sistema é um schema anexado, não um database qualificado.
+   * @private
+   */
   _removerEsquema(sql) {
-    let resultado = this._substituirTodos(sql, '\\bdbo\\s*\\.\\s*', () => '');
+    let resultado = this._substituirTodos(sql, '\\bmaster\\s*\\.\\s*sys\\s*\\.\\s*', () => 'sys.');
+    resultado = this._substituirTodos(resultado, '\\bdbo\\s*\\.\\s*', () => '');
 
     const tokens = this._mascarar(resultado).tokens;
     for (let i = tokens.length - 1; i >= 0; i -= 1) {
@@ -502,6 +588,104 @@ class SqlTranslator {
   }
 
   /**
+   * Expande o batch de descoberta de versão do SSMS em lotes independentes.
+   *
+   * A consulta original devolve três conjuntos de resultado (versão/edição,
+   * host_platform e ConnectionProtocol). A camada TDS separa result sets por
+   * lote, então devolvemos um SELECT por lote — se tudo vier em um único
+   * resultset, o SSMS falha com "Cannot find table 2" ao ligar ao servidor.
+   *
+   * @param {string} sql
+   * @returns {string[]|null} lotes já prontos, ou null quando não é o padrão
+   */
+  expandirResultSets(sql) {
+    if (typeof sql !== 'string') {
+      return null;
+    }
+
+    const código = this._mascarar(sql).code;
+    if (
+      !/\bDECLARE\s+@edition\s+sysname\b/i.test(código) ||
+      !/\bSERVERPROPERTY\b/i.test(código) ||
+      !/\bCONNECTIONPROPERTY\b/i.test(sql) ||
+      !/\bMICROSOFTVERSION\b/i.test(código)
+    ) {
+      return null;
+    }
+
+    return [
+      'SELECT 1 AS [DatabaseEngineType], 2 AS [DatabaseEngineEdition], ' +
+        "'16.00.4035.2' AS [ProductVersion], 16 AS [MicrosoftVersion]",
+      "SELECT 'Windows' AS [host_platform]",
+      "SELECT 'TCP' AS [ConnectionProtocol]"
+    ];
+  }
+
+  /**
+   * Tipos TDS que o SMO espera nas colunas dos shims acima. O SQLite descarta
+   * o tipo declarado de expressões calculadas (CAST inclusive), então sem isso
+   * colunas BIT/TINYINT chegam como INT e o Explorer falha com
+   * "Specified cast is not valid" ao ler bools com GetBoolean().
+   *
+   * @param {string} sql SQL bruto recebido do cliente
+   * @returns {Object<string,string>|null} mapa nome da coluna → tipo declarado
+   */
+  columnTypesFor(sql) {
+    if (typeof sql !== 'string') return null;
+
+    const código = this._mascarar(sql).code;
+
+    // No SQL Server, IsSingleUser/IsXTPSupported/IsFullTextInstalled e
+    // IsContainedAuthentication vêm de SERVERPROPERTY/CASE como INT — forçar
+    // BIT aqui faria o SMO lançar "Specified cast is not valid" ao ler Int32.
+
+    if (
+      /\bIS_SRVROLEMEMBER\b/i.test(sql) &&
+      /\bAdminConnection\b/i.test(sql) &&
+      /\bSmoEnabled\b/i.test(sql)
+    ) {
+      return { AdminConnection: 'BIT', SmoEnabled: 'BIT' };
+    }
+
+    if (/^\s*SELECT\s+.*\bFROM\s+(?:master\.)?sys\.databases\s+\w+\s*;?\s*$/i.test(código)) {
+      return { State: 'TINYINT' };
+    }
+
+    if (/\bFROM\s+(?:master\.)?sys\.configurations\b/i.test(código)) {
+      return { Dynamic: 'BIT', Advanced: 'BIT' };
+    }
+
+    // Batch completo de propriedades do Server: colunas vindas de CAST AS bit.
+    if (/\bSmoAuditLevel\b/i.test(sql) && /\bPolicyHealthState\b/i.test(sql)) {
+      return {
+        ResourceLastUpdateDateTime: 'DATETIME',
+        IsCaseSensitive: 'BIT',
+        IsFullTextInstalled: 'BIT',
+        IsSingleUser: 'BIT',
+        IsClustered: 'BIT',
+        NamedPipesEnabled: 'BIT',
+        TcpEnabled: 'BIT',
+        IsHadrEnabled: 'BIT',
+        IsPolyBaseInstalled: 'BIT'
+      };
+    }
+
+    // Batch de descoberta do SMO: essas colunas vêm de CAST(... AS bit).
+    if (/\bFULLTEXTSERVICEPROPERTY\b/i.test(sql) && /\bIsSingleUser\b/i.test(sql)) {
+      return {
+        ResourceLastUpdateDateTime: 'DATETIME',
+        IsCaseSensitive: 'BIT',
+        IsFullTextInstalled: 'BIT',
+        IsClustered: 'BIT',
+        IsSingleUser: 'BIT',
+        IsXTPSupported: 'BIT'
+      };
+    }
+
+    return null;
+  }
+
+  /**
    * Substitui o batch de descoberta de servidor enviado pelo SSMS ao conectar.
    * A consulta original usa xp_msver, tabelas de sistema e funções de servidor
    * que não existem no SQLite. Devolvemos um resultset com as mesmas colunas e
@@ -510,26 +694,232 @@ class SqlTranslator {
    */
   _traduzirMetadadosCliente(sql) {
     const código = this._mascarar(sql).code;
-    if (!/\bxp_msver\b/i.test(código) || !/#SVer\b/i.test(código)) {
-      return sql;
+
+    // Batch completo de propriedades do Server enviado pelo SMO. Ele tambem
+    // usa xp_instance_regread e sys.database_files, mas espera colunas como
+    // AuditLevel e PolicyHealthState. Devolver o resultset de Information aqui
+    // faz o SMO converter os valores por posicao e estourar Int16/enum no
+    // Server.Refresh(), que era o travamento do SSMS.
+    if (/\bSmoAuditLevel\b/i.test(sql) && /\bPolicyHealthState\b/i.test(sql)) {
+      const caminho = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL';
+      const colunas = [
+        '2 AS [AuditLevel]',
+        '12 AS [NumberOfLogFiles]',
+        '2 AS [LoginMode]',
+        "'' AS [MailProfile]",
+        `'${caminho}\\DATA' AS [BackupDirectory]`,
+        '1000 AS [PerfMonMode]',
+        `'${caminho}' AS [InstallDataDirectory]`,
+        "'MSSQLSERVER' AS [ServiceName]",
+        `'${caminho}\\Log' AS [ErrorLogPath]`,
+        `'${caminho}\\' AS [RootDirectory]`,
+        'CAST(0 AS BIT) AS [IsCaseSensitive]',
+        '38 AS [MaxPrecision]',
+        'CAST(0 AS BIT) AS [IsFullTextInstalled]',
+        "'16.00.4035.2' AS [VersionString]",
+        "'Standard Edition (64-bit)' AS [Edition]",
+        "'RTM' AS [ProductLevel]",
+        "'' AS [ProductUpdateLevel]",
+        'CAST(0 AS BIT) AS [IsSingleUser]',
+        '2 AS [EngineEdition]',
+        "'SQL_Latin1_General_CP1_CI_AS' AS [Collation]",
+        'CAST(0 AS BIT) AS [IsClustered]',
+        "'LOCAL' AS [NetName]",
+        "'LOCAL' AS [ComputerNamePhysicalNetBIOS]",
+        '2 AS [ServiceStartMode]',
+        `'${caminho}\\DATA' AS [MasterDBLogPath]`,
+        `'${caminho}\\DATA' AS [MasterDBPath]`,
+        `'${caminho}\\DATA' AS [DefaultFile]`,
+        `'${caminho}\\DATA' AS [DefaultLog]`,
+        "'16.00.4035.2' AS [ResourceVersionString]",
+        "'2023-01-01T00:00:00' AS [ResourceLastUpdateDateTime]",
+        '0 AS [CollationID]',
+        '196609 AS [ComparisonStyle]',
+        '1 AS [SqlCharSet]',
+        "'ascii' AS [SqlCharSetName]",
+        '52 AS [SqlSortOrder]',
+        "'nocase_iso' AS [SqlSortOrderName]",
+        "'v4.0.30319' AS [BuildClrVersionString]",
+        "'' AS [ServiceAccount]",
+        'CAST(0 AS BIT) AS [NamedPipesEnabled]',
+        'CAST(1 AS BIT) AS [TcpEnabled]',
+        "'' AS [InstallSharedDirectory]",
+        "'' AS [SqlDomainGroup]",
+        '0 AS [PolicyHealthState]',
+        '0 AS [FilestreamLevel]',
+        "'' AS [FilestreamShareName]",
+        '-1 AS [TapeLoadWaitTime]',
+        'CAST(0 AS BIT) AS [IsHadrEnabled]',
+        '0 AS [HadrManagerStatus]',
+        "'' AS [ClusterName]",
+        '4 AS [ClusterQuorumType]',
+        '3 AS [ClusterQuorumState]',
+        'NULL AS [ServiceAccountSid]',
+        'CAST(0 AS BIT) AS [IsPolyBaseInstalled]',
+        "'LOCAL' AS [Name]",
+        "'' AS [InstanceName]",
+        '1 AS [Status]',
+        "'\\' AS [PathSeparator]",
+        '0 AS [IsContainedAuthentication]',
+        'NULL AS [ServerType]'
+      ];
+      return `SELECT ${colunas.join(', ')}`;
     }
 
-    return (
-      "SELECT 'LOCAL' AS [Server_Name], " +
-      "'Server[@Name=''LOCAL'']' AS [Server_Urn], " +
-      'NULL AS [Server_ServerType], ' +
-      '0 AS [Server_IsContainedAuthentication], ' +
-      '16 AS [VersionMajor], ' +
-      '0 AS [VersionMinor], ' +
-      '4035 AS [BuildNumber], ' +
-      '0 AS [IsSingleUser], ' +
-      "'Standard Edition (64-bit)' AS [Edition], " +
-      '2 AS [EngineEdition], ' +
-      '0 AS [IsXTPSupported], ' +
-      "'16.00.4035.2' AS [VersionString], " +
-      "'windows' AS [HostPlatform], " +
-      '0 AS [IsFullTextInstalled]'
-    );
+    // Batch de descoberta de propriedades do servidor feito pelo SMO durante a
+    // conexao. xp_instance_regread e sys.database_files nao existem no
+    // simulador, entao devolvemos as mesmas colunas com valores de uma
+    // instancia local (collation case-insensitive, sem cluster e sem fulltext).
+    if (/\bxp_instance_regread\b/i.test(código) && /\bdatabase_files\b/i.test(código)) {
+      const caminho = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL';
+      return (
+        'SELECT CAST(0 AS BIT) AS [IsCaseSensitive], ' +
+        '38 AS [MaxPrecision], ' +
+        `'${caminho}\\Log' AS [ErrorLogPath], ` +
+        `'${caminho}\\' AS [RootDirectory], ` +
+        "'\\' AS [PathSeparator], " +
+        'CAST(0 AS BIT) AS [IsFullTextInstalled], ' +
+        `'${caminho}\\DATA' AS [MasterDBLogPath], ` +
+        `'${caminho}\\DATA' AS [MasterDBPath], ` +
+        "'16.00.4035.2' AS [VersionString], " +
+        "'Standard Edition (64-bit)' AS [Edition], " +
+        "'RTM' AS [ProductLevel], " +
+        'CAST(0 AS BIT) AS [IsSingleUser], ' +
+        '2 AS [EngineEdition], ' +
+        "'SQL_Latin1_General_CP1_CI_AS' AS [Collation], " +
+        "'LOCAL' AS [NetName], " +
+        'CAST(0 AS BIT) AS [IsClustered], ' +
+        "'16.00.4035.2' AS [ResourceVersionString], " +
+        "'2023-01-01T00:00:00' AS [ResourceLastUpdateDateTime], " +
+        '0 AS [CollationID], ' +
+        '196609 AS [ComparisonStyle], ' +
+        '1 AS [SqlCharSet], ' +
+        "'ascii' AS [SqlCharSetName], " +
+        '52 AS [SqlSortOrder], ' +
+        "'nocase_iso' AS [SqlSortOrderName], " +
+        "'v4.0.30319' AS [BuildClrVersionString], " +
+        "'LOCAL' AS [ComputerNamePhysicalNetBIOS], " +
+        'CAST(0 AS BIT) AS [IsPolyBaseInstalled]'
+      );
+    }
+
+    // Propriedades caras do Server, lidas uma a uma via xp_regread/xp_instance_
+    // regread ou montadas em #SVer a partir de xp_msver. O SMO emite um batch
+    // por propriedade e espera exatamente uma coluna com o nome dela; devolver
+    // o resultset de descoberta (14 colunas) faz o cliente ler por posicao e
+    // falhar com NullReferenceException. Fica depois dos batches completos
+    // acima para nao capturar suas colunas.
+    const ehBatchSVer = /#SVer\b/i.test(sql) && /\bxp_msver\b/i.test(sql);
+    if (/\b(?:xp_regread|xp_instance_regread)\b/i.test(sql) || ehBatchSVer) {
+      const apelidos = [...sql.matchAll(/\bAS\s+\[([^\]]+)\]/gi)].map((m) => m[1]);
+      const apelido = apelidos[apelidos.length - 1];
+      if (apelido && /^[A-Za-z][A-Za-z0-9_]*$/.test(apelido)) {
+        const valores = {
+          BrowserServiceAccount: "''",
+          BrowserStartMode: '4',
+          ErrorLogSizeKb: '0',
+          HardwareGeneration: "'Gen5'",
+          HostDistribution: "'Windows'",
+          HostPlatform: "'Windows'",
+          HostRelease: "'10.0'",
+          HostServicePackLevel: "''",
+          HostSku: '0',
+          Language: "'1033'",
+          OSVersion: "'10.0'",
+          PhysicalMemory: '8388608',
+          PhysicalMemoryUsageInKB: '8388608',
+          Platform: "'Windows'",
+          ProcessorUsage: '0',
+          Processors: '8',
+          Product: "'Microsoft SQL Server'",
+          ReservedStorageSizeMB: '0',
+          ServiceInstanceId: "'MSSQLSERVER'",
+          ServiceTier: "'Local'",
+          UsedStorageSizeMB: '0',
+          VersionMajor: '16',
+          VersionMinor: '0'
+        };
+        const valor = valores[apelido];
+        if (valor !== undefined || !ehBatchSVer) {
+          return `SELECT ${valor || '0'} AS [${apelido}]`;
+        }
+      }
+    }
+
+    if (/\bxp_msver\b/i.test(código) && /#SVer\b/i.test(código)) {
+      // O SSMS 19 inclui Server_Status nesse resultset; versoes antigas do SMO
+      // nao incluem. O numero de colunas precisa bater exatamente com o SQL
+      // original, senao o cliente falha ao ler o schema.
+      const colunas = [
+        "'LOCAL' AS [Server_Name]",
+        "'Server[@Name=''LOCAL'']' AS [Server_Urn]",
+        'NULL AS [Server_ServerType]'
+      ];
+      if (/\bServer_Status\b/i.test(sql)) colunas.push('1 AS [Server_Status]');
+      colunas.push(
+        '0 AS [Server_IsContainedAuthentication]',
+        '16 AS [VersionMajor]',
+        '0 AS [VersionMinor]',
+        '4035 AS [BuildNumber]',
+        '0 AS [IsSingleUser]',
+        "'Standard Edition (64-bit)' AS [Edition]",
+        '2 AS [EngineEdition]',
+        '0 AS [IsXTPSupported]',
+        "'16.00.4035.2' AS [VersionString]",
+        "'Windows' AS [HostPlatform]",
+        '0 AS [IsFullTextInstalled]'
+      );
+      return `SELECT ${colunas.join(', ')}`;
+    }
+
+    // Segundo batch de descoberta do SSMS: edição, versão e protocolo de conexão.
+    if (
+      /\bDECLARE\s+@edition\s+sysname\b/i.test(código) &&
+      /\bSERVERPROPERTY\b/i.test(código) &&
+      /\bCONNECTIONPROPERTY\b/i.test(sql) &&
+      /\bMICROSOFTVERSION\b/i.test(código)
+    ) {
+      return (
+        'SELECT 1 AS [DatabaseEngineType], ' +
+        '2 AS [DatabaseEngineEdition], ' +
+        "'16.00.4035.2' AS [ProductVersion], " +
+        '16 AS [MicrosoftVersion], ' +
+        "'Windows' AS [host_platform], " +
+        "'TCP' AS [ConnectionProtocol]"
+      );
+    }
+
+    // Verificação de AlwaysOn feita pelo SMO ao conectar. xp_qv é uma
+    // stored procedure interna que não existe no simulador; -1/-0 indicam
+    // "não é uma instância AlwaysOn" e evitam consultas de disponibilidade.
+    if (/\bxp_qv\b/i.test(código) && /\bAlwaysOn\b/i.test(sql)) {
+      return 'SELECT -1 AS [AlwaysOn]';
+    }
+
+    // Consulta de AdminConnection/SmoEnabled feita pelo SMO ao conectar.
+    if (
+      /\bIS_SRVROLEMEMBER\b/i.test(sql) &&
+      /\bAdminConnection\b/i.test(sql) &&
+      /\bSmoEnabled\b/i.test(sql)
+    ) {
+      // SmoEnabled=1 evita que o SSMS tente alterar sys.configurations para
+      // habilitar SMO (a alteração não é suportada pelo simulador).
+      return 'SELECT CAST(0 AS BIT) AS [AdminConnection], CAST(1 AS BIT) AS [SmoEnabled]';
+    }
+
+    // Verificação de contained authentication feita pelo SSMS ao abrir o master.
+    if (
+      /\bdb_id\s*\(\s*\)/i.test(código) &&
+      /\bdm_exec_sessions\b/i.test(sql) &&
+      /\bauthenticating_database_id\b/i.test(sql)
+    ) {
+      // db_id() = 1 é master; autenticação contida é sempre 0 no cluster simulado.
+      return 'SELECT 0 AS [IsContainedAuthentication]';
+    }
+
+    // SERVERPROPERTY, CONNECTIONPROPERTY, IS_SRVROLEMEMBER, sys.databases e
+    // sys.configurations agora existem de verdade no catálogo (system-catalog.js).
+    return sql;
   }
 
   /**
@@ -765,9 +1155,68 @@ class SqlTranslator {
       );
       resultado = this._substituirTodos(resultado, '\\bISNULL\\s*\\(', () => 'COALESCE(');
       resultado = this._substituirTodos(resultado, '\\bLEN\\s*\\(', () => 'LENGTH(');
+      // CONVERT(tipo(n), valor) → CONVERT('TIPO', valor). A função CONVERT é
+      // registrada pelo catálogo de sistema; o tipo T-SQL não é expressão SQL.
+      resultado = this._substituirTodos(
+        resultado,
+        '\\bCONVERT\\s*\\(\\s*(N?VARCHAR|N?CHAR|INT|INTEGER|BIGINT|SMALLINT|TINYINT|BIT|' +
+          'DECIMAL|NUMERIC|FLOAT|REAL|DATETIME2|DATETIME|DATE|TIME|UNIQUEIDENTIFIER|' +
+          'BINARY|VARBINARY|MONEY|SMALLMONEY|TEXT|XML)\\s*(?:\\([^()]*\\))?\\s*,',
+        (correspondência) => `CONVERT('${correspondência[1].toUpperCase()}',`
+      );
+      // Tipos T-SQL cujo nome não contém CHAR/TEXT/BLOB/etc. recebem afinidade
+      // NUMERIC no SQLite: CAST('LOCAL' AS sysname) devolve 0. Sem isso o URN
+      // montado pelo SMO vira Server[@Name='0'] e a conexão falha.
+      resultado = this._substituirTodos(
+        resultado,
+        '\\bAS\\s+(?:SYSNAME|UNIQUEIDENTIFIER|XML)\\b',
+        () => 'AS TEXT'
+      );
       resultado = this._traduzirDateAdd(resultado);
     }
 
+    return resultado;
+  }
+
+  /**
+   * Converte concatenação de strings do T-SQL (`+`) no operador `||` do SQLite.
+   * Só troca o operador quando um dos lados é literal de texto; somas numéricas
+   * (bitmask de server roles, por exemplo) continuam com `+`.
+   * @private
+   */
+  _traduzirConcatenacao(sql) {
+    const máscara = this._mascarar(sql);
+    const código = máscara.code;
+    const posicoes = [];
+
+    for (let i = 0; i < código.length; i += 1) {
+      if (código[i] !== '+') continue;
+
+      const anterior = máscara.tokens
+        .filter((token) => token.tipo === 'texto' && token.fim <= i)
+        .sort((a, b) => b.fim - a.fim)[0];
+      const posterior = máscara.tokens
+        .filter((token) => token.tipo === 'texto' && token.início >= i + 1)
+        .sort((a, b) => a.início - b.início)[0];
+      const temTextoAntes = !!anterior && código.slice(anterior.fim, i).trim() === '';
+      const temTextoDepois = !!posterior && código.slice(i + 1, posterior.início).trim() === '';
+      if (!temTextoAntes && !temTextoDepois) continue;
+
+      // Quando só o lado direito é literal, ainda precisamos garantir que
+      // existe operando à esquerda (para não trocar um `+` unário).
+      if (!temTextoAntes) {
+        let antes = i - 1;
+        while (antes >= 0 && /\s/.test(código[antes])) antes -= 1;
+        if (antes < 0 || /[,(=+\-*/%&|^<>]/.test(código[antes])) continue;
+      }
+
+      posicoes.push(i);
+    }
+
+    let resultado = sql;
+    for (let i = posicoes.length - 1; i >= 0; i -= 1) {
+      resultado = resultado.slice(0, posicoes[i]) + '||' + resultado.slice(posicoes[i] + 1);
+    }
     return resultado;
   }
 

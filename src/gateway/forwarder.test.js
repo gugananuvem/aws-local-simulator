@@ -84,6 +84,22 @@ describe('gateway forwarding', () => {
     await new Promise((resolve) => upstream.close(resolve));
   });
 
+  test('answers browser preflight requests with CORS headers without classifying them', async () => {
+    const res = await request(gatewayPort, {
+      method: 'OPTIONS',
+      path: '/',
+      headers: {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,x-amz-target',
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+    expect(res.headers['access-control-allow-methods']).toContain('POST');
+    expect(res.headers['access-control-allow-headers']).toBe('content-type,x-amz-target');
+  });
+
   test('keeps method, raw path and query, Host header and body unchanged', async () => {
     const res = await request(gatewayPort, {
       method: 'POST',
@@ -101,6 +117,7 @@ describe('gateway forwarding', () => {
     expect(echo.url).toBe('/echo/a%20b?x=%2F&y=1');
     expect(echo.headers.host).toBe('bucket.localhost:4700');
     expect(echo.body).toBe('{"hello":"world"}');
+    expect(res.headers['access-control-allow-origin']).toBe('*');
   });
 
   test('removes hop-by-hop request headers before forwarding', async () => {
@@ -168,6 +185,7 @@ describe('gateway forwarding', () => {
     const res = await request(gatewayPort, { path: '/health' });
     expect(res.status).toBe(400);
     expect(res.headers['x-amzn-errortype']).toBe('UnknownService');
+    expect(res.headers['access-control-allow-origin']).toBe('*');
     expect(JSON.parse(res.body).__type).toBe('UnknownService');
   });
 

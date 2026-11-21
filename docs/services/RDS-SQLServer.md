@@ -127,21 +127,46 @@ sqlcmd -S tcp:localhost,1433 -U admin -P 'Senha123456' -d master -Q "SELECT GETD
 
 > Validado com `sqlcmd` do Microsoft ODBC Driver 17: login, `CREATE TABLE`, `INSERT`,
 > `SELECT` e `USE <database>`. Use uma instrução por `-Q` (o driver rejeita múltiplas).
-> Conexões com `Encrypt=yes` não são suportadas (o servidor responde `NOT_SUP` no PRELOGIN).
-> Também validado com **SSMS 19**: o batch de descoberta de servidor enviado no login é
-> reconhecido e devolvido como um resultset de metadados sintéticos.
+> No `cmd.exe`, a senha deve ser passada com `-P "Senha123456"`. Conexões com `Encrypt=yes`
+> não são suportadas (o servidor responde `NOT_SUP` no PRELOGIN).
+> No **SSMS 19**, a opção `-P` não existe: digite a senha no diálogo `Password:` → `Senha123456`.
+> `Initial Catalog` do LOGIN7 é respeitado — o SSMS abre uma conexão separada em `msdb` para
+> avaliar a política de saúde.
 
 Suporte atual:
 
-- PRELOGIN/LOGIN7 com SQL Authentication e TDS 7.4;
+- PRELOGIN/LOGIN7 com SQL Authentication e TDS 7.4; o LOGINACK anuncia a mesma versão do
+  catálogo (`16.00.4035`), evitando que o `Microsoft.Data.SqlClient` 3.x do SSMS 19 monte o
+  SMO com `ServerVersion` 11.00;
 - SQL Batch (`SELECT`, DML, DDL, `USE <database>`), tokens COLMETADATA/ROW/DONE;
 - RPC `sp_executesql` em melhor esforço; outros RPCs retornam erro explícito;
+- colunas sem alias voltam com nome vazio (como no SQL Server). Nomes longos de expressões
+  gerados pelo SQLite são normalizados: além de semanticamente corretos, estourariam o
+  `B_VARCHAR` de 1 byte do TDS e corromperiam o stream;
+- literais hex (`0x1000000`) são convertidos em decimal — o SQLite os leria como BLOB e
+  quebraria cálculos de versão/bitmask do SMO;
 - subconjunto procedural de inicialização de clientes (ver abaixo).
 
 Limitações do listener: sem TLS, sem Windows/Integrated Auth, sem MARS. A compatibilidade com
 `sqlcmd`, ODBC, JDBC e `tedious` é melhor esforço; o caminho mais previsível é SQL Batch.
-O Object Explorer do SSMS pode não exibir todos os nós: consultas de catálogo do sistema
-(`sys.databases`, `sys.objects`, `SERVERPROPERTY`, etc.) não são emuladas.
+`WHILE`, `GOTO`, `RETURN`, `THROW`, `RAISERROR` e `EXEC` arbitrário continuam rejeitados com erro
+claro — apenas os batches conhecidos do SSMS/SMO têm shim.
+
+## Catálogo de sistema
+
+Cada cluster nasce com os databases `master`, `tempdb`, `model` e `msdb` (ids 1 a 4). O arquivo
+do `master` é anexado como schema `sys` em toda conexão, então `sys.databases`,
+`sys.configurations`, `sys.endpoints`, `sys.dm_exec_connections` e `sys.dm_exec_sessions`
+funcionam de qualquer database corrente. O `msdb` contém a tabela `sysdac_instances`, usada
+pelo DacWizard do SSMS para detectar suporte a DAC.
+
+Funções T-SQL registradas no SQLite (não são interceptadas por regex): `SERVERPROPERTY`,
+`CONNECTIONPROPERTY`, `IS_SRVROLEMEMBER`, `SUSER_SNAME`, `SUSER_ID`, `ORIGINAL_LOGIN`,
+`IS_MEMBER`, `DB_ID`, `DB_NAME`, `CONVERT`, `QUOTENAME`, `FULLTEXTSERVICEPROPERTY`,
+`OBJECT_ID` e `HAS_DBACCESS`. `HAS_DBACCESS` devolve `1` para os databases de sistema,
+inclusive `msdb`.
+
+A instância se apresenta como `Standard Edition (64-bit)` / `EngineEdition = 2`.
 
 ## Tradução T-SQL → SQLite
 
@@ -160,6 +185,11 @@ O Object Explorer do SSMS pode não exibir todos os nós: consultas de catálogo
 | `BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH` | Executa o `TRY`, descarta o `CATCH` |
 | `EXEC sp_executesql N'...'` (literal ou variável) | SQL extraído e executado |
 | Batch de descoberta de servidor do SSMS (`xp_msver` + `#SVer`) | Substituído por resultset sintético |
+| Batch de versão/protocolo do SSMS | Expandido em 3 resultsets (`Tables[0..2]`) |
+| Batch de metadados do cliente (`xp_instance_regread`, `database_files`, `IsCaseSensitive`) | Substituído por resultset com paths/collation sintéticos |
+| Verificação de AlwaysOn (`xp_qv`) | Devolve `AlwaysOn = -1` (instância não AlwaysOn) |
+| `CAST(... AS sysname|UNIQUEIDENTIFIER|XML)` | Mapeado para `TEXT` |
+| Literais hex `0x...` | Convertidos em decimal |
 | `dbo.` / `[dbo].` em nomes de objetos | Removido (SQLite não tem esquemas) |
 | `SET` de sessão do ODBC (`ANSI_WARNINGS`, `TEXTSIZE`, `XACT_ABORT`, etc.) | Ignorado |
 | `WHILE`, `GOTO`, `RETURN`, `THROW`, `RAISERROR`, procedures com OUTPUT, CLR | Erro claro (`BadRequestException`) |

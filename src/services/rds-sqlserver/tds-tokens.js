@@ -39,16 +39,19 @@ const ENVCHANGE = Object.freeze({
   DATABASE: 0x01,
   LANGUAGE: 0x02,
   CHARSET: 0x03,
-  PACKET_SIZE: 0x04
+  PACKET_SIZE: 0x04,
+  COLLATION: 0x07
 });
 
 const TDS_VERSION_74 = 0x74000004;
 
 /** B_VARCHAR: 1 byte de contagem de caracteres + UTF-16LE. */
 function bVarChar(value) {
-  const text = String(value == null ? '' : value);
+  // O comprimento cabe em 1 byte: truncar apenas o contador deixaria bytes
+  // extras no fluxo e o SqlClient fecharia a conexao com erro fatal.
+  const text = String(value == null ? '' : value).slice(0, 0xFF);
   const head = Buffer.alloc(1);
-  head.writeUInt8(Math.min(text.length, 0xFF), 0);
+  head.writeUInt8(text.length, 0);
   return Buffer.concat([head, Buffer.from(text, 'utf16le')]);
 }
 
@@ -125,6 +128,15 @@ function envChangeToken(type, oldValue, newValue, options = {}) {
 /** Atalho para o ENVCHANGE de troca de database. */
 function databaseEnvChangeToken(oldDatabase, newDatabase) {
   return envChangeToken(ENVCHANGE.DATABASE, oldDatabase, newDatabase, { encoding: 'utf16le' });
+}
+
+/**
+ * ENVCHANGE de COLLATION (0x07). Sem ele o SqlClient mantem _defaultCollation
+ * nulo e estoura NullReferenceException ao serializar parametros de RPC.
+ * Tanto o valor novo quanto o antigo tem 5 bytes (info UInt32 + sortId).
+ */
+function collationEnvChangeToken(collation = COLLATION) {
+  return envChangeToken(ENVCHANGE.COLLATION, collation, collation, { encoding: 'utf8' });
 }
 
 /**
@@ -278,6 +290,7 @@ module.exports = {
   loginAckToken,
   envChangeToken,
   databaseEnvChangeToken,
+  collationEnvChangeToken,
   infoToken,
   errorToken,
   colMetadataToken,

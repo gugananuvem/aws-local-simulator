@@ -13,6 +13,22 @@ const { forwardHttp, forwardUpgrade, sendJsonError } = require('./forwarder');
 const logger = require('../utils/logger');
 
 const MAX_FORM_BODY_BYTES = 1024 * 1024;
+const CORS_METHODS = 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS';
+
+function sendPreflight(req, res) {
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': CORS_METHODS,
+    'Access-Control-Max-Age': '600',
+    'Vary': 'Access-Control-Request-Headers',
+  };
+  const requestedHeaders = req.headers['access-control-request-headers'];
+  if (requestedHeaders) {
+    headers['Access-Control-Allow-Headers'] = requestedHeaders;
+  }
+  res.writeHead(204, headers);
+  res.end();
+}
 
 /** Le o corpo ate o limite. Resolve { buffer } ou { tooLarge: true }. */
 function readBody(req, limit) {
@@ -88,6 +104,10 @@ class GatewayServer {
   }
 
   async handle(req, res) {
+    if (req.method === 'OPTIONS' && req.headers['access-control-request-method']) {
+      return sendPreflight(req, res);
+    }
+
     let form;
     let body;
     if (needsFormBody(req)) {

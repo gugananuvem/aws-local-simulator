@@ -28,6 +28,7 @@ function sendJsonError(res, status, code, message) {
   }
   const body = JSON.stringify({ __type: code, message });
   res.writeHead(status, {
+    'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
     'x-amzn-errortype': code,
@@ -72,7 +73,12 @@ function forwardHttp(req, res, { port, agent, body }) {
   });
 
   upstream.on('response', (upstreamRes) => {
-    res.writeHead(upstreamRes.statusCode, responseRawHeaders(upstreamRes.rawHeaders));
+    const headers = responseRawHeaders(upstreamRes.rawHeaders);
+    const hasAllowOrigin = headers.some((name, index) => (
+      index % 2 === 0 && String(name).toLowerCase() === 'access-control-allow-origin'
+    ));
+    if (!hasAllowOrigin) headers.push('Access-Control-Allow-Origin', '*');
+    res.writeHead(upstreamRes.statusCode, headers);
     upstreamRes.pipe(res);
   });
 

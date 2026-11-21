@@ -65,11 +65,65 @@ describe('tipos TDS', () => {
     expect(colunas[7].name).toBe('outro');
   });
 
+  test('infere tipo de colunas calculadas sem tipo declarado', () => {
+    const colunas = columnMetadata([
+      { name: 'DatabaseEngineType', type: null },
+      { name: 'DatabaseEngineEdition', type: null },
+      { name: 'ProductVersion', type: null },
+      { name: 'MicrosoftVersion', type: null },
+      { name: 'host_platform', type: null }
+    ], [{
+      DatabaseEngineType: 1,
+      DatabaseEngineEdition: 2,
+      ProductVersion: '16.00.4035.2',
+      MicrosoftVersion: 16,
+      host_platform: 'Windows'
+    }]);
+
+    expect(colunas[0]).toMatchObject({ type: TDS_TYPE.INTNTYPE, dataLength: 4 });
+    expect(colunas[1]).toMatchObject({ type: TDS_TYPE.INTNTYPE, dataLength: 4 });
+    expect(colunas[2]).toMatchObject({ type: TDS_TYPE.NVARCHARTYPE });
+    expect(colunas[3]).toMatchObject({ type: TDS_TYPE.INTNTYPE, dataLength: 4 });
+    expect(colunas[4]).toMatchObject({ type: TDS_TYPE.NVARCHARTYPE });
+  });
+
+  test('infere State como TINYINT e TINYINT/SMALLINT declarados', () => {
+    const [nome, state] = columnMetadata([
+      { name: 'Name', type: null },
+      { name: 'State', type: null }
+    ], [{ Name: 'master', State: 0 }]);
+
+    expect(nome).toMatchObject({ type: TDS_TYPE.NVARCHARTYPE });
+    expect(state).toMatchObject({ type: TDS_TYPE.INTNTYPE, dataLength: 1, kind: 'tinyint' });
+    expect(encodeValue(0, state)).toEqual(Buffer.from([0x01, 0x00]));
+
+    expect(mapDeclaredType('TINYINT')).toBe('tinyint');
+    expect(mapDeclaredType('SMALLINT')).toBe('smallint');
+    expect(columnMetadata([{ name: 'x', type: 'TINYINT' }], [{ x: 5 }])[0])
+      .toMatchObject({ type: TDS_TYPE.INTNTYPE, dataLength: 1 });
+    expect(columnMetadata([{ name: 'x', type: 'SMALLINT' }], [{ x: 5 }])[0])
+      .toMatchObject({ type: TDS_TYPE.INTNTYPE, dataLength: 2 });
+    expect(encodeValue(5, { type: TDS_TYPE.INTNTYPE, dataLength: 2 }))
+      .toEqual(Buffer.from([0x02, 0x05, 0x00]));
+  });
+
   test('reaproveita metadados já mapeados e nomeia colunas sem descritor', () => {
     const meta = { name: 'pronto', kind: 'int', type: TDS_TYPE.INTNTYPE, dataLength: 4 };
     expect(columnMetadata([meta])[0]).toBe(meta);
     expect(columnMetadata([null])[0]).toMatchObject({ name: 'Column1', type: TDS_TYPE.NVARCHARTYPE });
     expect(columnMetadata([{ name: 'x', type: 'BLOB' }], [undefined])[0].maxLength).toBe(2);
+  });
+
+  test('preserva nome vazio de expressoes sem alias e codifica o valor', () => {
+    const colunas = [{ name: '', type: null }];
+    const linhas = [{ '': 1 }];
+
+    expect(columnMetadata(colunas, linhas)[0])
+      .toMatchObject({ name: '', type: TDS_TYPE.INTNTYPE, dataLength: 4 });
+
+    const token = encodeRow(linhas, colunas);
+    expect(token[0]).toBe(0xD1);
+    expect(token.subarray(1)).toEqual(Buffer.from([0x04, 0x01, 0x00, 0x00, 0x00]));
   });
 
   test('codifica nulos com comprimento correto', () => {

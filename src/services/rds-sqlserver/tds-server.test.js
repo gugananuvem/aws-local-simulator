@@ -120,6 +120,16 @@ function montarRpcSpExecuteSql() {
   ]);
 }
 
+/** Cabeçalho RPC de 22 bytes enviado pelo Microsoft.Data.SqlClient. */
+function cabecalhoRpcSqlClient() {
+  const cabecalho = Buffer.alloc(22);
+  cabecalho.writeUInt32LE(22, 0);
+  cabecalho.writeUInt32LE(18, 4);
+  cabecalho.writeUInt16LE(2, 8);
+  cabecalho.writeUInt32LE(1, 18);
+  return cabecalho;
+}
+
 /** Monta um LOGIN7 minimo mas valido para TDS 7.4. */
 function montarLogin7({ usuario = 'sa', senha = 'Senha123!', servidor = 'cluster-local', database = '' } = {}) {
   const campos = [
@@ -387,6 +397,36 @@ describe('TdsServer', () => {
     expect(resposta.includes(Buffer.from('autenticacao SQL Server', 'utf16le'))).toBe(true);
   });
 
+  test('pacote ATTENTION recebe DONE_ATTN sem erro', async () => {
+    const socket = await conectarNoServidor();
+    await autenticar(socket);
+
+    const resposta = await coletar(socket, () => {
+      socket.write(buildPacket(TYPE.ATTENTION, Buffer.alloc(0)));
+    });
+
+    expect(parseHeader(resposta).type).toBe(TYPE.TABULAR);
+    const payload = resposta.subarray(HEADER_SIZE);
+    expect(payload.includes(TOKEN.ERROR)).toBe(false);
+    expect(payload.includes(TOKEN.DONE)).toBe(true);
+    expect(payload.readUInt16LE(payload.indexOf(TOKEN.DONE) + 1) & DONE_STATUS.ATTN).toBe(DONE_STATUS.ATTN);
+  });
+
+  test('LOGIN7 anuncia a collation padrao para o SqlClient serializar RPC', async () => {
+    const socket = await conectarNoServidor();
+    const resposta = await autenticar(socket);
+
+    const payload = resposta.subarray(HEADER_SIZE);
+    const envchangeCollation = Buffer.from([
+      TOKEN.ENVCHANGE, 0x0D, 0x00,
+      ENVCHANGE.COLLATION,
+      0x05, 0x09, 0x04, 0x00, 0x00, 0x00,
+      0x05, 0x09, 0x04, 0x00, 0x00, 0x00
+    ]);
+    expect(payload.includes(envchangeCollation)).toBe(true);
+    expect(payload.indexOf(TOKEN.LOGINACK)).toBeGreaterThan(payload.indexOf(envchangeCollation));
+  });
+
   test('LOGIN7 incompleto e falha interna nas credenciais devolvem ERROR', async () => {
     const incompleto = await conectarNoServidor();
     const fechado = new Promise((resolve) => incompleto.once('close', resolve));
@@ -433,6 +473,27 @@ describe('TdsServer', () => {
     expect(payload.includes(TOKEN.INFO)).toBe(true);
     expect(payload.includes(TOKEN.DONE)).toBe(true);
     expect(clusterManager.verifyCredentials).toHaveBeenCalledWith('sa', 'Senha123!', 'cluster-local');
+
+    // LOGINACK deve anunciar a mesma versao do catalogo (16.00.4035), senao o
+    // SqlClient 3.x do SSMS 19 monta o SMO com ServerVersion 11.00.0000.
+    const corpo = payload.subarray(payload.indexOf(TOKEN.LOGINACK) + 3);
+    const inicioVersao = 6 + corpo.readUInt8(5) * 2;
+    expect(corpo.readUInt8(inicioVersao)).toBe(16);
+    expect(corpo.readUInt8(inicioVersao + 1)).toBe(0);
+    expect(corpo.readUInt16BE(inicioVersao + 2)).toBe(4035);
+  });
+
+  test('LOGIN7 com Initial Catalog usa o database solicitado na sessao', async () => {
+    const socket = await conectarNoServidor();
+    await coletar(socket, () => {
+      socket.write(buildPacket(TYPE.LOGIN7, montarLogin7({ database: 'msdb' })));
+    });
+
+    await coletar(socket, () => {
+      socket.write(buildPacket(TYPE.SQLBATCH, Buffer.from('SELECT 1', 'utf16le')));
+    });
+
+    expect(dbEngine.execute).toHaveBeenCalledWith('msdb', 'SELECT 1', []);
   });
 
   test('LOGIN7 invalido envia ERROR e DONE e encerra a conexao', async () => {
@@ -518,6 +579,65 @@ describe('TdsServer', () => {
     expect(payload.includes(TOKEN.ERROR)).toBe(false);
     expect(payload.includes(TOKEN.COLMETADATA)).toBe(true);
     expect(sqlTraduzido).toContain("'LOCAL' AS [Server_Name]");
+  });
+
+  test('SQL Batch devolve 3 resultsets para o batch de versao e protocolo do SSMS', async () => {
+    const socket = await conectarNoServidor();
+    await autenticar(socket);
+
+    const tradutor = new SqlTranslator('sqlserver-se');
+    dbEngine.translator = tradutor;
+    const sqlExecutado = [];
+    dbEngine.execute.mockImplementation((database, sql) => {
+      sqlExecutado.push(sql);
+      const primeiraColuna = sql.match(/AS \[([^\]]+)\]/);
+      const nome = primeiraColuna ? primeiraColuna[1] : 'valor';
+      return {
+        type: 'select',
+        columns: [{ name: nome, type: null }],
+        rows: [{ [nome]: nome === 'DatabaseEngineType' ? 1 : 'x' }],
+        changes: 0
+      };
+    });
+
+    try {
+      const sql = "DECLARE @edition sysname;\r\nSET @edition = cast(SERVERPROPERTY(N'EDITION') as sysname);\r\n" +
+        "SELECT case when @edition = N'SQL Azure' then 2 else 1 end as 'DatabaseEngineType',\r\n" +
+        "SERVERPROPERTY('EngineEdition') AS DatabaseEngineEdition,\r\n" +
+        "SERVERPROPERTY('ProductVersion') AS ProductVersion,\r\n" +
+        '@@MICROSOFTVERSION AS MicrosoftVersion;\r\n' +
+        "select N'Windows' as host_platform\r\n" +
+        "if @edition = N'SQL Azure' \r\n  select 'TCP' as ConnectionProtocol\r\nelse\r\n" +
+        "  exec ('select CONVERT(nvarchar(40),CONNECTIONPROPERTY(''net_transport'')) as ConnectionProtocol')";
+      const resposta = await coletar(socket, () => {
+        socket.write(buildPacket(TYPE.SQLBATCH, Buffer.from(sql, 'utf16le')));
+      });
+
+      const payload = resposta.subarray(HEADER_SIZE);
+      expect(payload.includes(TOKEN.ERROR)).toBe(false);
+      expect(dbEngine.execute).toHaveBeenCalledTimes(3);
+      expect(sqlExecutado).toEqual([
+        expect.stringContaining('1 AS [DatabaseEngineType]'),
+        expect.stringContaining("'Windows' AS [host_platform]"),
+        expect.stringContaining("'TCP' AS [ConnectionProtocol]")
+      ]);
+      // Um COLMETADATA por resultset (o SSMS precisa das tabelas 0, 1 e 2).
+      expect(payload.filter((byte) => byte === TOKEN.COLMETADATA).length).toBe(3);
+    } finally {
+      delete dbEngine.translator;
+      dbEngine.execute.mockReset();
+      dbEngine.execute.mockImplementation((database, sql) => {
+        if (/^\s*select/i.test(sql)) {
+          return {
+            type: 'select',
+            columns: [{ name: 'valor', type: 'INTEGER' }],
+            rows: [{ valor: 1 }],
+            changes: 0
+          };
+        }
+        return { type: 'ddl', columns: [], rows: [], changes: 1 };
+      });
+    }
   });
 
   test('SQL Batch ignora o bloco All Headers enviado por sqlcmd/ODBC', async () => {
@@ -648,6 +768,28 @@ describe('TdsServer', () => {
 
     expect(resposta.subarray(HEADER_SIZE).includes(TOKEN.COLMETADATA)).toBe(true);
     expect(dbEngine.execute).toHaveBeenCalledWith('testdb', 'SELECT @p1 AS valor', [42]);
+  });
+
+  test('RPC com cabecalho do SqlClient usa ProcID 10 (sp_executesql)', async () => {
+    const socket = await conectarNoServidor();
+    await autenticar(socket);
+
+    const sql = 'SELECT @p1 AS valor';
+    const semNome = Buffer.from([0x00, 0x00]);
+    const payloadRpc = Buffer.concat([
+      cabecalhoRpcSqlClient(),
+      Buffer.from([0xFF, 0xFF, 0x0A, 0x00, 0x00, 0x00]),
+      semNome, valorNvarchar(sql),
+      semNome, valorNvarchar('@p1 INT'),
+      semNome, valorInt(42)
+    ]);
+
+    const resposta = await coletar(socket, () => {
+      socket.write(buildPacket(TYPE.RPC, payloadRpc));
+    });
+
+    expect(resposta.subarray(HEADER_SIZE).includes(TOKEN.COLMETADATA)).toBe(true);
+    expect(dbEngine.execute).toHaveBeenCalledWith('testdb', sql, [42]);
   });
 
   test('RPC desconhecido devolve ERROR explicando para usar SQL Batch', async () => {

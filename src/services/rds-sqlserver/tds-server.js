@@ -23,6 +23,7 @@ const {
   DONE_STATUS,
   loginAckToken,
   databaseEnvChangeToken,
+  collationEnvChangeToken,
   infoToken,
   errorToken,
   colMetadataToken,
@@ -30,11 +31,28 @@ const {
 } = require('./tds-tokens');
 
 const { columnMetadata, encodeRow } = require('./tds-types');
+const { VERSAO } = require('./system-catalog');
 
 const DEFAULT_PACKET_SIZE = 4096;
 const MIN_PACKET_SIZE = 512;
 const MAX_PACKET_SIZE = 32767;
 const MAX_PACKET_PAYLOAD = 0xFFFF - 8; // tamanho maximo cabeca UInt16BE menos o cabecalho
+
+/**
+ * O LOGINACK precisa anunciar a mesma versao que SERVERPROPERTY/@@VERSION.
+ * O SSMS 19 (Microsoft.Data.SqlClient 3.1.3) usa ServerVersion para escolher
+ * recursos do SMO; anunciar 11.0 enquanto o catalogo diz 16.0 deixa arvores
+ * do Object Explorer em estado inconsistente.
+ */
+function versaoLoginAck() {
+  const [major = 16, minor = 0, build = 4035] = String(VERSAO).split('.').map(Number);
+  return {
+    major: major & 0xFF,
+    minor: minor & 0xFF,
+    buildHi: (build >> 8) & 0xFF,
+    buildLow: build & 0xFF
+  };
+}
 
 /** Le um B_VARCHAR (1 byte de caracteres + UTF-16LE). */
 function readBVarChar(buffer, position) {
@@ -101,16 +119,33 @@ function readRpcValue(buffer, position) {
   return { value: null, offset: Math.min(pos + 1, buffer.length) };
 }
 
+/** Procedimentos que o SqlClient chama pelo ProcID numerico. */
+const RPC_POR_ID = Object.freeze({
+  10: 'sp_executesql',
+  11: 'sp_prepare',
+  12: 'sp_execute',
+  15: 'sp_unprepare'
+});
+
 /** Extrai nome do procedimento e parametros de uma mensagem RPC. */
 function parseRpc(payload) {
   let pos = 0;
   let procName = '';
 
-  if (payload.length >= 6 && payload.readUInt16LE(0) === 0xFFFF) {
-    pos = 6; // 2 bytes do marcador + 4 bytes do ProcID
+  // O SqlClient prefixa o RPC com um cabecalho de 22 bytes: TotalLength,
+  // HeaderLength (18) e os campos MARS (tipo, transacao e resultados abertos).
+  if (payload.length >= 22 && payload.readUInt32LE(4) === 18) {
+    pos = 4 + payload.readUInt32LE(4);
+  }
+
+  if (payload.length >= pos + 2 && payload.readUInt16LE(pos) === 0xFFFF) {
+    // 0xFFFF indica ProcID numerico (sp_executesql, sp_execute, ...).
+    const procId = payload.readUInt16LE(pos + 2);
+    procName = RPC_POR_ID[procId] || '';
+    pos += 4;
   } else {
-    const name = readUsVarChar(payload, 0);
-    procName = name.value;
+    const name = readUsVarChar(payload, pos);
+    procName = String(name.value || '');
     pos = name.offset;
   }
 
@@ -282,6 +317,16 @@ class TdsServer {
         await this._handleRpc(socket, session, message);
         break;
 
+      case TYPE.ATTENTION:
+        // O SqlClient/SMO envia ATTENTION para cancelar a leitura de certos
+        // resultsets de metadados. Responder com ERROR faz o cliente estourar
+        // NullReferenceException no TdsParser; o correto e ack com DONE_ATTN.
+        this._sendRaw(socket, session, TYPE.TABULAR, doneToken({
+          status: DONE_STATUS.ATTN,
+          rowcount: 0
+        }));
+        break;
+
       case TYPE.SSPI:
         this._sendFailure(
           socket,
@@ -369,12 +414,15 @@ class TdsServer {
     }
 
     session.cluster = cluster;
-    session.dbName = cluster.DatabaseName || 'master';
+    // O SSMS abre uma conexão separada com Initial Catalog=msdb para avaliar a
+    // policy health; ignorar esse campo faz o SqlClient falhar localmente.
+    session.dbName = String(login.database || '').trim() || cluster.DatabaseName || 'master';
     const serverName = this._serverName(session);
 
     const response = Buffer.concat([
       databaseEnvChangeToken('', session.dbName),
-      loginAckToken(serverName),
+      collationEnvChangeToken(),
+      loginAckToken(serverName, versaoLoginAck()),
       infoToken(`Conectado ao cluster local ${serverName} (TDS 7.4).`, serverName),
       doneToken({ rowcount: 0 })
     ]);
@@ -384,12 +432,24 @@ class TdsServer {
   }
 
   _splitBatches(sql) {
-    if (this.dbEngine && this.dbEngine.translator && typeof this.dbEngine.translator.splitBatches === 'function') {
-      try {
-        const batches = this.dbEngine.translator.splitBatches(sql);
-        if (Array.isArray(batches)) return batches;
-      } catch (error) {
-        this.logger.debug(`[TDS] splitBatches falhou, usando fallback: ${error.message}`);
+    if (this.dbEngine && this.dbEngine.translator) {
+      const translator = this.dbEngine.translator;
+      // O SSMS envia lotes de descoberta que devem virar varios resultsets.
+      if (typeof translator.expandirResultSets === 'function') {
+        try {
+          const expandidos = translator.expandirResultSets(sql);
+          if (Array.isArray(expandidos) && expandidos.length > 0) return expandidos;
+        } catch (error) {
+          this.logger.debug(`[TDS] expandirResultSets falhou, usando fallback: ${error.message}`);
+        }
+      }
+      if (typeof translator.splitBatches === 'function') {
+        try {
+          const batches = translator.splitBatches(sql);
+          if (Array.isArray(batches)) return batches;
+        } catch (error) {
+          this.logger.debug(`[TDS] splitBatches falhou, usando fallback: ${error.message}`);
+        }
       }
     }
     return String(sql).split(/^\s*GO\s*;?\s*$/im).map((batch) => batch.trim()).filter(Boolean);

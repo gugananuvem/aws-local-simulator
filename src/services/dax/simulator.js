@@ -5,6 +5,16 @@ const LocalStore = require("../../utils/local-store");
 const logger = require("../../utils/logger");
 const path = require("path");
 
+const DEFAULT_PARAMETER_GROUP_NAME = 'default.dax1.0';
+const DEFAULT_PARAMETER_VALUES = {
+  'record-ttl-millis': '300000',
+  'query-ttl-millis': '300000'
+};
+const DAX_TTL_PARAMETERS = {
+  'record-ttl-millis': 'Maximum time, in milliseconds, that a record remains in the cache',
+  'query-ttl-millis': 'Maximum time, in milliseconds, that a query remains in the cache'
+};
+
 class DAXSimulator {
   constructor(config) {
     this.config = config;
@@ -92,6 +102,7 @@ class DAXSimulator {
       ClusterName,
       Status: 'available',
       NodeType: params.NodeType || 'dax.r4.large',
+      ClusterDescription: params.ClusterDescription || '',
       ClusterArn: `arn:aws:dax:us-east-1:123456789012:cache/${ClusterName}`,
       TotalNodes: totalNodes,
       ActiveNodes: totalNodes,
@@ -100,6 +111,9 @@ class DAXSimulator {
       SubnetGroupName: params.SubnetGroupName || 'default',
       SecurityGroupIds: params.SecurityGroupIds || [],
       ParameterGroup: { ParameterGroupName: params.ParameterGroupName || 'default.dax1.0' },
+      NetworkType: params.NetworkType || 'ipv4',
+      SSESpecification: params.SSESpecification || { Enabled: false },
+      ClusterEndpointEncryptionType: params.ClusterEndpointEncryptionType || 'NONE',
       CreatedTime: new Date().toISOString()
     };
     this.clusters.set(ClusterName, cluster);
@@ -159,29 +173,110 @@ class DAXSimulator {
 
   createParameterGroup(params) {
     const { ParameterGroupName, ParameterGroupFamily } = params;
+    if (!ParameterGroupName || ParameterGroupName.length > 255 || !/^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*$/.test(ParameterGroupName)) {
+      throw new Error('ParameterGroupName must start with a letter and contain only letters, digits, and single hyphens');
+    }
+    if (ParameterGroupName === DEFAULT_PARAMETER_GROUP_NAME || this.parameterGroups.has(ParameterGroupName)) {
+      throw new Error(`Parameter group ${ParameterGroupName} already exists`);
+    }
     const pg = {
       ParameterGroupName,
       ParameterGroupFamily: ParameterGroupFamily || 'dax1.0',
-      Description: params.Description || ''
+      Description: params.Description || '',
+      ParameterValues: { ...DEFAULT_PARAMETER_VALUES }
     };
     this.parameterGroups.set(ParameterGroupName, pg);
     this.persistParameterGroups();
-    return { ParameterGroup: pg };
+    return { ParameterGroup: this.toParameterGroupSummary(pg) };
   }
 
   describeParameterGroups(params = {}) {
-    let groups = Array.from(this.parameterGroups.values());
+    let groups = [
+      {
+        ParameterGroupName: DEFAULT_PARAMETER_GROUP_NAME,
+        ParameterGroupFamily: 'dax1.0',
+        Description: 'Default parameter group'
+      },
+      ...Array.from(this.parameterGroups.values()).map((group) => this.toParameterGroupSummary(group))
+    ];
     if (params.ParameterGroupNames && params.ParameterGroupNames.length > 0) {
       groups = groups.filter(g => params.ParameterGroupNames.includes(g.ParameterGroupName));
-    }
-    if (groups.length === 0) {
-      groups = [{ ParameterGroupName: 'default.dax1.0', ParameterGroupFamily: 'dax1.0', Description: 'Default parameter group' }];
     }
     return { ParameterGroups: groups };
   }
 
+  toParameterGroupSummary(group) {
+    return {
+      ParameterGroupName: group.ParameterGroupName,
+      ParameterGroupFamily: group.ParameterGroupFamily,
+      Description: group.Description || ''
+    };
+  }
+
+  describeParameters(params = {}) {
+    const parameterGroupName = params.ParameterGroupName || DEFAULT_PARAMETER_GROUP_NAME;
+    const group = parameterGroupName === DEFAULT_PARAMETER_GROUP_NAME
+      ? null
+      : this.parameterGroups.get(parameterGroupName);
+    if (parameterGroupName !== DEFAULT_PARAMETER_GROUP_NAME && !group) {
+      throw new Error(`Parameter group ${parameterGroupName} not found`);
+    }
+
+    const values = { ...DEFAULT_PARAMETER_VALUES, ...(group?.ParameterValues || {}) };
+    return {
+      Parameters: Object.entries(DAX_TTL_PARAMETERS).map(([ParameterName, Description]) => ({
+        ParameterName,
+        ParameterType: 'DURATION',
+        ParameterValue: values[ParameterName],
+        Description,
+        IsModifiable: true,
+        AllowedValues: '0-2147483647'
+      }))
+    };
+  }
+
+  updateParameterGroup(params) {
+    const { ParameterGroupName, ParameterNameValues = [] } = params;
+    if (!ParameterGroupName || ParameterGroupName === DEFAULT_PARAMETER_GROUP_NAME) {
+      throw new Error('The default parameter group cannot be modified');
+    }
+
+    const group = this.parameterGroups.get(ParameterGroupName);
+    if (!group) {
+      throw new Error(`Parameter group ${ParameterGroupName} not found`);
+    }
+    if (!Array.isArray(ParameterNameValues) || ParameterNameValues.length === 0) {
+      throw new Error('ParameterNameValues must contain at least one parameter');
+    }
+
+    const values = { ...DEFAULT_PARAMETER_VALUES, ...(group.ParameterValues || {}) };
+    for (const parameter of ParameterNameValues) {
+      const { ParameterName, ParameterValue } = parameter;
+      if (!Object.prototype.hasOwnProperty.call(DAX_TTL_PARAMETERS, ParameterName)) {
+        throw new Error(`Unsupported DAX parameter: ${ParameterName}`);
+      }
+      const value = String(ParameterValue);
+      const numericValue = Number(value);
+      if (!/^\d+$/.test(value) || !Number.isSafeInteger(numericValue) || numericValue > 2147483647) {
+        throw new Error(`${ParameterName} must be an integer between 0 and 2147483647`);
+      }
+      values[ParameterName] = value;
+    }
+
+    group.ParameterValues = values;
+    this.parameterGroups.set(ParameterGroupName, group);
+    this.persistParameterGroups();
+    return {
+      ParameterGroupName,
+      Parameters: ParameterNameValues.map(({ ParameterName }) => ({
+        ParameterName,
+        ParameterValue: values[ParameterName]
+      }))
+    };
+  }
+
   modifyParameterGroup(params) {
-    return { ParameterGroupName: params.ParameterGroupName };
+    return this.updateParameterGroup(params);
   }
 
   deleteParameterGroup(params) {
@@ -235,6 +330,10 @@ class DAXSimulator {
         return this.createParameterGroup(params);
       case 'DescribeParameterGroups':
         return this.describeParameterGroups(params);
+      case 'DescribeParameters':
+        return this.describeParameters(params);
+      case 'UpdateParameterGroup':
+        return this.updateParameterGroup(params);
       case 'ModifyParameterGroup':
         return this.modifyParameterGroup(params);
       case 'DeleteParameterGroup':

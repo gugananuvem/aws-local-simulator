@@ -91,7 +91,7 @@ class DynamoDBServer {
     
     this.app.get('/__admin/tables/:tableName', (req, res) => {
       const table = this.simulator.describeTable(req.params.tableName);
-      res.json(table);
+      res.json({ ...table, Tags: this.simulator.getTableTags(req.params.tableName) });
     });
     
     this.app.get('/__admin/tables/:tableName/items', (req, res) => {

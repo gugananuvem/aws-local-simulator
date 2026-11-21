@@ -16,6 +16,7 @@ const HEADER_SIZE = 8;
 const TYPE = Object.freeze({
   SQLBATCH: 0x01,
   RPC: 0x03,
+  ATTENTION: 0x06,
   TABULAR: 0x04,
   LOGIN7: 0x10,
   SSPI: 0x11,

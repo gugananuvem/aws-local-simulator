@@ -43,7 +43,7 @@ const SHORT_LENGTH_TYPES = new Set([
 /**
  * Mapeia o tipo declarado pelo SQLite para uma familia simplificada.
  * @param {string} declaredType
- * @returns {'int'|'bit'|'float'|'datetime'|'binary'|'string'}
+ * @returns {'int'|'tinyint'|'smallint'|'bit'|'float'|'datetime'|'binary'|'string'}
  */
 function mapDeclaredType(declaredType) {
   const type = String(declaredType || '').toUpperCase();
@@ -52,7 +52,9 @@ function mapDeclaredType(declaredType) {
   if (/BLOB|BINARY|VARBINARY|IMAGE/.test(type)) return 'binary';
   if (/^(DATE|DATETIME|TIMESTAMP|SMALLDATETIME)/.test(type)) return 'datetime';
   if (/REAL|FLOAT|DOUBLE|DECIMAL|NUMERIC|MONEY/.test(type)) return 'float';
-  if (/INT|TINYINT|SMALLINT|BIGINT/.test(type)) return 'int';
+  if (/TINYINT/.test(type)) return 'tinyint';
+  if (/SMALLINT/.test(type)) return 'smallint';
+  if (/INT/.test(type)) return 'int';
   return 'string';
 }
 
@@ -69,10 +71,14 @@ function columnMetadata(columns = [], rows = []) {
       return column;
     }
 
-    const name = String((column && column.name) || `Column${index + 1}`);
+    // Nome vazio e valido em TDS: expressoes sem alias do T-SQL chegam assim.
+    // Substitui-lo por ColumnN faz o cliente ler a coluna certa, mas o encodeRow
+    // nao encontra o valor (a chave da linha e '') e envia NULL no fio.
+    const name = column && typeof column.name === 'string'
+      ? column.name
+      : `Column${index + 1}`;
     const declared = (column && column.type) || '';
     const typeName = String(declared).toUpperCase();
-    const kind = mapDeclaredType(declared);
     const nullable = !(column && column.notNull);
 
     const values = (rows || []).map((row) => {
@@ -80,7 +86,42 @@ function columnMetadata(columns = [], rows = []) {
       return Array.isArray(row) ? row[index] : row[name];
     }).filter((value) => value !== null && value !== undefined);
 
+    // Expressões calculadas (literais, @@MICROSOFTVERSION, shims do SSMS) não
+    // têm tipo declarado no SQLite. Infere pela família dos valores para que
+    // números cheguem ao cliente como INTN/FLTN e não como NVARCHAR — sem isso
+    // o SSMS falha com "Specified cast is not valid" ao ler metadados de versão.
+    let kind = mapDeclaredType(declared);
+    if (!declared && values.length > 0) {
+      if (values.every((value) => typeof value === 'bigint' ||
+        (typeof value === 'number' && Number.isInteger(value)))) {
+        kind = 'int';
+      } else if (values.every((value) => typeof value === 'number')) {
+        kind = 'float';
+      }
+    }
+
+    // sys.databases.state é TINYINT no SQL Server. O SMO lê essa coluna com
+    // SqlDataReader.GetByte(); se chegar como INTN de 4 bytes, o Explorer falha
+    // com "Specified cast is not valid" ao montar a árvore de databases.
+    if (
+      !declared && /^state$/i.test(name) && values.length > 0 &&
+      values.every((value) => {
+        const numero = Number(value);
+        return Number.isInteger(numero) && numero >= 0 && numero <= 255;
+      })
+    ) {
+      kind = 'tinyint';
+    }
+
     const base = { name, kind, nullable, declaredType: declared };
+
+    if (kind === 'tinyint') {
+      return { ...base, type: TDS_TYPE.INTNTYPE, dataLength: 1 };
+    }
+
+    if (kind === 'smallint') {
+      return { ...base, type: TDS_TYPE.INTNTYPE, dataLength: 2 };
+    }
 
     if (kind === 'int') {
       const large = values.some((value) => {
@@ -145,7 +186,7 @@ function encodeValue(value, meta) {
   }
 
   if (type === TDS_TYPE.INTNTYPE) {
-    const length = meta.dataLength === 8 ? 8 : 4;
+    const length = meta.dataLength === 8 ? 8 : meta.dataLength === 2 ? 2 : meta.dataLength === 1 ? 1 : 4;
     const buffer = Buffer.allocUnsafe(1 + length);
     buffer.writeUInt8(length, 0);
     const number = typeof value === 'bigint' ? Number(value) : Number(value);
@@ -157,6 +198,10 @@ function encodeValue(value, meta) {
         big = 0n;
       }
       buffer.writeBigInt64LE(big, 1);
+    } else if (length === 2) {
+      buffer.writeInt16LE(Math.trunc(number) & 0xFFFF, 1);
+    } else if (length === 1) {
+      buffer.writeUInt8(Math.trunc(number) & 0xFF, 1);
     } else {
       buffer.writeInt32LE(Math.trunc(number) | 0, 1);
     }
@@ -268,7 +313,7 @@ function encodeRow(rows = [], columns) {
     const values = cols.map((column, index) => {
       if (Array.isArray(row)) return row[index];
       const name = column && column.name;
-      return row && name ? row[name] : undefined;
+      return row && name != null ? row[name] : undefined;
     });
     return rowToken(values, metadata);
   }));

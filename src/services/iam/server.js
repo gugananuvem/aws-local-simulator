@@ -137,6 +137,71 @@ class IAMServer {
       }
     });
 
+    this.app.post('/__admin/roles/create-dax-role', async (req, res) => {
+      const { RoleName, PolicyName, AccessType = 'read-write', TableNames = [], CreatePolicy = true } = req.body || {};
+      const tableNames = Array.isArray(TableNames) ? TableNames : [];
+      let createdRole = false;
+      let policyArn;
+
+      try {
+        const roleResult = await this.simulator.createRole({
+          RoleName,
+          AssumeRolePolicyDocument: {
+            Version: '2012-10-17',
+            Statement: [{
+              Effect: 'Allow',
+              Principal: { Service: 'dax.amazonaws.com' },
+              Action: 'sts:AssumeRole',
+            }],
+          },
+        });
+        createdRole = true;
+
+        let policyResult;
+        if (CreatePolicy) {
+          const actions = [
+            'dynamodb:BatchGetItem',
+            'dynamodb:DescribeTable',
+            'dynamodb:GetItem',
+            'dynamodb:Query',
+            'dynamodb:Scan',
+          ];
+          if (AccessType !== 'read-only') {
+            actions.push(
+              'dynamodb:BatchWriteItem',
+              'dynamodb:DeleteItem',
+              'dynamodb:PutItem',
+              'dynamodb:UpdateItem',
+            );
+          }
+
+          const resources = tableNames.length
+            ? tableNames.map((name) => `arn:aws:dynamodb:*:123456789012:table/${name}`)
+            : ['arn:aws:dynamodb:*:123456789012:table/*'];
+          policyResult = await this.simulator.createPolicy({
+            PolicyName: PolicyName || `${RoleName}Policy`,
+            PolicyDocument: {
+              Version: '2012-10-17',
+              Statement: [{ Effect: 'Allow', Action: actions, Resource: resources }],
+            },
+          });
+          policyArn = policyResult.Policy.Arn;
+          await this.simulator.attachRolePolicy({ RoleName, PolicyArn: policyArn });
+        }
+
+        res.json({ Role: roleResult.Role, Policy: policyResult?.Policy });
+      } catch (err) {
+        if (policyArn) {
+          await this.simulator.detachRolePolicy({ RoleName, PolicyArn: policyArn }).catch(() => {});
+          await this.simulator.deletePolicy({ PolicyArn: policyArn }).catch(() => {});
+        }
+        if (createdRole) {
+          await this.simulator.deleteRole({ RoleName }).catch(() => {});
+        }
+        res.status(err.statusCode || 500).json({ message: err.message });
+      }
+    });
+
     this.app.delete('/__admin/roles/:name', async (req, res) => {
       try {
         await this.simulator.deleteRole({ RoleName: req.params.name });

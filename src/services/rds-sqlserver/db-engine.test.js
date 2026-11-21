@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { DbEngine } = require('./db-engine');
+const { SqlTranslator } = require('./sql-translator');
 
 describe('DbEngine (RDS SQL Server)', () => {
   let dataDir;
@@ -92,6 +93,25 @@ describe('DbEngine (RDS SQL Server)', () => {
       comTradutor.executeInTransaction(transacao, sqlBruto);
       comTradutor.commit(transacao);
       expect(chamadas).toEqual([sqlBruto, sqlBruto]);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('converte parâmetros nomeados do RPC em placeholders ligados', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+
+    try {
+      const resultado = comTradutor.execute('parametros', 'SELECT @p AS valor', ['master']);
+      expect(resultado.type).toBe('select');
+      expect(resultado.rows).toEqual([{ valor: 'master' }]);
+
+      const doSmo = comTradutor.execute(
+        'parametros',
+        'SELECT @_msparam_0 AS valor',
+        ['msdb']
+      );
+      expect(doSmo.rows).toEqual([{ valor: 'msdb' }]);
     } finally {
       comTradutor.close();
     }

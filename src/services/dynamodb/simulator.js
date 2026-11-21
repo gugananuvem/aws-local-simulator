@@ -26,6 +26,16 @@ function epochCreationDateTime(response) {
   return response;
 }
 
+function tableNameFromArn(resourceArn) {
+  const match = typeof resourceArn === "string" && resourceArn.match(/:table\/([^/]+)/);
+  if (!match) {
+    const error = new Error("ResourceArn must identify a DynamoDB table");
+    error.code = "ValidationException";
+    throw error;
+  }
+  return match[1];
+}
+
 class DynamoDBSimulator {
   constructor(config) {
     this.config = config;
@@ -145,6 +155,12 @@ class DynamoDBSimulator {
             existing.globalSecondaryIndexes = globalSecondaryIndexes;
           }
 
+          if (Array.isArray(tableDef.Tags)) {
+            existing.tags = tableDef.Tags.map(({ Key, Value }) => ({ Key, Value: String(Value ?? "") }));
+          } else {
+            existing.tags ??= [];
+          }
+
           this.tables.set(TableName, existing);
         } else {
           this.createTable(tableDef);
@@ -155,7 +171,7 @@ class DynamoDBSimulator {
   }
 
   createTable(params) {
-    const { TableName, KeySchema, AttributeDefinitions, ProvisionedThroughput, GlobalSecondaryIndexes, VectorIndexes, StreamSpecification } = params;
+    const { TableName, KeySchema, AttributeDefinitions, ProvisionedThroughput, GlobalSecondaryIndexes, VectorIndexes, StreamSpecification, Tags = [] } = params;
 
     if (this.tables.has(TableName)) {
       logger.warn(`Tabela ${TableName} já existe`);
@@ -188,6 +204,7 @@ class DynamoDBSimulator {
       attributeTypes,
       globalSecondaryIndexes,
       vectorIndexes,
+      tags: Array.isArray(Tags) ? Tags.map(({ Key, Value }) => ({ Key, Value: String(Value ?? "") })) : [],
       createdAt: new Date().toISOString(),
       itemCount: 0,
       sizeBytes: 0,
@@ -260,6 +277,9 @@ class DynamoDBSimulator {
         case "SearchVectors": return vectorSearch.searchVectors(this, params);
         case "DescribeTable": return epochCreationDateTime(this.describeTable(params.TableName));
         case "ListTables": return this.listTables(params);
+        case "TagResource": return this.tagResource(params);
+        case "UntagResource": return this.untagResource(params);
+        case "ListTagsOfResource": return this.listTagsOfResource(params);
         case "DeleteTable": return this.deleteTable(params);
         case "PutItem": return this._withTableLock(params.TableName, () => this.putItem(params));
         case "GetItem": return this.getItem(params);
@@ -291,7 +311,9 @@ class DynamoDBSimulator {
       }
     })();
 
-    const tableName = params.TableName;
+    const tableName = params.TableName || (
+      params.ResourceArn ? tableNameFromArn(params.ResourceArn) : null
+    );
     if (tableName) {
       this.audit.record({
         eventName: action,
@@ -352,6 +374,16 @@ class DynamoDBSimulator {
     };
   }
 
+  getTableTags(tableName) {
+    const table = this.tables.get(tableName);
+    if (!table) {
+      const error = new Error(`Table ${tableName} does not exist`);
+      error.code = "ResourceNotFoundException";
+      throw error;
+    }
+    return table.tags ?? [];
+  }
+
   listTables(params = {}) {
     const tableNames = Array.from(this.tables.keys());
     const { Limit = 100, ExclusiveStartTableName } = params;
@@ -367,6 +399,66 @@ class DynamoDBSimulator {
     return {
       TableNames: result,
       LastEvaluatedTableName: result.length === Limit ? result[result.length - 1] : undefined,
+    };
+  }
+
+  tagResource({ ResourceArn, Tags = [] } = {}) {
+    const tableName = tableNameFromArn(ResourceArn);
+    const table = this.tables.get(tableName);
+    if (!table) {
+      const error = new Error(`Table ${tableName} does not exist`);
+      error.code = "ResourceNotFoundException";
+      throw error;
+    }
+    if (!Array.isArray(Tags)) {
+      const error = new Error("Tags must be a list");
+      error.code = "ValidationException";
+      throw error;
+    }
+
+    const tags = new Map((table.tags ?? []).map(({ Key, Value }) => [Key, Value]));
+    for (const tag of Tags) {
+      if (!tag?.Key) {
+        const error = new Error("Each tag must include a Key");
+        error.code = "ValidationException";
+        throw error;
+      }
+      tags.set(tag.Key, String(tag.Value ?? ""));
+    }
+    table.tags = Array.from(tags, ([Key, Value]) => ({ Key, Value }));
+    this.persistTables();
+    return {};
+  }
+
+  untagResource({ ResourceArn, TagKeys = [] } = {}) {
+    const tableName = tableNameFromArn(ResourceArn);
+    const table = this.tables.get(tableName);
+    if (!table) {
+      const error = new Error(`Table ${tableName} does not exist`);
+      error.code = "ResourceNotFoundException";
+      throw error;
+    }
+    const keys = new Set(TagKeys);
+    table.tags = (table.tags ?? []).filter(({ Key }) => !keys.has(Key));
+    this.persistTables();
+    return {};
+  }
+
+  listTagsOfResource({ ResourceArn, NextToken, Limit = 50 } = {}) {
+    const tableName = tableNameFromArn(ResourceArn);
+    const table = this.tables.get(tableName);
+    if (!table) {
+      const error = new Error(`Table ${tableName} does not exist`);
+      error.code = "ResourceNotFoundException";
+      throw error;
+    }
+
+    const offset = Number(NextToken) || 0;
+    const tags = table.tags ?? [];
+    const page = tags.slice(offset, offset + Limit);
+    return {
+      Tags: page,
+      ...(offset + page.length < tags.length ? { NextToken: String(offset + page.length) } : {}),
     };
   }
 

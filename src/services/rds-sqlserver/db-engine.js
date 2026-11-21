@@ -17,6 +17,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const logger = require('../../utils/logger');
+const catalogoSistema = require('./system-catalog');
 
 class DbEngine {
   /**
@@ -59,6 +60,16 @@ class DbEngine {
     // Otimizações aplicadas em toda conexão (inclusive ao reabrir um arquivo existente).
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
+
+    // Todo database recebe o catálogo do SQL Server: tabelas sys.* e funções
+    // como SERVERPROPERTY, anexadas a partir do database master.
+    catalogoSistema.instalar(db, {
+      dataDir: this.dataDir,
+      dbName,
+      engine: this.translator && this.translator.engine,
+      listarDatabases: () => this.listDatabases(),
+      usuario: 'admin'
+    });
 
     this.databases.set(dbName, db);
     logger.debug(`[RDS SQL Server DbEngine] Database '${dbName}' aberto/criado em ${dbPath}`);
@@ -136,7 +147,8 @@ class DbEngine {
   }
 
   /**
-   * Lista os databases de usuário existentes (nunca inclui metadata.db).
+   * Lista os databases de usuário existentes (nunca inclui metadata.db nem os
+   * databases de sistema, que aparecem apenas em sys.databases).
    *
    * @returns {string[]} Nomes sem a extensão .db
    */
@@ -146,7 +158,11 @@ class DbEngine {
     }
 
     return fs.readdirSync(this.dataDir)
-      .filter(arquivo => arquivo.endsWith('.db') && arquivo.slice(0, -3).toLowerCase() !== 'metadata')
+      .filter(arquivo => {
+        if (!arquivo.endsWith('.db')) return false;
+        const nome = arquivo.slice(0, -3).toLowerCase();
+        return nome !== 'metadata' && !catalogoSistema.SISTEMA.includes(nome);
+      })
       .map(arquivo => arquivo.slice(0, -3))
       .sort();
   }
@@ -446,13 +462,15 @@ class DbEngine {
    * @private
    */
   _executar(db, sqlBruto, params = []) {
-    const sqlTraduzido = this._traduzir(sqlBruto);
+    const parametros = Array.isArray(params) ? params : params == null ? [] : [params];
+    let sqlTraduzido = this._traduzir(sqlBruto);
+    if (parametros.length && this.translator && typeof this.translator.substituirParametros === 'function') {
+      sqlTraduzido = this.translator.substituirParametros(sqlTraduzido, parametros.length);
+    }
     const instrucoes = this._dividirEmInstrucoes(sqlTraduzido);
     if (instrucoes.length === 0) {
       return this._resultadoVazio('ddl');
     }
-
-    const parametros = Array.isArray(params) ? params : params == null ? [] : [params];
     const resultados = [];
 
     for (const instrucao of instrucoes) {
@@ -461,12 +479,71 @@ class DbEngine {
     }
 
     const primeiroSelect = resultados.find(resultado => resultado.type === 'select');
-    if (primeiroSelect) return primeiroSelect;
+    if (primeiroSelect) {
+      this._aplicarTiposShim(sqlBruto, primeiroSelect);
+      return primeiroSelect;
+    }
 
     for (let i = resultados.length - 1; i >= 0; i--) {
       if (resultados[i].type === 'dml') return resultados[i];
     }
     return resultados[resultados.length - 1];
+  }
+
+  /**
+   * Aplica os tipos TDS declarados pelos shims do SSMS/SMO nas colunas do
+   * resultado. O SQLite não preserva o tipo de expressões calculadas, então
+   * BIT/TINYINT precisam ser informados explicitamente para o cliente não
+   * receber INT onde esperava Boolean/Byte.
+   * @private
+   */
+  _aplicarTiposShim(sqlBruto, resultado) {
+    if (!resultado || resultado.type !== 'select' || !Array.isArray(resultado.columns)) return;
+    if (!this.translator || typeof this.translator.columnTypesFor !== 'function') return;
+
+    const tipos = this.translator.columnTypesFor(sqlBruto);
+    if (!tipos) return;
+
+    resultado.columns = resultado.columns.map((coluna) => {
+      const nome = coluna && coluna.name;
+      const tipo = nome && tipos[nome];
+      return tipo ? { ...coluna, type: tipo } : coluna;
+    });
+  }
+
+  /**
+   * O SQLite usa a propria expressao como nome de coluna quando o SELECT nao
+   * tem alias; o SQL Server devolve nome vazio. Alem de semanticamente correto,
+   * expressoes longas estouram o B_VARCHAR de 1 byte do TDS e fecham a conexao
+   * do Microsoft.Data.SqlClient. Linhas afetadas viram arrays posicionais para
+   * nao colidir quando ha mais de uma coluna sem alias.
+   * @private
+   */
+  _normalizarColunasSemAlias(sql, columns, rows) {
+    const originais = columns || [];
+    const nomes = originais.map((coluna) => String((coluna && coluna.name) || ''));
+    const sqlMaiusculo = String(sql || '').toUpperCase();
+    const semAlias = nomes.map((nome) => {
+      if (!nome || !/[\s(]/.test(nome)) return false;
+      const alvo = nome.toUpperCase();
+      return !(
+        sqlMaiusculo.includes(`[${alvo}]`) ||
+        sqlMaiusculo.includes(`"${alvo}"`) ||
+        sqlMaiusculo.includes(`'${alvo}'`)
+      );
+    });
+
+    if (!semAlias.some(Boolean)) return { columns: originais, rows };
+
+    return {
+      columns: originais.map((coluna, indice) => (
+        semAlias[indice] ? { ...coluna, name: '' } : coluna
+      )),
+      rows: (rows || []).map((linha) => {
+        if (Array.isArray(linha)) return linha;
+        return nomes.map((nome) => (linha && nome ? linha[nome] : undefined));
+      })
+    };
   }
 
   /** @private */
@@ -476,8 +553,9 @@ class DbEngine {
     if (tipo === 'select') {
       const stmt = db.prepare(sql);
       // columns() precisa ser chamado antes de all() para preservar os metadados.
-      const columns = stmt.columns();
-      const rows = stmt.all(...params);
+      const brutos = stmt.columns();
+      const resultados = stmt.all(...params);
+      const { columns, rows } = this._normalizarColunasSemAlias(sql, brutos, resultados);
       return { type: 'select', rows, columns, changes: 0, lastInsertRowid: 0 };
     }
 
