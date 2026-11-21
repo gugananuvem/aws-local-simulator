@@ -1259,6 +1259,23 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       }));
     });
 
+    test('informa os tipos TDS de foreign_keys no script da tabela', () => {
+      expect(translator.columnTypesFor(
+        'SELECT cstr.name AS [Name], cstr.delete_referential_action AS [DeleteAction], ' +
+        'cstr.update_referential_action AS [UpdateAction], ~cstr.is_not_trusted AS [IsChecked], ' +
+        '~cstr.is_disabled AS [IsEnabled], cstr.is_not_for_replication AS [NotForReplication] ' +
+        'FROM sys.tables AS tbl INNER JOIN sys.foreign_keys AS cstr ' +
+        'ON cstr.parent_object_id = tbl.object_id'
+      )).toEqual(expect.objectContaining({
+        DeleteAction: 'TINYINT',
+        UpdateAction: 'TINYINT',
+        IsChecked: 'BIT',
+        IsEnabled: 'BIT',
+        NotForReplication: 'BIT',
+        IsSystemNamed: 'BIT'
+      }));
+    });
+
     test('informa BIT e DATETIME nas colunas da lista de procedures e funcoes', () => {
       const sql =
         'SELECT sp.name AS [Name], ' +

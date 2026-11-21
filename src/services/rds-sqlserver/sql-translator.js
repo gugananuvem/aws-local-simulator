@@ -908,7 +908,7 @@ class SqlTranslator {
       'types', 'database_principals',
       'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
       'default_constraints', 'check_constraints', 'index_columns', 'computed_columns',
-      'identity_columns', 'foreign_key_columns', 'column_encryption_keys',
+      'identity_columns', 'foreign_keys', 'foreign_key_columns', 'column_encryption_keys',
       'xml_schema_collections', 'sensitivity_classifications',
       'change_tracking_tables', 'filetables', 'periods',
       'remote_data_archive_tables', 'external_tables',
@@ -1380,15 +1380,17 @@ class SqlTranslator {
       };
     }
 
-    // O SMO le as colunas booleanas de check_constraints com GetBoolean; sem
+    // O SMO le as colunas booleanas de check/foreign_keys com GetBoolean; sem
     // os tipos TDS explicitos o SQLite devolve INTN e o script da tabela falha.
-    if (/\b(?:sys|main)\.check_constraints\b/i.test(sql)) {
+    if (/\b(?:sys|main)\.(?:check_constraints|foreign_keys)\b/i.test(sql)) {
       return {
         NotForReplication: 'BIT',
         IsChecked: 'BIT',
         IsEnabled: 'BIT',
         IsSystemNamed: 'BIT',
-        IsFileTableDefined: 'BIT'
+        IsFileTableDefined: 'BIT',
+        DeleteAction: 'TINYINT',
+        UpdateAction: 'TINYINT'
       };
     }
 

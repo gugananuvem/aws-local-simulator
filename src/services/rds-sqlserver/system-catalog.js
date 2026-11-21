@@ -737,6 +737,31 @@ const DDL_DATABASE = `
     PRIMARY KEY (object_id, column_id)
   );
 
+  CREATE TABLE IF NOT EXISTS foreign_keys (
+    name TEXT NOT NULL DEFAULT '',
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    principal_id INTEGER DEFAULT 1,
+    schema_id INTEGER NOT NULL DEFAULT 1,
+    parent_object_id INTEGER NOT NULL,
+    type CHAR(2) NOT NULL DEFAULT 'F',
+    type_desc TEXT NOT NULL DEFAULT 'FOREIGN_KEY_CONSTRAINT',
+    create_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    modify_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_schema_published BIT NOT NULL DEFAULT 0,
+    referenced_object_id INTEGER NOT NULL,
+    key_index_id INTEGER NOT NULL DEFAULT 0,
+    is_disabled BIT NOT NULL DEFAULT 0,
+    is_not_for_replication BIT NOT NULL DEFAULT 0,
+    is_not_trusted BIT NOT NULL DEFAULT 0,
+    is_system_named BIT NOT NULL DEFAULT 1,
+    delete_referential_action TINYINT NOT NULL DEFAULT 0,
+    delete_referential_action_desc TEXT NOT NULL DEFAULT 'NO_ACTION',
+    update_referential_action TINYINT NOT NULL DEFAULT 0,
+    update_referential_action_desc TEXT NOT NULL DEFAULT 'NO_ACTION'
+  );
+
   CREATE TABLE IF NOT EXISTS foreign_key_columns (
     parent_object_id INTEGER NOT NULL,
     parent_column_id INTEGER NOT NULL
@@ -964,7 +989,7 @@ const OBJETOS_DO_CATALOGO = new Set([
   'filegroups', 'database_files', 'all_columns', 'columns',
   'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
   'default_constraints', 'check_constraints', 'index_columns', 'computed_columns', 'identity_columns',
-  'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
+  'foreign_keys', 'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
   'external_tables', 'external_data_sources', 'external_file_formats', 'partitions',
@@ -1048,7 +1073,13 @@ const VIEWS_DO_SISTEMA = Object.freeze({
   default_constraints: [['parent_object_id', 'INT', 4], ['definition', 'NVARCHAR', 4000]],
   extended_properties: [['class', 'TINYINT', 1], ['major_id', 'INT', 4], ['minor_id', 'INT', 4], ['value', 'SQL_VARIANT', 8000]],
   filegroups: [['data_space_id', 'INT', 4], ['is_default', 'BIT', 1]],
-  foreign_keys: [['parent_object_id', 'INT', 4], ['referenced_object_id', 'INT', 4]],
+  foreign_keys: [
+    ['parent_object_id', 'INT', 4], ['referenced_object_id', 'INT', 4],
+    ['object_id', 'INT', 4], ['key_index_id', 'INT', 4],
+    ['is_disabled', 'BIT', 1], ['is_not_for_replication', 'BIT', 1],
+    ['is_not_trusted', 'BIT', 1], ['is_system_named', 'BIT', 1],
+    ['delete_referential_action', 'TINYINT', 1], ['update_referential_action', 'TINYINT', 1]
+  ],
   functions: [['is_inlineable', 'BIT', 1]],
   identity_columns: [['column_id', 'INT', 4], ['seed_value', 'SQL_VARIANT', 8000]],
   indexes: [['index_id', 'INT', 4], ['type_desc', 'NVARCHAR', 60], ['is_primary_key', 'BIT', 1]],
@@ -1603,7 +1634,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
     'objects', 'tables', 'all_views', 'synonyms', 'indexes', 'all_columns',
     'sql_modules', 'system_sql_modules', 'extended_properties',
     'default_constraints', 'check_constraints', 'index_columns', 'computed_columns', 'identity_columns',
-    'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
+    'foreign_keys', 'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
     'sensitivity_classifications', 'change_tracking_tables', 'filetables',
     'periods', 'remote_data_archive_tables',
     'external_tables', 'external_data_sources', 'external_file_formats', 'partitions',
