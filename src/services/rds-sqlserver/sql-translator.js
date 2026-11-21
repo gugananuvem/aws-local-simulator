@@ -666,7 +666,21 @@ class SqlTranslator {
    * @private
    */
   _removerEsquema(sql) {
-    let resultado = this._substituirTodos(sql, '\\bmaster\\s*\\.\\s*sys\\s*\\.\\s*', () => 'sys.');
+    // Nomes de tres partes apontando para o database atual (por exemplo,
+    // Ultrapoints2.dbo.TB000) nao tem significado no SQLite: o database aberto
+    // ja e o "main". Remove-se o qualificador do database, mas preservando os
+    // databases de sistema anexados (master, msdb, tempdb, model) e o proprio
+    // dbo, que tem tratamento proprio logo abaixo.
+    const qualificadorDatabase = [
+      '(?:',
+      '\\[(?!master\\]|msdb\\]|tempdb\\]|model\\]|sys\\]|dbo\\])[^\\]]+\\]',
+      '|"(?!master"|msdb"|tempdb"|model"|sys"|dbo")[^"]+"',
+      '|\\b(?!master\\b|msdb\\b|tempdb\\b|model\\b|sys\\b|dbo\\b)[A-Za-z_][\\w$#@]*',
+      ')',
+      '\\s*\\.\\s*(?:\\[dbo\\]|"dbo"|dbo)\\s*\\.\\s*'
+    ].join('');
+    let resultado = this._substituirTodos(sql, qualificadorDatabase, () => '', true);
+    resultado = this._substituirTodos(resultado, '\\bmaster\\s*\\.\\s*sys\\s*\\.\\s*', () => 'sys.');
     resultado = this._substituirTodos(resultado, '\\bdbo\\s*\\.\\s*', () => '');
 
     const tokens = this._mascarar(resultado).tokens;

@@ -355,6 +355,13 @@ describe('DbEngine (RDS SQL Server)', () => {
       const linhas = comTradutor.execute('principal',
         'SELECT Id, IdUsuario, Acao FROM TB000').rows;
       expect(linhas).toEqual([{ Id: 1, IdUsuario: 'admin', Acao: 'teste' }]);
+
+      for (const sql of [
+        'SELECT Id FROM principal.dbo.TB000',
+        'SELECT Id FROM [principal].[dbo].[TB000]'
+      ]) {
+        expect(comTradutor.execute('principal', sql).rows).toEqual([{ Id: 1 }]);
+      }
     } finally {
       comTradutor.close();
     }

@@ -1060,6 +1060,22 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       ).toBe('SELECT * FROM main.all_objects LIMIT 1000');
     });
 
+    test('remove o qualificador de database em nomes de tres partes', () => {
+      expect(translator.translate('SELECT * FROM Ultrapoints2.dbo.TB000'))
+        .toBe('SELECT * FROM TB000');
+      expect(translator.translate('SELECT * FROM [Ultrapoints2].[dbo].[TB000]'))
+        .toBe('SELECT * FROM [TB000]');
+      expect(translator.translate('SELECT * FROM [Ultrapoints2].dbo.[TB000] AS t'))
+        .toBe('SELECT * FROM [TB000] AS t');
+    });
+
+    test('preserva databases de sistema qualificados', () => {
+      expect(translator.translate('SELECT * FROM master.dbo.sysdatabases'))
+        .toBe('SELECT * FROM master.sysdatabases');
+      expect(translator.translate('SELECT * FROM msdb.dbo.syspolicy_configuration'))
+        .toBe('SELECT * FROM msdb.syspolicy_configuration');
+    });
+
     test('traduz sys.system_views e sys.all_objects para o catalogo local', () => {
       expect(translator.translate('SELECT name FROM sys.system_views')).toContain('FROM main.system_views');
       expect(translator.translate('SELECT name FROM sys.all_objects')).toContain('FROM main.all_objects');
