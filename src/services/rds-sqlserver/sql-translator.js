@@ -1321,6 +1321,51 @@ class SqlTranslator {
       return { IsXTPSupported: 'BIT' };
     }
 
+    // O SMO le os metadados de indices com tipos explicitos (BIT/TINYINT/
+    // SMALLINT/INT/FLOAT). Sem isso o SQLite devolve INTN e o Script() da
+    // tabela com primary key estoura "Specified cast is not valid".
+    if (/\bDisallowPageLocks\b/i.test(sql) && /\bBoundingBoxXMax\b/i.test(sql)) {
+      return {
+        Name: 'TEXT',
+        BoundingBoxXMax: 'FLOAT',
+        BoundingBoxXMin: 'FLOAT',
+        BoundingBoxYMax: 'FLOAT',
+        BoundingBoxYMin: 'FLOAT',
+        BucketCount: 'INT',
+        CellsPerObject: 'INT',
+        CompressionDelay: 'INT',
+        DisallowPageLocks: 'BIT',
+        DisallowRowLocks: 'BIT',
+        FileGroup: 'TEXT',
+        FileStreamFileGroup: 'TEXT',
+        FileStreamPartitionScheme: 'TEXT',
+        FillFactor: 'TINYINT',
+        FilterDefinition: 'TEXT',
+        IgnoreDuplicateKeys: 'BIT',
+        IndexedXmlPathName: 'TEXT',
+        IndexKeyType: 'INT',
+        IndexType: 'TINYINT',
+        IsClustered: 'BIT',
+        IsDisabled: 'BIT',
+        IsFileTableDefined: 'BIT',
+        IsSystemNamed: 'BIT',
+        IsSystemObject: 'BIT',
+        IsUnique: 'BIT',
+        Level1Grid: 'SMALLINT',
+        Level2Grid: 'SMALLINT',
+        Level3Grid: 'SMALLINT',
+        Level4Grid: 'SMALLINT',
+        NoAutomaticRecomputation: 'BIT',
+        PadIndex: 'BIT',
+        ParentXmlIndex: 'TEXT',
+        PartitionScheme: 'TEXT',
+        SecondaryXmlIndexType: 'TINYINT',
+        SpatialIndexType: 'TINYINT',
+        IsOptimizedForSequentialKey: 'BIT',
+        HasXmlCompressedPartitions: 'BIT'
+      };
+    }
+
     // O SMO le HasCompressedPartitions com GetBoolean(); sem tipo TDS explicito
     // o SQLite devolve INTN e o Script() da tabela estoura InvalidCastException.
     if (/\bHasCompressedPartitions\b/i.test(sql)) {

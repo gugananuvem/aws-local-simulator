@@ -776,6 +776,30 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       ).toEqual({ HasXmlCompressedPartitions: 'BIT' });
     });
 
+    test('declara os tipos TDS dos metadados de indice no script da tabela', () => {
+      const sql = [
+        'SELECT i.name AS [Name],',
+        'CAST(COALESCE(si.bounding_box_xmax,0) AS float(53)) AS [BoundingBoxXMax],',
+        'CAST(case when (i.type=7) then hi.bucket_count else 0 end AS int) AS [BucketCount],',
+        '~i.allow_page_locks AS [DisallowPageLocks],',
+        'i.fill_factor AS [FillFactor], i.ignore_dup_key AS [IgnoreDuplicateKeys],',
+        'CAST(CASE i.index_id WHEN 1 THEN 1 ELSE 0 END AS bit) AS [IsClustered],',
+        'CAST(COALESCE(si.level_1_grid,0) AS smallint) AS [Level1Grid],',
+        'CAST(COALESCE(INDEXPROPERTY(i.object_id, i.name, \'IsPadIndex\'), 0) AS bit) AS [PadIndex]',
+        'FROM sys.tables AS tbl INNER JOIN sys.indexes AS i ON i.object_id = tbl.object_id'
+      ].join(' ');
+      expect(translator.columnTypesFor(sql)).toMatchObject({
+        BoundingBoxXMax: 'FLOAT',
+        BucketCount: 'INT',
+        DisallowPageLocks: 'BIT',
+        FillFactor: 'TINYINT',
+        IgnoreDuplicateKeys: 'BIT',
+        IsClustered: 'BIT',
+        Level1Grid: 'SMALLINT',
+        PadIndex: 'BIT'
+      });
+    });
+
     test('declara DOUBLE nas consultas auxiliares de tamanho do database', () => {
       const sql = [
         'SELECT (SELECT SUM(CAST(df.size as float)) FROM sys.database_files AS df WHERE df.type in (0,2,4)) AS [DbSize],',
