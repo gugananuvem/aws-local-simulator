@@ -152,6 +152,7 @@ class SqlTranslator {
     resultado = this._removerPrefixoN(resultado);
     resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
+    resultado = this._removerColchetesSimples(resultado);
     resultado = this._removerEsquema(resultado);
     resultado = resultado.replace(
       /\bmsdb\s*\.\s*fn_syspolicy_is_automation_enabled\b/gi,
@@ -447,18 +448,33 @@ class SqlTranslator {
    * @param {number} quantidade
    * @returns {string}
    */
-  substituirParametros(sql, quantidade) {
-    if (!quantidade || typeof sql !== 'string') return sql;
+  substituirParametros(sql, parametros) {
+    const valores = Array.isArray(parametros) ? parametros : [];
+    if (!valores.length || typeof sql !== 'string') {
+      return { sql, parametros: valores };
+    }
     const código = this._mascarar(sql).code;
+    const indicePorNome = new Map();
+    const expandidos = [];
     let resultado = '';
     let último = 0;
     const parametro = /@[A-Za-z_][\w]*/g;
     let correspondência;
     while ((correspondência = parametro.exec(código)) !== null) {
+      const nome = correspondência[0].toLowerCase();
+      let indice = indicePorNome.get(nome);
+      if (indice === undefined) {
+        indice = indicePorNome.size;
+        indicePorNome.set(nome, indice);
+      }
       resultado += sql.slice(último, correspondência.index) + '?';
       último = correspondência.index + correspondência[0].length;
+      expandidos.push(indice < valores.length ? valores[indice] : null);
     }
-    return resultado + sql.slice(último);
+    if (indicePorNome.size === 0) {
+      return { sql, parametros: valores };
+    }
+    return { sql: resultado + sql.slice(último), parametros: expandidos };
   }
 
   /**
@@ -488,6 +504,21 @@ class SqlTranslator {
       .replace(/@@SPID\b/gi, '1')
       .replace(/@@TRANCOUNT\b/gi, '0')
       .replace(/@@VERSION\b/gi, "'16.00.4035.2'");
+  }
+
+  /**
+   * Remove colchetes de identificadores simples. O SSMS qualifica tabelas do
+   * catalogo como `[master].[sys].[all_objects]`; no SQLite isso seria tres
+   * segmentos (database.schema.tabela), que nao e suportado.
+   * @private
+   */
+  _removerColchetesSimples(sql) {
+    return this._substituirTodos(
+      sql,
+      '\\[(?:master|sys|msdb|tempdb|model)\\](?:\\s*\\.\\s*\\[[A-Za-z_][A-Za-z0-9_]*\\])+',
+      (correspondencia) => correspondencia[0].replace(/\[|\]/g, ''),
+      true
+    );
   }
 
   /**
@@ -578,14 +609,17 @@ class SqlTranslator {
       'fn_varbintohexsubstring'
     );
     const objetos = [
-      'tables', 'all_views', 'views', 'synonyms', 'objects', 'indexes',
+      'tables', 'all_views', 'views', 'system_views', 'synonyms', 'objects',
+      'all_objects', 'indexes',
       'data_spaces', 'all_columns', 'columns', 'types', 'database_principals',
       'sql_modules', 'system_sql_modules', 'extended_properties',
       'default_constraints', 'index_columns', 'computed_columns',
       'identity_columns', 'foreign_key_columns', 'column_encryption_keys',
       'xml_schema_collections', 'sensitivity_classifications',
       'change_tracking_tables', 'filetables', 'periods',
-      'remote_data_archive_tables', 'schemas'
+      'remote_data_archive_tables', 'schemas',
+      'all_parameters', 'parameters', 'triggers', 'database_permissions',
+      'assemblies', 'table_types', 'assembly_types'
     ].join('|');
     return semFuncao.replace(
       new RegExp(`\\bsys\\s*\\.\\s*(${objetos})\\b`, 'gi'),
@@ -794,8 +828,8 @@ class SqlTranslator {
         IsPersisted: 'BIT',
         IsForeignKey: 'BIT',
         Identity: 'BIT',
-        IdentitySeedAsDecimal: 'DECIMAL',
-        IdentityIncrementAsDecimal: 'DECIMAL',
+        IdentitySeedAsDecimal: 'DECIMAL(38,0)',
+        IdentityIncrementAsDecimal: 'DECIMAL(38,0)',
         IsDeterministic: 'BIT',
         IsPrecise: 'BIT',
         NotForReplication: 'BIT',
@@ -816,6 +850,22 @@ class SqlTranslator {
         IsMasked: 'BIT',
         IsClassified: 'BIT',
         GraphType: 'INT'
+      };
+    }
+
+    // O SSMS le IsEncrypted/IsSchemaBound como Boolean e LedgerViewType como
+    // Byte. Sem o tipo explicito o SQLite devolve INTN e o SMO estoura cast.
+    if (
+      /\b(?:sys|main)\.(?:all_views|system_views|views)\b/i.test(sql) &&
+      /\bIsEncrypted\b/i.test(sql)
+    ) {
+      return {
+        IsEncrypted: 'BIT',
+        IsSchemaBound: 'BIT',
+        HasClusteredIndex: 'BIT',
+        LedgerViewType: 'TINYINT',
+        IsDroppedLedgerView: 'BIT',
+        CreateDate: 'DATETIME'
       };
     }
 

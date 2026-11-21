@@ -112,6 +112,30 @@ describe('DbEngine (RDS SQL Server)', () => {
         ['msdb']
       );
       expect(doSmo.rows).toEqual([{ valor: 'msdb' }]);
+
+      const repetido = comTradutor.execute(
+        'parametros',
+        'SELECT @dbname AS primeiro, @dbname AS segundo',
+        ['master']
+      );
+      expect(repetido.rows).toEqual([{ primeiro: 'master', segundo: 'master' }]);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('CREATE/DROP DATABASE cria e remove o arquivo e atualiza sys.databases', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('master', 'CREATE DATABASE NovoBanco');
+      expect(comTradutor.listDatabases()).toContain('NovoBanco');
+      const listagem = comTradutor.execute('master', "SELECT name FROM sys.databases WHERE name = 'NovoBanco'");
+      expect(listagem.rows).toEqual([{ name: 'NovoBanco' }]);
+
+      comTradutor.execute('master', 'DROP DATABASE NovoBanco');
+      expect(comTradutor.listDatabases()).not.toContain('NovoBanco');
+      const removido = comTradutor.execute('master', "SELECT name FROM sys.databases WHERE name = 'NovoBanco'");
+      expect(removido.rows).toEqual([]);
     } finally {
       comTradutor.close();
     }

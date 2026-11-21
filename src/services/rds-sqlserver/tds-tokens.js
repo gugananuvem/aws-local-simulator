@@ -200,6 +200,13 @@ function columnDefinition(meta) {
     case TDS_TYPE.FLTNTYPE:
       extra = Buffer.from([meta.dataLength || 4]);
       break;
+    case TDS_TYPE.DECIMALTYPE:
+      extra = Buffer.from([
+        meta.maxLength || 17,
+        meta.precision || 18,
+        meta.scale || 0
+      ]);
+      break;
     case TDS_TYPE.NVARCHARTYPE: {
       extra = Buffer.allocUnsafe(2 + COLLATION.length);
       extra.writeUInt16LE(meta.maxLength || MAX_NVARCHAR_FALLBACK, 0);

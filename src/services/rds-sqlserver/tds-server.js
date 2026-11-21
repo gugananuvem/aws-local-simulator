@@ -81,12 +81,17 @@ function readRpcValue(buffer, position) {
 
   try {
     if (type === 0x26 || type === 0x68 || type === 0x6D || type === 0x6F) {
+      const maxLength = buffer.readUInt8(pos++);
+      if (!maxLength) return { value: null, offset: pos };
+      // SqlClient inclui o comprimento real antes dos dados em tipos numericos
+      // de tamanho variavel (INTN, BITN, FLOATN, DATETIMEN).
       const length = buffer.readUInt8(pos++);
       if (!length) return { value: null, offset: pos };
       if (type === 0x26) {
-        return length === 8
-          ? { value: Number(buffer.readBigInt64LE(pos)), offset: pos + 8 }
-          : { value: buffer.readInt32LE(pos), offset: pos + 4 };
+        if (length === 8) return { value: Number(buffer.readBigInt64LE(pos)), offset: pos + 8 };
+        if (length === 2) return { value: buffer.readInt16LE(pos), offset: pos + 2 };
+        if (length === 1) return { value: buffer.readInt8(pos), offset: pos + 1 };
+        return { value: buffer.readInt32LE(pos), offset: pos + 4 };
       }
       if (type === 0x68) return { value: buffer.readUInt8(pos) === 1, offset: pos + 1 };
       if (type === 0x6D) {

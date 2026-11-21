@@ -240,7 +240,14 @@ const DDL_DATABASE = `
     principal_id INTEGER NOT NULL UNIQUE,
     type TEXT NOT NULL DEFAULT 'S',
     sid BLOB,
-    create_date DATETIME
+    create_date DATETIME,
+    modify_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    authentication_type INT NOT NULL DEFAULT 0,
+    default_schema_name TEXT DEFAULT 'dbo',
+    default_language_lcid INT DEFAULT 1033,
+    default_language_name TEXT DEFAULT 'us_english',
+    state CHAR(2) DEFAULT 'G',
+    is_disabled BIT NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS objects (
@@ -299,8 +306,51 @@ const DDL_DATABASE = `
     object_id INTEGER NOT NULL PRIMARY KEY,
     schema_id INTEGER NOT NULL DEFAULT 1,
     principal_id INTEGER DEFAULT 1,
-    create_date DATETIME
+    create_date DATETIME,
+    base_object_name TEXT DEFAULT ''
   );
+
+  CREATE TABLE IF NOT EXISTS all_parameters (
+    object_id INTEGER NOT NULL,
+    parameter_id INTEGER NOT NULL,
+    name TEXT,
+    user_type_id INTEGER NOT NULL DEFAULT 56,
+    is_output BIT NOT NULL DEFAULT 0,
+    PRIMARY KEY (object_id, parameter_id)
+  );
+
+  CREATE VIEW IF NOT EXISTS parameters AS SELECT * FROM all_parameters;
+
+  CREATE TABLE IF NOT EXISTS triggers (
+    name TEXT NOT NULL,
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    parent_class INTEGER NOT NULL DEFAULT 0,
+    parent_id INTEGER NOT NULL DEFAULT 0,
+    type TEXT NOT NULL DEFAULT 'TR',
+    is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_disabled BIT NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS database_permissions (
+    grantee_principal_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'G'
+  );
+
+  CREATE TABLE IF NOT EXISTS assemblies (
+    assembly_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL
+  );
+
+  CREATE VIEW IF NOT EXISTS table_types AS
+    SELECT name, user_type_id AS object_id, schema_id, schema_id AS principal_id,
+           is_user_defined, 1 AS is_table_type
+    FROM types WHERE is_table_type = 1;
+
+  CREATE VIEW IF NOT EXISTS assembly_types AS
+    SELECT name, user_type_id AS object_id, schema_id, 1 AS assembly_id,
+           is_user_defined, 1 AS is_assembly_type
+    FROM types WHERE is_assembly_type = 1;
 
   CREATE TABLE IF NOT EXISTS indexes (
     name TEXT,
@@ -483,17 +533,22 @@ const DDL_DATABASE = `
 
   CREATE VIEW IF NOT EXISTS views AS SELECT * FROM all_views;
   CREATE VIEW IF NOT EXISTS columns AS SELECT * FROM all_columns;
+  CREATE VIEW IF NOT EXISTS all_objects AS SELECT * FROM objects;
+  CREATE VIEW IF NOT EXISTS system_views AS SELECT * FROM all_views WHERE is_ms_shipped = 1;
 `;
 
 /** Tabelas criadas pelo proprio catalogo, que nao devem aparecer como objetos de usuario. */
 const OBJETOS_DO_CATALOGO = new Set([
-  'schemas', 'database_principals', 'objects', 'tables', 'all_views', 'views',
-  'synonyms', 'indexes', 'data_spaces', 'types', 'all_columns', 'columns',
+  'schemas', 'database_principals', 'objects', 'all_objects', 'tables', 'all_views',
+  'views', 'system_views', 'synonyms', 'indexes', 'data_spaces', 'types',
+  'all_columns', 'columns',
   'sql_modules', 'system_sql_modules', 'extended_properties',
   'default_constraints', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
+  'all_parameters', 'parameters', 'triggers', 'database_permissions',
+  'assemblies', 'table_types', 'assembly_types',
   'sysdac_instances', 'syspolicy_configuration'
 ]);
 
@@ -521,8 +576,64 @@ const TIPOS_SQL = Object.freeze({
   DOUBLE: ['float', 62, 62, 8, 53, 0],
   MONEY: ['money', 60, 60, 8, 19, 4],
   UNIQUEIDENTIFIER: ['uniqueidentifier', 36, 36, 16, 0, 0],
+  SQL_VARIANT: ['sql_variant', 98, 98, 8016, 0, 0],
   XML: ['xml', 241, 241, 16, 0, 0],
   BLOB: ['varbinary', 165, 165, 8000, 0, 0]
+});
+
+/**
+ * Colunas compartilhadas pelas views de catalogo do schema sys. O SSMS usa
+ * essa estrutura para montar a pasta "System Views" e as colunas de cada view.
+ */
+const COLUNAS_VIEW_SISTEMA = [
+  ['name', 'NVARCHAR', 128],
+  ['object_id', 'INT', 4],
+  ['schema_id', 'INT', 4],
+  ['principal_id', 'INT', 4],
+  ['type', 'CHAR', 2],
+  ['type_desc', 'NVARCHAR', 60],
+  ['create_date', 'DATETIME', 8],
+  ['modify_date', 'DATETIME', 8],
+  ['is_ms_shipped', 'BIT', 1]
+];
+
+/** Views de sistema expostas no no "System Views" do Object Explorer. */
+const VIEWS_DO_SISTEMA = Object.freeze({
+  all_columns: [['column_id', 'INT', 4], ['user_type_id', 'INT', 4], ['max_length', 'SMALLINT', 2], ['is_nullable', 'BIT', 1]],
+  all_objects: [['parent_object_id', 'INT', 4], ['is_ms_shipped', 'BIT', 1]],
+  all_parameters: [['parameter_id', 'INT', 4], ['name', 'NVARCHAR', 128]],
+  assemblies: [['assembly_id', 'INT', 4], ['clr_name', 'NVARCHAR', 4000]],
+  assembly_types: [['assembly_id', 'INT', 4], ['is_user_defined', 'BIT', 1]],
+  all_views: [['ledger_view_type', 'TINYINT', 1], ['is_dropped_ledger_view', 'BIT', 1]],
+  check_constraints: [['parent_object_id', 'INT', 4], ['definition', 'NVARCHAR', 4000]],
+  column_encryption_keys: [['encryption_algorithm_name', 'NVARCHAR', 128]],
+  columns: [['column_id', 'INT', 4], ['user_type_id', 'INT', 4], ['max_length', 'SMALLINT', 2], ['is_nullable', 'BIT', 1]],
+  computed_columns: [['column_id', 'INT', 4], ['definition', 'NVARCHAR', 4000]],
+  database_principals: [['sid', 'BLOB', 8000], ['is_disabled', 'BIT', 1]],
+  data_spaces: [['data_space_id', 'INT', 4], ['type', 'CHAR', 2]],
+  database_permissions: [['grantee_principal_id', 'INT', 4], ['state', 'CHAR', 2]],
+  default_constraints: [['parent_object_id', 'INT', 4], ['definition', 'NVARCHAR', 4000]],
+  extended_properties: [['class', 'TINYINT', 1], ['major_id', 'INT', 4], ['minor_id', 'INT', 4], ['value', 'SQL_VARIANT', 8000]],
+  filegroups: [['data_space_id', 'INT', 4], ['is_default', 'BIT', 1]],
+  foreign_keys: [['parent_object_id', 'INT', 4], ['referenced_object_id', 'INT', 4]],
+  functions: [['is_inlineable', 'BIT', 1]],
+  identity_columns: [['column_id', 'INT', 4], ['seed_value', 'SQL_VARIANT', 8000]],
+  indexes: [['index_id', 'INT', 4], ['type_desc', 'NVARCHAR', 60], ['is_primary_key', 'BIT', 1]],
+  index_columns: [['index_id', 'INT', 4], ['column_id', 'INT', 4], ['key_ordinal', 'TINYINT', 1]],
+  key_constraints: [['parent_object_id', 'INT', 4], ['type', 'CHAR', 2]],
+  objects: [['parent_object_id', 'INT', 4], ['is_ms_shipped', 'BIT', 1]],
+  partitions: [['partition_id', 'BIGINT', 8], ['index_id', 'INT', 4], ['rows', 'BIGINT', 8]],
+  procedures: [['is_ms_shipped', 'BIT', 1]],
+  schemas: [['schema_id', 'INT', 4], ['principal_id', 'INT', 4]],
+  server_principals: [['principal_id', 'INT', 4], ['is_disabled', 'BIT', 1]],
+  sql_modules: [['definition', 'NVARCHAR', 4000]],
+  synonyms: [['base_object_name', 'NVARCHAR', 1032]],
+  table_types: [['is_table_type', 'BIT', 1], ['is_user_defined', 'BIT', 1]],
+  system_sql_modules: [['definition', 'NVARCHAR', 4000]],
+  tables: [['lob_data_space_id', 'INT', 4], ['temporal_type', 'TINYINT', 1], ['is_memory_optimized', 'BIT', 1]],
+  triggers: [['parent_id', 'INT', 4], ['is_disabled', 'BIT', 1]],
+  types: [['user_type_id', 'INT', 4], ['system_type_id', 'TINYINT', 1], ['max_length', 'SMALLINT', 2]],
+  views: [['ledger_view_type', 'TINYINT', 1], ['is_dropped_ledger_view', 'BIT', 1]]
 });
 
 /** Tabela do msdb usada pelo SMO para detectar suporte a DAC. */
@@ -607,10 +718,18 @@ function popularTabelas(db, schema, nomesDatabases) {
     ON CONFLICT(name) DO UPDATE SET state = 0, state_desc = 'ONLINE'
   `);
   const data = new Date().toISOString();
-  let id = 1;
+  // IDs ja atribuidos precisam ser preservados: um database pode aparecer em
+  // posicoes diferentes da lista conforme novos databases sao criados.
+  const existentes = new Map(
+    db.prepare(`SELECT name, database_id FROM ${schema}.databases`).all()
+      .map((linha) => [linha.name, linha.database_id])
+  );
+  let id = existentes.size
+    ? Math.max(...existentes.values()) + 1
+    : 1;
   for (const nome of nomes) {
-    inserirDatabase.run(nome, id, data);
-    id += 1;
+    const atual = existentes.get(nome);
+    inserirDatabase.run(nome, atual === undefined ? id++ : atual, data);
   }
 
   const inserirConfiguracao = db.prepare(`
@@ -643,7 +762,16 @@ function popularTabelas(db, schema, nomesDatabases) {
     inserirMembroPapel.run(1009, principalId);
   }
   db.prepare(`
-    INSERT OR IGNORE INTO ${schema}.syslanguages (name, alias) VALUES ('us_english', 'English')
+    INSERT OR IGNORE INTO ${schema}.syslanguages (name, alias, langid, lcid) VALUES
+      ('us_english', 'English', 1033, 1033),
+      ('Portuguese (Brazil)', 'Portuguese', 1046, 1046),
+      ('Portuguese', 'Portuguese', 2070, 2070),
+      ('Spanish', 'Spanish', 1034, 1034),
+      ('French', 'French', 1036, 1036),
+      ('German', 'German', 1031, 1031),
+      ('Italian', 'Italian', 1040, 1040),
+      ('Japanese', 'Japanese', 1041, 1041),
+      ('Chinese (Simplified)', 'Chinese', 2052, 2052)
   `).run();
   db.prepare(`
     INSERT OR IGNORE INTO ${schema}.sql_logins (principal_id) VALUES (1), (2)
@@ -712,6 +840,18 @@ function sincronizarCatalogoDatabase(db) {
     ['is_assembly_type', 'BIT NOT NULL DEFAULT 0'],
     ['is_table_type', 'BIT NOT NULL DEFAULT 0']
   ]);
+  migrarColunas(db, 'main', 'synonyms', [
+    ['base_object_name', "TEXT DEFAULT ''"]
+  ]);
+  migrarColunas(db, 'main', 'database_principals', [
+    ['modify_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],
+    ['authentication_type', 'INT NOT NULL DEFAULT 0'],
+    ['default_schema_name', "TEXT DEFAULT 'dbo'"],
+    ['default_language_lcid', 'INT DEFAULT 1033'],
+    ['default_language_name', "TEXT DEFAULT 'us_english'"],
+    ['state', "CHAR(2) DEFAULT 'G'"],
+    ['is_disabled', 'BIT NOT NULL DEFAULT 0']
+  ]);
 
   const data = '2023-01-01 00:00:00';
   for (const tabela of [
@@ -720,7 +860,8 @@ function sincronizarCatalogoDatabase(db) {
     'default_constraints', 'index_columns', 'computed_columns', 'identity_columns',
     'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
     'sensitivity_classifications', 'change_tracking_tables', 'filetables',
-    'periods', 'remote_data_archive_tables'
+    'periods', 'remote_data_archive_tables',
+    'all_parameters', 'triggers', 'database_permissions', 'assemblies'
   ]) {
     db.exec(`DELETE FROM main.${tabela}`);
   }
@@ -880,6 +1021,53 @@ function sincronizarCatalogoDatabase(db) {
       });
     }
   }
+
+  // Views de sistema no schema sys: aparecem na pasta "System Views" do SSMS
+  // e permitem inspecionar as colunas de cada catalogo com SELECT.
+  db.prepare(`INSERT OR IGNORE INTO main.schemas (name, schema_id, principal_id) VALUES ('sys', 4, 4)`).run();
+  const inserirViewSistema = db.prepare(`
+    INSERT INTO main.all_views
+      (name, object_id, schema_id, principal_id, type, create_date, is_ms_shipped, definition)
+    VALUES (?, ?, 4, 4, 'V', ?, 1, ?)
+  `);
+  const inserirObjetoSistema = db.prepare(`
+    INSERT INTO main.objects
+      (name, object_id, schema_id, principal_id, type, type_desc, create_date, is_ms_shipped)
+    VALUES (?, ?, 4, 4, 'V', 'VIEW', ?, 1)
+  `);
+  let objetoIdSistema = -1000;
+  for (const [nome, colunasExtras] of Object.entries(VIEWS_DO_SISTEMA)) {
+    const objectId = objetoIdSistema;
+    objetoIdSistema -= 1;
+    inserirViewSistema.run(nome, objectId, data, `CREATE VIEW sys.${nome} AS SELECT ...`);
+    inserirObjetoSistema.run(nome, objectId, data);
+
+    const colunas = new Map();
+    for (const [nomeColuna, tipo, tamanho] of COLUNAS_VIEW_SISTEMA) {
+      colunas.set(nomeColuna.toLowerCase(), [nomeColuna, tipo, tamanho]);
+    }
+    for (const [nomeColuna, tipo, tamanho] of colunasExtras) {
+      colunas.set(nomeColuna.toLowerCase(), [nomeColuna, tipo, tamanho]);
+    }
+    let columnId = 1;
+    for (const [nomeColuna, tipo, tamanho] of colunas.values()) {
+      const definicao = TIPOS_SQL[tipo] || TIPOS_SQL.NVARCHAR;
+      inserirColuna.run(
+        nomeColuna,
+        objectId,
+        columnId,
+        definicao[1],
+        definicao[2],
+        tamanho || definicao[3],
+        definicao[4],
+        definicao[5],
+        1,
+        0,
+        0
+      );
+      columnId += 1;
+    }
+  }
 }
 
 /**
@@ -953,7 +1141,14 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
   db.function('ORIGINAL_LOGIN', { varargs: true }, () => usuario);
   db.function('IS_MEMBER', () => 0);
 
-  db.function('SCHEMA_NAME', (id) => (id == null || Number(id) === 1 ? 'dbo' : null));
+  // SCHEMA_NAME() sem argumentos devolve o schema padrao da sessao (dbo).
+  db.function('SCHEMA_NAME', { varargs: true }, (...argumentos) => {
+    const id = argumentos[0];
+    if (id == null) return 'dbo';
+    const identificador = Number(id);
+    if (identificador === 4) return 'sys';
+    return identificador === 1 ? 'dbo' : null;
+  });
   const objectProperty = (id, propriedade) => {
     const nome = String(propriedade || '').toLowerCase();
     if (nome === 'ownerid') return 1;

@@ -4,7 +4,8 @@
  * tds-types.js — Conversao entre tipos declarados pelo SQLite e tipos TDS 7.4.
  *
  * As colunas de resultado usam as variantes "N" (comprimento variavel) dos
- * tipos TDS: INTN(0x26), BITN(0x68), DATETIMN(0x6F), FLTN(0x6D) e NVARCHAR(0xE7).
+ * tipos TDS: INTN(0x26), BITN(0x68), DATETIMN(0x6F), FLTN(0x6D),
+ * DECIMAL(0x6A) e NVARCHAR(0xE7).
  * Isso e o que SQL Server envia e o que tedious/sqlcmd/ODBC esperam ler.
  * Os valores 0x32 (BIT) e 0x2D (SMALLDATETIME) aparecem em algumas tabelas
  * antigas; aqui eles sao mantidos como aliases documentados, mas o fio usa
@@ -22,6 +23,7 @@ const TDS_TYPE = Object.freeze({
   BITNTYPE: 0x68,      // bit com 1 byte de comprimento
   DATETIMNTYPE: 0x6F,  // datetime com 8 bytes de comprimento
   FLTNTYPE: 0x6D,      // real (4) / float (8)
+  DECIMALTYPE: 0x6A,   // decimal/numeric com precisao e escala
   NVARCHARTYPE: 0xE7,  // texto UTF-16LE com comprimento UInt16
   VARBINARYTYPE: 0xA5  // binario com comprimento UInt16
 });
@@ -37,13 +39,14 @@ const SHORT_LENGTH_TYPES = new Set([
   TDS_TYPE.INTNTYPE,
   TDS_TYPE.BITNTYPE,
   TDS_TYPE.DATETIMNTYPE,
-  TDS_TYPE.FLTNTYPE
+  TDS_TYPE.FLTNTYPE,
+  TDS_TYPE.DECIMALTYPE
 ]);
 
 /**
  * Mapeia o tipo declarado pelo SQLite para uma familia simplificada.
  * @param {string} declaredType
- * @returns {'int'|'tinyint'|'smallint'|'bit'|'float'|'datetime'|'binary'|'string'}
+ * @returns {'int'|'tinyint'|'smallint'|'bit'|'float'|'decimal'|'datetime'|'binary'|'string'}
  */
 function mapDeclaredType(declaredType) {
   const type = String(declaredType || '').toUpperCase();
@@ -51,11 +54,27 @@ function mapDeclaredType(declaredType) {
   if (/^(BOOL|BOOLEAN|BIT)$/.test(type)) return 'bit';
   if (/BLOB|BINARY|VARBINARY|IMAGE/.test(type)) return 'binary';
   if (/^(DATE|DATETIME|TIMESTAMP|SMALLDATETIME)/.test(type)) return 'datetime';
-  if (/REAL|FLOAT|DOUBLE|DECIMAL|NUMERIC|MONEY/.test(type)) return 'float';
+  // O SMO faz cast explicito para System.Decimal em colunas como
+  // IdentitySeedAsDecimal. FLTN chega como double e estoura InvalidCast.
+  if (/DECIMAL|NUMERIC/.test(type)) return 'decimal';
+  if (/REAL|FLOAT|DOUBLE|MONEY/.test(type)) return 'float';
   if (/TINYINT/.test(type)) return 'tinyint';
   if (/SMALLINT/.test(type)) return 'smallint';
   if (/INT/.test(type)) return 'int';
   return 'string';
+}
+
+/**
+ * Extrai precisao/escala de DECIMAL(p,s) e calcula o tamanho maximo do valor TDS.
+ * @param {string} declaredType
+ * @returns {{ precision: number, scale: number, maxLength: number }}
+ */
+function decimalShape(declaredType) {
+  const encontrado = String(declaredType || '').match(/\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)/);
+  const precision = Math.min(Math.max(encontrado ? Number(encontrado[1]) : 18, 1), 38);
+  const scale = Math.min(Math.max(encontrado && encontrado[2] ? Number(encontrado[2]) : 0, 0), precision);
+  const maxLength = precision <= 9 ? 5 : precision <= 19 ? 9 : precision <= 28 ? 13 : 17;
+  return { precision, scale, maxLength };
 }
 
 /**
@@ -144,6 +163,10 @@ function columnMetadata(columns = [], rows = []) {
       return { ...base, type: TDS_TYPE.FLTNTYPE, dataLength: /^REAL/.test(typeName) ? 4 : 8 };
     }
 
+    if (kind === 'decimal') {
+      return { ...base, type: TDS_TYPE.DECIMALTYPE, ...decimalShape(declared) };
+    }
+
     if (kind === 'binary') {
       let max = 0;
       for (const value of values) {
@@ -169,6 +192,31 @@ function columnMetadata(columns = [], rows = []) {
         : MAX_NVARCHAR_BYTES
     };
   });
+}
+
+/**
+ * Converte um numero em digitos inteiros ja escalados para o TDS DECIMAL.
+ * @param {*} value
+ * @param {number} scale
+ * @returns {{ negativo: boolean, valor: bigint }}
+ */
+function decimaisEscalados(value, scale) {
+  let texto = String(value == null ? 0 : value).trim();
+  const negativo = /^-/.test(texto);
+  if (negativo) texto = texto.slice(1);
+
+  let inteiro;
+  let fracao;
+  if (/^\d+(?:\.\d+)?$/.test(texto)) {
+    [inteiro, fracao = ''] = texto.split('.');
+  } else {
+    const numero = Number(texto);
+    texto = Number.isFinite(numero) ? Math.abs(numero).toFixed(scale) : '0';
+    [inteiro, fracao = ''] = texto.split('.');
+  }
+
+  const digitos = inteiro + fracao.padEnd(scale, '0').slice(0, scale);
+  return { negativo, valor: BigInt(digitos || '0') };
 }
 
 /**
@@ -243,6 +291,20 @@ function encodeValue(value, meta) {
     buffer.writeUInt8(8, 0);
     buffer.writeInt32LE(days + dayAdjust, 1);
     buffer.writeUInt32LE(ticks, 5);
+    return buffer;
+  }
+
+  if (type === TDS_TYPE.DECIMALTYPE) {
+    const maxLength = meta.maxLength || 17;
+    const { negativo, valor } = decimaisEscalados(value, meta.scale || 0);
+    const buffer = Buffer.allocUnsafe(1 + maxLength);
+    buffer.writeUInt8(maxLength, 0);
+    buffer.writeUInt8(negativo ? 1 : 0, 1);
+    let resto = valor;
+    for (let indice = 0; indice < maxLength - 1; indice++) {
+      buffer.writeUInt8(Number(resto & 0xFFn), 2 + indice);
+      resto >>= 8n;
+    }
     return buffer;
   }
 

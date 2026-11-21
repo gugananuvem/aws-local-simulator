@@ -159,14 +159,46 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     }]);
   });
 
+  test('expõe as views de sistema sys.tables e sys.objects no catalogo', () => {
+    const sistemas = engine.execute('principal',
+      "SELECT v.name AS Name, SCHEMA_NAME(v.schema_id) AS [Schema] " +
+      'FROM sys.all_views v WHERE v.is_ms_shipped = 1 ORDER BY v.name'
+    );
+    const nomes = sistemas.rows.map((linha) => linha.Name);
+    expect(nomes).toContain('tables');
+    expect(nomes).toContain('objects');
+    expect(nomes).toContain('columns');
+    expect(sistemas.rows.every((linha) => linha.Schema === 'sys')).toBe(true);
+
+    const viaSystemViews = engine.execute('principal',
+      'SELECT name FROM sys.system_views WHERE name IN (?, ?) ORDER BY name',
+      ['tables', 'objects']
+    );
+    expect(viaSystemViews.rows).toEqual([{ name: 'objects' }, { name: 'tables' }]);
+
+    const colunas = engine.execute('principal',
+      'SELECT c.name AS nome, t.name AS tipo FROM sys.all_columns c ' +
+      'INNER JOIN sys.types t ON t.user_type_id = c.user_type_id ' +
+      'WHERE c.object_id = (SELECT object_id FROM sys.all_views WHERE name = ?) ' +
+      'ORDER BY c.column_id',
+      ['tables']
+    );
+    expect(colunas.rows.map((linha) => linha.nome)).toEqual(
+      expect.arrayContaining(['name', 'object_id', 'schema_id', 'is_ms_shipped'])
+    );
+    expect(colunas.rows.some((linha) => linha.tipo === 'int')).toBe(true);
+  });
+
   test('expõe sys.syslanguages com lcid e a funcao de politicas do msdb', () => {
     const idiomas = engine.execute('principal',
       'SELECT s.name AS Name, s.alias AS Alias, s.lcid AS LocaleID, s.langid AS LangID ' +
       'FROM sys.syslanguages s ORDER BY s.name ASC'
     );
-    expect(idiomas.rows).toEqual([{
+    expect(idiomas.rows).toEqual(expect.arrayContaining([{
       Name: 'us_english', Alias: 'English', LocaleID: 1033, LangID: 1033
-    }]);
+    }, {
+      Name: 'Portuguese (Brazil)', Alias: 'Portuguese', LocaleID: 1046, LangID: 1046
+    }]));
 
     const automacao = engine.execute('principal',
       'SELECT fn_syspolicy_is_automation_enabled() AS habilitado'

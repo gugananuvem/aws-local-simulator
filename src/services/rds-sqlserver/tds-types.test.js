@@ -19,7 +19,7 @@ describe('tipos TDS', () => {
     expect(mapDeclaredType('boolean')).toBe('bit');
     expect(mapDeclaredType('VARBINARY(MAX)')).toBe('binary');
     expect(mapDeclaredType('datetime')).toBe('datetime');
-    expect(mapDeclaredType('DECIMAL(10,2)')).toBe('float');
+    expect(mapDeclaredType('DECIMAL(10,2)')).toBe('decimal');
     expect(mapDeclaredType('BIGINT')).toBe('int');
     expect(mapDeclaredType('NVARCHAR(50)')).toBe('string');
     expect(mapDeclaredType()).toBe('string');
@@ -63,6 +63,29 @@ describe('tipos TDS', () => {
     expect(colunas[5]).toMatchObject({ type: TDS_TYPE.NVARCHARTYPE, maxLength: 6 });
     expect(colunas[6]).toMatchObject({ type: TDS_TYPE.NVARCHARTYPE, maxLength: MAX_NVARCHAR_BYTES });
     expect(colunas[7].name).toBe('outro');
+  });
+
+  test('monta metadados DECIMAL com precisao, escala e codifica o valor', () => {
+    const [decimal] = columnMetadata(
+      [{ name: 'seed', type: 'DECIMAL(38)' }],
+      [{ seed: 1 }]
+    );
+    expect(decimal).toMatchObject({
+      type: TDS_TYPE.DECIMALTYPE,
+      precision: 38,
+      scale: 0,
+      maxLength: 17
+    });
+
+    const codificado = encodeValue(-1234, decimal);
+    expect(codificado[0]).toBe(17);
+    expect(codificado[1]).toBe(1);
+    expect(codificado.readBigUInt64LE(2)).toBe(1234n);
+    expect(encodeValue(null, decimal)).toEqual(Buffer.from([0x00]));
+
+    const [curta] = columnMetadata([{ name: 'total', type: 'NUMERIC(10,2)' }], [{ total: 1 }]);
+    expect(curta).toMatchObject({ type: TDS_TYPE.DECIMALTYPE, precision: 10, scale: 2, maxLength: 9 });
+    expect(encodeValue(12.34, curta).readBigUInt64LE(2)).toBe(1234n);
   });
 
   test('infere tipo de colunas calculadas sem tipo declarado', () => {

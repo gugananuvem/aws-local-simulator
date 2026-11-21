@@ -462,10 +462,17 @@ class DbEngine {
    * @private
    */
   _executar(db, sqlBruto, params = []) {
-    const parametros = Array.isArray(params) ? params : params == null ? [] : [params];
-    let sqlTraduzido = this._traduzir(sqlBruto);
+    let parametros = Array.isArray(params) ? params : params == null ? [] : [params];
+    const restante = this._executarDdlDatabase(sqlBruto);
+    let sqlTraduzido = this._traduzir(restante);
     if (parametros.length && this.translator && typeof this.translator.substituirParametros === 'function') {
-      sqlTraduzido = this.translator.substituirParametros(sqlTraduzido, parametros.length);
+      const substituidos = this.translator.substituirParametros(sqlTraduzido, parametros);
+      if (substituidos && typeof substituidos === 'object' && !Array.isArray(substituidos)) {
+        sqlTraduzido = substituidos.sql;
+        parametros = substituidos.parametros;
+      } else {
+        sqlTraduzido = substituidos;
+      }
     }
     const instrucoes = this._dividirEmInstrucoes(sqlTraduzido);
     if (instrucoes.length === 0) {
@@ -488,6 +495,69 @@ class DbEngine {
       if (resultados[i].type === 'dml') return resultados[i];
     }
     return resultados[resultados.length - 1];
+  }
+
+  /**
+   * CREATE/DROP DATABASE não existem no SQLite: cada database lógico é um
+   * arquivo .db separado. Executamos o efeito diretamente no engine e removemos
+   * a instrução do lote antes da tradução.
+   * @private
+   */
+  _executarDdlDatabase(sqlBruto) {
+    let restante = String(sqlBruto || '');
+    const padrao = /\b(CREATE|DROP)\s+DATABASE\s+(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w]*))/gi;
+    let correspondência;
+    while ((correspondência = padrao.exec(restante)) !== null) {
+      const acao = correspondência[1].toUpperCase();
+      const nome = correspondência[2] || correspondência[3] || correspondência[4];
+      if (acao === 'CREATE') {
+        this.getOrCreateDatabase(nome);
+        this._sincronizarCatalogoDatabase(nome, true);
+      } else {
+        this._sincronizarCatalogoDatabase(nome, false);
+        this.dropDatabase(nome);
+      }
+      restante = restante.slice(0, correspondência.index) + restante.slice(correspondência.index + correspondência[0].length);
+      padrao.lastIndex = correspondência.index;
+    }
+    return restante;
+  }
+
+  /**
+   * Mantém sys.databases atualizado em todos os databases já abertos.
+   * @private
+   */
+  _sincronizarCatalogoDatabase(nome, presente) {
+    const alvos = new Set([this.databases.get('master'), ...this.databases.values()].filter(Boolean));
+    if (alvos.size === 0) return;
+    // O id precisa ser unico em todos os arquivos: cada database tem sua propria
+    // copia de sys.databases e um id diferente para o mesmo nome quebraria joins.
+    let proximo = 1;
+    if (presente) {
+      for (const alvo of alvos) {
+        try {
+          const maximo = Number(alvo.prepare('SELECT COALESCE(MAX(database_id), 0) AS maximo FROM sys.databases').get().maximo);
+          proximo = Math.max(proximo, maximo + 1);
+        } catch (erro) {
+          logger.debug(`[RDS SQL Server DbEngine] Falha ao calcular database_id: ${erro.message}`);
+        }
+      }
+    }
+    for (const alvo of alvos) {
+      try {
+        if (presente) {
+          alvo.prepare(`
+            INSERT INTO sys.databases (name, database_id, state, state_desc, create_date)
+            VALUES (?, ?, 0, 'ONLINE', ?)
+            ON CONFLICT(name) DO UPDATE SET state = 0, state_desc = 'ONLINE'
+          `).run(nome, proximo, new Date().toISOString());
+        } else {
+          alvo.prepare('DELETE FROM sys.databases WHERE name = ?').run(nome);
+        }
+      } catch (erro) {
+        logger.debug(`[RDS SQL Server DbEngine] Falha ao sincronizar catalogo de '${nome}': ${erro.message}`);
+      }
+    }
   }
 
   /**

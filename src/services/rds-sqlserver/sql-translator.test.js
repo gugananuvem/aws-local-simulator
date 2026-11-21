@@ -793,6 +793,43 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
   });
 
   describe('shims de conexão do SSMS/SMO', () => {
+    test('remove colchetes de nomes qualificados do catalogo', () => {
+      expect(
+        translator.translate('SELECT TOP (1000) * FROM [master].[sys].[all_objects]')
+      ).toBe('SELECT * FROM main.all_objects LIMIT 1000');
+    });
+
+    test('traduz sys.system_views e sys.all_objects para o catalogo local', () => {
+      expect(translator.translate('SELECT name FROM sys.system_views')).toContain('FROM main.system_views');
+      expect(translator.translate('SELECT name FROM sys.all_objects')).toContain('FROM main.all_objects');
+    });
+
+    test('informa os tipos TDS esperados pelo SMO nas views de sistema', () => {
+      expect(translator.columnTypesFor(
+        'SELECT CAST(CASE WHEN 1=1 THEN 1 ELSE 0 END AS bit) AS [IsEncrypted] ' +
+        'FROM sys.all_views v'
+      )).toEqual({
+        IsEncrypted: 'BIT',
+        IsSchemaBound: 'BIT',
+        HasClusteredIndex: 'BIT',
+        LedgerViewType: 'TINYINT',
+        IsDroppedLedgerView: 'BIT',
+        CreateDate: 'DATETIME'
+      });
+    });
+
+    test('informa DECIMAL(38,0) nas colunas de identity do SMO', () => {
+      expect(translator.columnTypesFor(
+        'SELECT clmns.name AS [DataType], ' +
+        'CAST(ISNULL(ic.seed_value,0) AS numeric(38)) AS [IdentitySeedAsDecimal], ' +
+        'CAST(ISNULL(ic.increment_value,0) AS numeric(38)) AS [IdentityIncrementAsDecimal] ' +
+        'FROM sys.tables AS tbl INNER JOIN sys.all_columns AS clmns ON clmns.object_id=tbl.object_id'
+      )).toMatchObject({
+        IdentitySeedAsDecimal: 'DECIMAL(38,0)',
+        IdentityIncrementAsDecimal: 'DECIMAL(38,0)'
+      });
+    });
+
     test('remove o schema da funcao de politicas do msdb', () => {
       const entrada =
         'SELECT case when 1=msdb.dbo.fn_syspolicy_is_automation_enabled() ' +
