@@ -907,7 +907,7 @@ class SqlTranslator {
       'data_spaces', 'filegroups', 'database_files', 'all_columns', 'columns',
       'types', 'database_principals',
       'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
-      'default_constraints', 'index_columns', 'computed_columns',
+      'default_constraints', 'check_constraints', 'index_columns', 'computed_columns',
       'identity_columns', 'foreign_key_columns', 'column_encryption_keys',
       'xml_schema_collections', 'sensitivity_classifications',
       'change_tracking_tables', 'filetables', 'periods',
@@ -1377,6 +1377,18 @@ class SqlTranslator {
         PasswordHashAlgorithm: 'INT',
         CreateDate: 'DATETIME',
         DateLastModified: 'DATETIME'
+      };
+    }
+
+    // O SMO le as colunas booleanas de check_constraints com GetBoolean; sem
+    // os tipos TDS explicitos o SQLite devolve INTN e o script da tabela falha.
+    if (/\b(?:sys|main)\.check_constraints\b/i.test(sql)) {
+      return {
+        NotForReplication: 'BIT',
+        IsChecked: 'BIT',
+        IsEnabled: 'BIT',
+        IsSystemNamed: 'BIT',
+        IsFileTableDefined: 'BIT'
       };
     }
 

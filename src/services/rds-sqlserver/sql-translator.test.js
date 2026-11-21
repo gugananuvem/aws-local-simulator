@@ -1244,6 +1244,21 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       }));
     });
 
+    test('informa os tipos TDS de check_constraints no script da tabela', () => {
+      expect(translator.columnTypesFor(
+        'SELECT cstr.name AS [Name], cstr.is_not_for_replication AS [NotForReplication], ' +
+        '~cstr.is_not_trusted AS [IsChecked], ~cstr.is_disabled AS [IsEnabled], ' +
+        'CAST(cstr.is_system_named AS bit) AS [IsSystemNamed] ' +
+        'FROM sys.tables AS tbl INNER JOIN sys.check_constraints AS cstr ' +
+        'ON cstr.parent_object_id = tbl.object_id'
+      )).toEqual(expect.objectContaining({
+        NotForReplication: 'BIT',
+        IsChecked: 'BIT',
+        IsEnabled: 'BIT',
+        IsSystemNamed: 'BIT'
+      }));
+    });
+
     test('informa BIT e DATETIME nas colunas da lista de procedures e funcoes', () => {
       const sql =
         'SELECT sp.name AS [Name], ' +

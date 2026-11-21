@@ -686,6 +686,27 @@ const DDL_DATABASE = `
     is_system_named BIT NOT NULL DEFAULT 1
   );
 
+  CREATE TABLE IF NOT EXISTS check_constraints (
+    name TEXT NOT NULL DEFAULT '',
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    principal_id INTEGER DEFAULT 1,
+    schema_id INTEGER NOT NULL DEFAULT 1,
+    parent_object_id INTEGER NOT NULL,
+    type CHAR(2) NOT NULL DEFAULT 'C',
+    type_desc TEXT NOT NULL DEFAULT 'CHECK_CONSTRAINT',
+    create_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    modify_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_schema_published BIT NOT NULL DEFAULT 0,
+    is_disabled BIT NOT NULL DEFAULT 0,
+    is_not_for_replication BIT NOT NULL DEFAULT 0,
+    is_not_trusted BIT NOT NULL DEFAULT 0,
+    is_system_named BIT NOT NULL DEFAULT 1,
+    uses_database_collation BIT NOT NULL DEFAULT 0,
+    definition TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS index_columns (
     object_id INTEGER NOT NULL,
     index_id INTEGER NOT NULL,
@@ -942,7 +963,7 @@ const OBJETOS_DO_CATALOGO = new Set([
   'views', 'system_views', 'synonyms', 'indexes', 'data_spaces', 'types',
   'filegroups', 'database_files', 'all_columns', 'columns',
   'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
-  'default_constraints', 'index_columns', 'computed_columns', 'identity_columns',
+  'default_constraints', 'check_constraints', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
@@ -1581,7 +1602,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
   for (const tabela of [
     'objects', 'tables', 'all_views', 'synonyms', 'indexes', 'all_columns',
     'sql_modules', 'system_sql_modules', 'extended_properties',
-    'default_constraints', 'index_columns', 'computed_columns', 'identity_columns',
+    'default_constraints', 'check_constraints', 'index_columns', 'computed_columns', 'identity_columns',
     'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
     'sensitivity_classifications', 'change_tracking_tables', 'filetables',
     'periods', 'remote_data_archive_tables',

@@ -359,6 +359,7 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       'partitions', 'masked_columns', 'filetable_system_defined_objects',
       'spatial_index_tessellations', 'spatial_indexes', 'hash_indexes',
       'xml_indexes', 'selective_xml_index_paths', 'stats', 'key_constraints',
+      'check_constraints',
       'fulltext_indexes', 'fulltext_catalogs', 'fulltext_stoplists',
       'registered_search_property_lists', 'fulltext_index_columns'
     ];
