@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const { DbEngine } = require('./db-engine');
 const { SqlTranslator } = require('./sql-translator');
+const catalogoSistema = require('./system-catalog');
 
 describe('DbEngine (RDS SQL Server)', () => {
   let dataDir;
@@ -431,6 +432,14 @@ describe('DbEngine (RDS SQL Server)', () => {
       expect(defaults.map((linha) => linha.name)).toEqual([
         'DF__TB001__DataAtualiacao', 'DF__TB001__DataCriacao'
       ]);
+
+      catalogoSistema.sincronizarCatalogoDatabase(comTradutor.getOrCreateDatabase('principal'));
+      const reaparecidos = comTradutor.execute('principal', `
+        SELECT d.name, d.definition FROM sys.default_constraints AS d
+        WHERE d.parent_object_id = (SELECT object_id FROM sys.objects WHERE name = 'TB001')
+        ORDER BY d.name
+      `).rows;
+      expect(reaparecidos).toEqual(defaults);
     } finally {
       comTradutor.execute('principal', 'DROP TABLE IF EXISTS [TB001]');
       comTradutor.close();

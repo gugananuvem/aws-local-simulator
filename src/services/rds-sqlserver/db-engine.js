@@ -635,6 +635,17 @@ class DbEngine {
         logger.debug(`[RDS SQL Server] Trigger de default ignorado (${nomeTabela}.${nomeColuna}): ${erro.message}`);
       }
 
+      const data = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      try {
+        db.prepare(`
+          INSERT OR REPLACE INTO main.default_definitions
+            (table_name, column_name, name, definition, create_date)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(nomeTabela, nomeColuna, nomeDefault, `(${expressao})`, data);
+      } catch (erro) {
+        logger.debug(`[RDS SQL Server] Definicao de default persistida ignorada (${nomeTabela}.${nomeColuna}): ${erro.message}`);
+      }
+
       try {
         const objeto = db.prepare(
           "SELECT object_id FROM main.objects WHERE name = ? AND type = 'U'"
@@ -645,7 +656,6 @@ class DbEngine {
           ).get(nomeTabela, nomeColuna);
           const parentColumnId = linhaColuna ? linhaColuna.cid + 1 : 1;
           const objectId = 900000000 + objeto.object_id * 1000 + parentColumnId;
-          const data = new Date().toISOString().slice(0, 19).replace('T', ' ');
           db.prepare(`
             INSERT OR REPLACE INTO main.default_constraints
               (name, object_id, parent_object_id, parent_column_id, create_date, modify_date, definition)

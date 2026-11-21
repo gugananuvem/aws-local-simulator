@@ -710,6 +710,18 @@ const DDL_DATABASE = `
     is_system_named BIT NOT NULL DEFAULT 1
   );
 
+  -- ADD DEFAULT vira trigger SQLite, que nao aparece no DDL da tabela. Esta
+  -- tabela guarda a definicao T-SQL para reconstruir sys.default_constraints
+  -- sempre que o catalogo e sincronizado.
+  CREATE TABLE IF NOT EXISTS default_definitions (
+    table_name TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    definition TEXT NOT NULL,
+    create_date DATETIME,
+    PRIMARY KEY (table_name, column_name)
+  );
+
   CREATE TABLE IF NOT EXISTS check_constraints (
     name TEXT NOT NULL DEFAULT '',
     object_id INTEGER NOT NULL PRIMARY KEY,
@@ -1040,7 +1052,7 @@ const OBJETOS_DO_CATALOGO = new Set([
   'views', 'system_views', 'synonyms', 'indexes', 'data_spaces', 'types',
   'filegroups', 'database_files', 'all_columns', 'columns',
   'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
-  'default_constraints', 'check_constraints', 'edge_constraints', 'index_resumable_operations', 'index_columns', 'computed_columns', 'identity_columns',
+  'default_constraints', 'default_definitions', 'check_constraints', 'edge_constraints', 'index_resumable_operations', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_keys', 'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
@@ -1879,6 +1891,43 @@ function sincronizarCatalogoDatabase(db, dbName) {
   ]);
 
   const data = '2023-01-01 00:00:00';
+
+  // Defaults criados por ALTER TABLE ADD DEFAULT sobrevivem como triggers
+  // SQLite. Versoes anteriores nao guardavam a definicao em tabela propria:
+  // recuperamos o T-SQL a partir do trigger para nao perder os defaults ja
+  // aplicados antes de existir `default_definitions`.
+  const inserirDefaultPersistido = db.prepare(`
+    INSERT OR IGNORE INTO main.default_definitions
+      (table_name, column_name, name, definition, create_date)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  for (const gatilho of db.prepare(`
+    SELECT name, sql FROM main.sqlite_master
+    WHERE type = 'trigger' AND name LIKE 'DF__%'
+  `).all()) {
+    const correspondencia = /AFTER\s+INSERT\s+ON\s+"([^"]+)"[\s\S]*?WHEN\s+NEW\."([^"]+)"\s+IS\s+NULL[\s\S]*?SET\s+"[^"]+"\s*=\s*([\s\S]*?)\s+WHERE\s+rowid/i.exec(
+      String(gatilho.sql || '')
+    );
+    if (!correspondencia) continue;
+    const expressao = String(correspondencia[3])
+      .replace(/\bdatetime\s*\(\s*'now'\s*\)/gi, 'getdate()')
+      .replace(/\bunixepoch\s*\(\s*\)/gi, 'getdate()')
+      .replace(/\[([A-Za-z_]\w*)\]\s*\(/g, '[DBO].[$1](');
+    inserirDefaultPersistido.run(
+      correspondencia[1],
+      correspondencia[2],
+      gatilho.name,
+      `(${expressao})`,
+      data
+    );
+  }
+
+  const defaultsPersistentes = new Map(
+    db.prepare('SELECT table_name, column_name, name, definition FROM main.default_definitions')
+      .all()
+      .map((linha) => [`${linha.table_name}\u0000${linha.column_name}`, linha])
+  );
+
   for (const tabela of [
     'objects', 'tables', 'all_views', 'synonyms', 'indexes', 'all_columns',
     'sql_modules', 'system_sql_modules', 'extended_properties',
@@ -2018,7 +2067,9 @@ function sincronizarCatalogoDatabase(db, dbName) {
         ? definicaoTsql(metadado.tipoOriginal)
         : (TIPOS_SQL[declarado] || TIPOS_SQL.NVARCHAR);
       const ehIdentidade = Boolean(metadado && metadado.identidade);
-      const possuiDefault = coluna.dflt_value != null;
+      const defaultPersistido = defaultsPersistentes.get(`${objeto.name}\u0000${coluna.name}`);
+      const definicaoDefault = defaultPersistido ? defaultPersistido.definition : coluna.dflt_value;
+      const possuiDefault = definicaoDefault != null;
       const defaultId = possuiDefault ? 900000000 + objeto.object_id * 1000 + coluna.cid : 0;
       inserirColuna.run(
         coluna.name,
@@ -2042,7 +2093,9 @@ function sincronizarCatalogoDatabase(db, dbName) {
         );
       }
       if (possuiDefault) {
-        const nomeDefault = `DF__${objeto.name}__${coluna.name}`;
+        const nomeDefault = defaultPersistido
+          ? defaultPersistido.name
+          : `DF__${objeto.name}__${coluna.name}`;
         inserirDefault.run(
           nomeDefault,
           defaultId,
@@ -2050,7 +2103,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
           coluna.cid + 1,
           data,
           data,
-          coluna.dflt_value
+          definicaoDefault
         );
         inserirObjetoDefault.run(nomeDefault, defaultId, data, objeto.object_id);
       }
@@ -2196,6 +2249,11 @@ function sincronizarCatalogoDatabase(db, dbName) {
       columnId += 1;
     }
   }
+
+  db.prepare(`
+    DELETE FROM main.default_definitions
+    WHERE table_name NOT IN (SELECT name FROM main.tables)
+  `).run();
 
   restaurarProcedimentos(db, rotinasSalvas, parametrosSalvos);
   restaurarFuncoes(db, funcoesSalvas, parametrosFuncoesSalvos);
