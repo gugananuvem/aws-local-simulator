@@ -1056,6 +1056,72 @@ const DDL_DATABASE = `
     LEFT JOIN sql_modules AS m ON m.object_id = o.object_id
     WHERE 1 = 0;
   CREATE VIEW IF NOT EXISTS system_views AS SELECT * FROM all_views WHERE is_ms_shipped = 1;
+
+  -- Tabela de compatibilidade usada pelo Table Designer (MS Visual Database
+  -- Tools). O designer consulta "select id from sysobjects where id =
+  -- object_id(N'dbo.TB001')" antes de carregar a grade; sem a view ele repete a
+  -- consulta ate desistir e abre a tela em branco. OBJECT_ID() devolve o rowid
+  -- de sqlite_master, o mesmo valor gravado em objects.object_id.
+  DROP VIEW IF EXISTS sysobjects;
+  CREATE VIEW sysobjects AS
+    SELECT
+      o.name AS name,
+      o.object_id AS id,
+      o.type AS xtype,
+      o.type AS type,
+      o.principal_id AS uid,
+      IFNULL(o.parent_object_id, 0) AS parent_obj,
+      o.create_date AS crdate,
+      0 AS ftcatid,
+      0 AS schema_ver,
+      0 AS stats_schema_ver,
+      0 AS userstat,
+      0 AS sysstat,
+      0 AS indexdel,
+      o.modify_date AS refdate,
+      0 AS version,
+      0 AS deltrig,
+      0 AS instrig,
+      0 AS updtrig,
+      0 AS seltrig,
+      0 AS category,
+      0 AS cache
+    FROM objects o;
+
+  -- Views de compatibilidade que o mesmo designer consulta para carregar
+  -- colunas e tipos. Os nomes legados (syscolumns/systypes) continuaram vivos
+  -- no provider VDT mesmo apos a migration para sys.* no SSMS 19.
+  DROP VIEW IF EXISTS syscolumns;
+  CREATE VIEW syscolumns AS
+    SELECT
+      c.name AS name,
+      c.object_id AS id,
+      c.column_id AS colid,
+      c.user_type_id AS xtype,
+      c.max_length AS length,
+      c.precision AS xprec,
+      c.scale AS xscale,
+      c.is_nullable AS isnullable,
+      c.default_object_id AS cdefault,
+      c.rule_object_id AS domain,
+      0 AS status,
+      0 AS offset
+    FROM all_columns c;
+
+  DROP VIEW IF EXISTS systypes;
+  CREATE VIEW systypes AS
+    SELECT
+      t.name AS name,
+      t.user_type_id AS xtype,
+      t.system_type_id AS type,
+      t.max_length AS length,
+      t.precision AS xprec,
+      t.scale AS xscale,
+      t.user_type_id AS usertype,
+      1 AS variable,
+      1 AS allownulls,
+      t.is_user_defined AS isusertype
+    FROM types t;
 `;
 
 /** Tabelas criadas pelo proprio catalogo, que nao devem aparecer como objetos de usuario. */
@@ -1076,7 +1142,7 @@ const OBJETOS_DO_CATALOGO = new Set([
   'registered_search_property_lists', 'fulltext_index_columns',
   'all_parameters', 'parameters', 'procedures', 'numbered_procedures', 'triggers', 'database_permissions',
   'assemblies', 'assembly_modules', 'table_types', 'assembly_types',
-  'sysdac_instances', 'syspolicy_configuration'
+  'sysdac_instances', 'syspolicy_configuration', 'sysobjects', 'syscolumns', 'systypes'
 ]);
 
 /** Mapeamento dos tipos SQLite para os tipos do catalogo sys.types. */
@@ -2325,6 +2391,18 @@ function sincronizarCatalogoDatabase(db, dbName) {
 
   restaurarProcedimentos(db, rotinasSalvas, parametrosSalvos);
   restaurarFuncoes(db, funcoesSalvas, parametrosFuncoesSalvos);
+
+  // Cache usado por OBJECT_ID/OBJECT_NAME. O better-sqlite3 nao permite
+  // executar preparacoes dentro do callback de uma UDF ("database connection
+  // is busy executing a query"), entao o catalogo e lido aqui, fora da UDF,
+  // sempre que a sincronizacao roda (abertura e apos DDL).
+  const objetosCatalogo = db.prepare('SELECT object_id, name FROM main.objects').all();
+  db.__objetosPorNome = new Map(
+    objetosCatalogo.map((objeto) => [objeto.name.toLowerCase(), objeto.object_id])
+  );
+  db.__objetosPorId = new Map(
+    objetosCatalogo.map((objeto) => [objeto.object_id, objeto.name])
+  );
 }
 
 /**
@@ -2572,8 +2650,9 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
   db.function('fn_syspolicy_is_automation_enabled', () => 1);
 
   // OBJECT_ID devolve null para objetos inexistentes (ex.: sysdac_instances,
-  // usado pelo SMO para detectar DAC) e o rowid de sqlite_master para os
-  // objetos reais do database atual.
+  // usado pelo SMO para detectar DAC) e o object_id do catalogo para os objetos
+  // reais do database atual. Le do cache montado na sincronizacao porque o
+  // better-sqlite3 bloqueia consultas dentro da UDF.
   db.function('OBJECT_ID', { varargs: true }, (nome) => {
     if (nome == null) return null;
     const alvo = String(nome)
@@ -2581,33 +2660,17 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
       .replace(/\[/g, '')
       .replace(/\]/g, '')
       .toLowerCase();
-    try {
-      if (ehMsdb && OBJETOS_MSDB.has(alvo)) {
-        return 1001;
-      }
-      const objeto = db.prepare(
-        'SELECT rowid AS id FROM main.sqlite_master WHERE lower(name) = ?'
-      ).get(alvo);
-      return objeto ? objeto.id : null;
-    } catch (_erro) {
-      return null;
-    }
+    if (ehMsdb && OBJETOS_MSDB.has(alvo)) return 1001;
+    const cache = db.__objetosPorNome;
+    return cache && cache.has(alvo) ? cache.get(alvo) : null;
   });
 
   // OBJECT_NAME e usado pelo SMO para montar o nome de procedures numeradas
-  // ao gerar o script de "Modificar".
+  // ao gerar o script de "Modificar". Mesmo cache de OBJECT_ID (sentido inverso).
   db.function('OBJECT_NAME', { varargs: true }, (id) => {
     if (id == null) return null;
-    try {
-      const objeto = db.prepare('SELECT name FROM main.objects WHERE object_id = ?')
-        .get(Number(id));
-      if (objeto) return objeto.name;
-      const tabela = db.prepare('SELECT name FROM main.sqlite_master WHERE rowid = ?')
-        .get(Number(id));
-      return tabela ? tabela.name : null;
-    } catch (_erro) {
-      return null;
-    }
+    const cache = db.__objetosPorId;
+    return cache && cache.has(Number(id)) ? cache.get(Number(id)) : null;
   });
 
   db.function('DB_ID', { varargs: true }, (nome) => {

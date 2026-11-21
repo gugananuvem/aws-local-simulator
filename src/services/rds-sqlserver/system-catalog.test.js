@@ -113,6 +113,33 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     });
   });
 
+  test('expõe sysobjects com o id usado pelo Table Designer', () => {
+    engine.execute('principal', 'CREATE TABLE [dbo].[TB_TESTE_DESIGN] ([Id] INT NOT NULL)');
+
+    const linha = engine.execute('principal',
+      "select id from sysobjects where id = object_id(N'dbo.TB_TESTE_DESIGN')"
+    ).rows[0];
+    expect(linha.id).toBeGreaterThan(0);
+
+    const objeto = engine.execute('principal',
+      "SELECT name, xtype, type, parent_obj FROM sysobjects WHERE name = 'TB_TESTE_DESIGN'"
+    ).rows[0];
+    expect(objeto).toMatchObject({
+      name: 'TB_TESTE_DESIGN',
+      xtype: 'U',
+      type: 'U',
+      parent_obj: 0
+    });
+
+    const colunas = engine.execute('principal', `
+      SELECT c.name, c.colid, t.name AS tipo
+      FROM syscolumns c JOIN systypes t ON c.xtype = t.xtype
+      WHERE c.id = object_id(N'dbo.TB_TESTE_DESIGN')
+      ORDER BY c.colid
+    `).rows;
+    expect(colunas).toEqual([{ name: 'Id', colid: 1, tipo: 'int' }]);
+  });
+
   test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {
     const configuracoes = engine.execute('master', `
       SELECT configuration_id, name, value_in_use FROM sys.configurations
