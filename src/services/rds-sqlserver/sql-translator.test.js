@@ -180,6 +180,28 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
     });
 
     test.each([
+      [
+        'INSERT com GETDATE()',
+        'INSERT INTO t (d) VALUES(GETDATE())',
+        'VALUES(unixepoch())'
+      ],
+      [
+        'UPDATE com SYSDATETIME()',
+        'UPDATE t SET d = SYSDATETIME() WHERE id = 1',
+        'd = unixepoch()'
+      ],
+      [
+        'INSERT com CURRENT_TIMESTAMP',
+        'INSERT INTO t (d) VALUES(CURRENT_TIMESTAMP)',
+        'VALUES(unixepoch())'
+      ]
+    ])('grava data/hora como número: %s', (_nome, entrada, esperado) => {
+      const resultado = translator.translate(entrada);
+      expect(resultado).toContain(esperado);
+      expect(resultado).not.toContain("datetime('now')");
+    });
+
+    test.each([
       ['dia literal negativo', 'SELECT DATEADD(day, -2, GETDATE())', "'-2 days'"],
       ['mês literal', 'SELECT DATEADD(mm, 1, Created) FROM t', "'+1 months'"],
       ['semana vira dias', 'SELECT DATEADD(week, 2, GETDATE())', "'+14 days'"],
@@ -733,6 +755,16 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(
         translator.columnTypesFor('SELECT (select physical_memory_in_use_kb from sys.dm_os_process_memory) AS [PhysicalMemoryUsageInKB]')
       ).toEqual({ PhysicalMemoryUsageInKB: 'BIGINT' });
+      expect(
+        translator.columnTypesFor(
+          'SELECT CAST(case when ((SELECT MAX(data_compression) FROM sys.partitions WHERE object_id = tbl.object_id) > 0) then 1 else 0 end AS bit) AS [HasCompressedPartitions] FROM sys.tables AS tbl'
+        )
+      ).toMatchObject({ HasCompressedPartitions: 'BIT' });
+      expect(
+        translator.columnTypesFor(
+          'SELECT CAST(case when ((SELECT MAX(case when xml_compression = 1 then 1 else 0 end) FROM sys.partitions WHERE object_id = tbl.object_id) > 0) then 1 else 0 end AS bit) AS [HasXmlCompressedPartitions] FROM sys.tables AS tbl'
+        )
+      ).toEqual({ HasXmlCompressedPartitions: 'BIT' });
     });
 
     test('declara DOUBLE nas consultas auxiliares de tamanho do database', () => {
@@ -1284,6 +1316,32 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(resultado).toMatch(/CREATE TABLE IF NOT EXISTS _tmp_temp_data_retention_property/i);
       expect(resultado).toContain('AS [AnsiNullDefault]');
       expect(resultado).not.toMatch(/\bEXEC\b|\bIF\s+serverproperty/i);
+    });
+
+    test('remove o batch de propriedades de tabela do SMO 19', () => {
+      const entrada = [
+        'create table #temp_data_retention_table_property (object_id int not null, data_retention_period int not null, data_retention_period_unit int not null, data_deletion_filter_column_name sysname not null)',
+        "if serverproperty('engineedition') = 9",
+        "exec sp_executesql N'insert into #temp_data_retention_table_property select dr_tbl.object_id from sys.tables dr_tbl'",
+        'create table #external_data (object_id int not null)',
+        'insert into #external_data select tbl.object_id from sys.tables tbl LEFT OUTER JOIN sys.external_tables AS et ON et.object_id = tbl.object_id',
+        'create table #tmp_ledger_details (object_id int)',
+        'create table #tmp_ledger_view_column_names (object_id int)',
+        'INSERT INTO #tmp_ledger_view_column_names SELECT t_obj_id, [ledger_transaction_id_column_name] = MAX(CASE WHEN ledger_view_column_type = 1 THEN c_name ELSE NULL END) FROM ( SELECT t.object_id as t_obj_id FROM sys.tables as t CROSS APPLY ( SELECT 1 ) a ) as x GROUP BY x.t_obj_id',
+        'SELECT CAST(case when ((SELECT MAX(data_compression) FROM sys.partitions WHERE object_id = tbl.object_id) > 0) then 1 else 0 end AS bit) AS [HasCompressedPartitions]',
+        'FROM sys.tables AS tbl',
+        'drop table #temp_data_retention_table_property'
+      ].join('\r\n');
+
+      const resultado = translator.translate(entrada);
+      expect(resultado).toMatch(/CREATE TABLE IF NOT EXISTS _tmp_temp_data_retention_table_property/i);
+      expect(resultado).toMatch(/CREATE TABLE IF NOT EXISTS _tmp_external_data/i);
+      expect(resultado).not.toMatch(/\bEXEC\b|\bIF\s+serverproperty/i);
+      expect(resultado).not.toMatch(/CROSS APPLY/i);
+      expect(resultado).toMatch(/_tmp_tmp_ledger_view_column_names\s*\([^)]*\)\s*;\s*SELECT/i);
+      expect(resultado).toContain('AS [HasCompressedPartitions]');
+      expect(resultado).toContain('FROM main.partitions');
+      expect(resultado).toContain('main.external_tables');
     });
   });
 

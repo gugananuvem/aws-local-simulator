@@ -439,7 +439,8 @@ const DDL_DATABASE = `
     lock_escalation TINYINT NOT NULL DEFAULT 0,
     history_table_id INTEGER,
     filestream_data_space_id INTEGER,
-    is_dropped_ledger_table BIT NOT NULL DEFAULT 0
+    is_dropped_ledger_table BIT NOT NULL DEFAULT 0,
+    ledger_view_id INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS all_views (
@@ -527,9 +528,11 @@ const DDL_DATABASE = `
     null_on_null_input BIT NOT NULL DEFAULT 0
   );
 
-  CREATE VIEW IF NOT EXISTS table_types AS
+  DROP VIEW IF EXISTS table_types;
+  CREATE VIEW table_types AS
     SELECT name, user_type_id AS object_id, schema_id, schema_id AS principal_id,
-           is_user_defined, 1 AS is_table_type
+           is_user_defined, 1 AS is_table_type,
+           user_type_id AS type_table_object_id, 0 AS is_memory_optimized
     FROM types WHERE is_table_type = 1;
 
   CREATE VIEW IF NOT EXISTS assembly_types AS
@@ -548,6 +551,13 @@ const DDL_DATABASE = `
     is_hypothetical BIT NOT NULL DEFAULT 0,
     is_disabled BIT NOT NULL DEFAULT 0,
     data_space_id INTEGER NOT NULL DEFAULT 1,
+    is_unique BIT NOT NULL DEFAULT 0,
+    fill_factor INTEGER NOT NULL DEFAULT 0,
+    ignore_dup_key BIT NOT NULL DEFAULT 0,
+    allow_row_locks BIT NOT NULL DEFAULT 1,
+    allow_page_locks BIT NOT NULL DEFAULT 1,
+    filter_definition TEXT,
+    compression_delay INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (object_id, index_id)
   );
 
@@ -596,7 +606,7 @@ const DDL_DATABASE = `
     is_dropped_ledger_column BIT NOT NULL DEFAULT 0,
     is_masked BIT NOT NULL DEFAULT 0,
     graph_type INTEGER NOT NULL DEFAULT 0,
-    encryption_type INTEGER NOT NULL DEFAULT 0,
+    encryption_type INTEGER,
     encryption_algorithm_name TEXT,
     column_encryption_key_id INTEGER,
     is_xml_document BIT NOT NULL DEFAULT 0,
@@ -648,7 +658,8 @@ const DDL_DATABASE = `
     create_date DATETIME,
     modify_date DATETIME,
     is_ms_shipped BIT NOT NULL DEFAULT 0,
-    definition TEXT
+    definition TEXT,
+    is_system_named BIT NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS index_columns (
@@ -657,6 +668,10 @@ const DDL_DATABASE = `
     index_column_id INTEGER NOT NULL,
     column_id INTEGER NOT NULL,
     is_included_column BIT NOT NULL DEFAULT 0,
+    key_ordinal INTEGER NOT NULL DEFAULT 0,
+    partition_ordinal INTEGER NOT NULL DEFAULT 0,
+    is_descending_key BIT NOT NULL DEFAULT 0,
+    column_store_order_ordinal INTEGER,
     PRIMARY KEY (object_id, index_id, index_column_id)
   );
 
@@ -731,6 +746,144 @@ const DDL_DATABASE = `
     migration_direction_desc TEXT
   );
 
+  -- Tabelas de metadados de fontes externas. O simulador nao cria tabelas
+  -- externas, mas o SMO 19 faz LEFT JOIN nelas ao gerar o CREATE de uma tabela.
+  CREATE TABLE IF NOT EXISTS external_tables (
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    data_source_id INTEGER,
+    file_format_id INTEGER,
+    location TEXT,
+    reject_type TEXT,
+    reject_value REAL,
+    reject_sample_value REAL,
+    sharding_col_id INTEGER,
+    distribution_type INTEGER,
+    remote_schema_name TEXT,
+    remote_object_name TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS external_data_sources (
+    data_source_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS external_file_formats (
+    file_format_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT
+  );
+
+  -- Usado pelo SMO para calcular HasCompressedPartitions ao gerar o CREATE.
+  CREATE TABLE IF NOT EXISTS partitions (
+    object_id INTEGER NOT NULL,
+    index_id INTEGER NOT NULL DEFAULT 0,
+    data_compression INTEGER NOT NULL DEFAULT 0,
+    xml_compression BIT NOT NULL DEFAULT 0
+  );
+
+  -- O SMO le MaskingFunction ao listar colunas para gerar o CREATE da tabela.
+  CREATE TABLE IF NOT EXISTS masked_columns (
+    object_id INTEGER NOT NULL,
+    column_id INTEGER NOT NULL,
+    masking_function TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS filetable_system_defined_objects (
+    object_id INTEGER NOT NULL PRIMARY KEY
+  );
+
+  -- Tabelas de metadados de ind consultadas pelo SMO ao gerar o CREATE da
+  -- tabela. O simulador nao cria ind espaciais/XML/hash, mas elas precisam
+  -- existir para os LEFT JOIN nao falharem.
+  CREATE TABLE IF NOT EXISTS spatial_index_tessellations (
+    object_id INTEGER NOT NULL,
+    index_id INTEGER NOT NULL,
+    bounding_box_xmin REAL NOT NULL DEFAULT 0,
+    bounding_box_ymin REAL NOT NULL DEFAULT 0,
+    bounding_box_xmax REAL NOT NULL DEFAULT 0,
+    bounding_box_ymax REAL NOT NULL DEFAULT 0,
+    cells_per_object INTEGER NOT NULL DEFAULT 0,
+    level_1_grid INTEGER NOT NULL DEFAULT 0,
+    level_2_grid INTEGER NOT NULL DEFAULT 0,
+    level_3_grid INTEGER NOT NULL DEFAULT 0,
+    level_4_grid INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS spatial_indexes (
+    object_id INTEGER NOT NULL,
+    index_id INTEGER NOT NULL,
+    spatial_index_type INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS hash_indexes (
+    object_id INTEGER NOT NULL,
+    index_id INTEGER NOT NULL,
+    bucket_count INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS xml_indexes (
+    object_id INTEGER NOT NULL,
+    index_id INTEGER NOT NULL,
+    name TEXT,
+    xml_index_type INTEGER NOT NULL DEFAULT 0,
+    secondary_type TEXT,
+    using_xml_index_id INTEGER,
+    path_id INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS selective_xml_index_paths (
+    object_id INTEGER NOT NULL,
+    index_id INTEGER NOT NULL,
+    path_id INTEGER NOT NULL,
+    name TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS stats (
+    object_id INTEGER NOT NULL,
+    stats_id INTEGER NOT NULL,
+    no_recompute BIT NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS key_constraints (
+    parent_object_id INTEGER NOT NULL,
+    unique_index_id INTEGER NOT NULL,
+    is_system_named BIT NOT NULL DEFAULT 1
+  );
+
+  -- Metadados de full-text consultados pelo SMO ao gerar o script da tabela.
+  CREATE TABLE IF NOT EXISTS fulltext_indexes (
+    object_id INTEGER NOT NULL,
+    unique_index_id INTEGER NOT NULL,
+    fulltext_catalog_id INTEGER NOT NULL,
+    data_space_id INTEGER NOT NULL DEFAULT 1,
+    is_enabled BIT NOT NULL DEFAULT 1,
+    change_tracking_state TEXT NOT NULL DEFAULT 'M',
+    stoplist_id INTEGER,
+    property_list_id INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS fulltext_catalogs (
+    fulltext_catalog_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS fulltext_stoplists (
+    stoplist_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS registered_search_property_lists (
+    property_list_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS fulltext_index_columns (
+    object_id INTEGER NOT NULL,
+    column_id INTEGER NOT NULL,
+    type_column_id INTEGER,
+    language_id INTEGER NOT NULL DEFAULT 1033,
+    statistical_semantics INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE VIEW IF NOT EXISTS views AS SELECT * FROM all_views;
   CREATE VIEW IF NOT EXISTS columns AS SELECT * FROM all_columns;
   CREATE VIEW IF NOT EXISTS all_objects AS SELECT * FROM objects;
@@ -757,6 +910,12 @@ const OBJETOS_DO_CATALOGO = new Set([
   'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
+  'external_tables', 'external_data_sources', 'external_file_formats', 'partitions',
+  'masked_columns', 'filetable_system_defined_objects',
+  'spatial_index_tessellations', 'spatial_indexes', 'hash_indexes', 'xml_indexes',
+  'selective_xml_index_paths', 'stats', 'key_constraints',
+  'fulltext_indexes', 'fulltext_catalogs', 'fulltext_stoplists',
+  'registered_search_property_lists', 'fulltext_index_columns',
   'all_parameters', 'parameters', 'procedures', 'numbered_procedures', 'triggers', 'database_permissions',
   'assemblies', 'assembly_modules', 'table_types', 'assembly_types',
   'sysdac_instances', 'syspolicy_configuration'
@@ -1164,6 +1323,16 @@ function sincronizarCatalogoDatabase(db, dbName) {
   // A definicao da view pode mudar entre versoes; CREATE VIEW IF NOT EXISTS
   // nao substitui uma view antiga que devolvia a procedure base como numero 1.
   db.exec('DROP VIEW IF EXISTS main.numbered_procedures;');
+  // Versoes anteriores gravavam encryption_type = 0 (NOT NULL). No SQL Server a
+  // coluna e NULL quando a coluna nao usa Always Encrypted; com 0 o SMO entende
+  // que ha criptografia e gera "ENCRYPTED WITH" em todas as colunas do CREATE.
+  // A tabela e reconstruida pelo DDL abaixo e repopulada pela sincronizacao.
+  const colunaEncryption = db.prepare('PRAGMA main.table_info(all_columns)')
+    .all()
+    .find((info) => info.name === 'encryption_type');
+  if (colunaEncryption && colunaEncryption.notnull === 1) {
+    db.exec('DROP TABLE IF EXISTS main.all_columns;');
+  }
   db.exec(DDL_DATABASE);
   // databases antigos nao tem returns_type/corpo; a migracao precisa acontecer
   // antes de ler as funcoes salvas logo abaixo.
@@ -1249,7 +1418,38 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['lock_escalation', 'TINYINT NOT NULL DEFAULT 0'],
     ['history_table_id', 'INTEGER'],
     ['filestream_data_space_id', 'INTEGER'],
-    ['is_dropped_ledger_table', 'BIT NOT NULL DEFAULT 0']
+    ['is_dropped_ledger_table', 'BIT NOT NULL DEFAULT 0'],
+    ['ledger_view_id', 'INTEGER NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'main', 'partitions', [
+    ['xml_compression', 'BIT NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'main', 'spatial_index_tessellations', [
+    ['level_1_grid', 'INTEGER NOT NULL DEFAULT 0'],
+    ['level_2_grid', 'INTEGER NOT NULL DEFAULT 0'],
+    ['level_3_grid', 'INTEGER NOT NULL DEFAULT 0'],
+    ['level_4_grid', 'INTEGER NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'main', 'xml_indexes', [
+    ['name', 'TEXT']
+  ]);
+  migrarColunas(db, 'main', 'index_columns', [
+    ['key_ordinal', 'INTEGER NOT NULL DEFAULT 0'],
+    ['partition_ordinal', 'INTEGER NOT NULL DEFAULT 0'],
+    ['is_descending_key', 'BIT NOT NULL DEFAULT 0'],
+    ['column_store_order_ordinal', 'INTEGER']
+  ]);
+  migrarColunas(db, 'main', 'default_constraints', [
+    ['is_system_named', 'BIT NOT NULL DEFAULT 1']
+  ]);
+  migrarColunas(db, 'main', 'indexes', [
+    ['is_unique', 'BIT NOT NULL DEFAULT 0'],
+    ['fill_factor', 'INTEGER NOT NULL DEFAULT 0'],
+    ['ignore_dup_key', 'BIT NOT NULL DEFAULT 0'],
+    ['allow_row_locks', 'BIT NOT NULL DEFAULT 1'],
+    ['allow_page_locks', 'BIT NOT NULL DEFAULT 1'],
+    ['filter_definition', 'TEXT'],
+    ['compression_delay', 'INTEGER NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'main', 'all_columns', [
     ['default_object_id', 'INTEGER NOT NULL DEFAULT 0'],
@@ -1264,7 +1464,6 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['is_dropped_ledger_column', 'BIT NOT NULL DEFAULT 0'],
     ['is_masked', 'BIT NOT NULL DEFAULT 0'],
     ['graph_type', 'INTEGER NOT NULL DEFAULT 0'],
-    ['encryption_type', 'INTEGER NOT NULL DEFAULT 0'],
     ['encryption_algorithm_name', 'TEXT'],
     ['column_encryption_key_id', 'INTEGER'],
     ['is_xml_document', 'BIT NOT NULL DEFAULT 0']
@@ -1327,6 +1526,12 @@ function sincronizarCatalogoDatabase(db, dbName) {
     'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
     'sensitivity_classifications', 'change_tracking_tables', 'filetables',
     'periods', 'remote_data_archive_tables',
+    'external_tables', 'external_data_sources', 'external_file_formats', 'partitions',
+    'masked_columns', 'filetable_system_defined_objects',
+    'spatial_index_tessellations', 'spatial_indexes', 'hash_indexes', 'xml_indexes',
+    'selective_xml_index_paths', 'stats', 'key_constraints',
+    'fulltext_indexes', 'fulltext_catalogs', 'fulltext_stoplists',
+    'registered_search_property_lists', 'fulltext_index_columns',
     'all_parameters', 'triggers', 'database_permissions', 'assemblies', 'assembly_modules'
   ]) {
     db.exec(`DELETE FROM main.${tabela}`);
@@ -1705,6 +1910,13 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
   };
   db.function('OBJECTPROPERTY', { varargs: true }, objectProperty);
   db.function('OBJECTPROPERTYEX', { varargs: true }, objectProperty);
+  // O SMO le INDEXPROPERTY ao gerar o CREATE de uma tabela. As propriedades
+  // consultadas sao bitwise e nao alteram o script quando devolvem 0/1.
+  db.function('INDEXPROPERTY', { varargs: true }, (_id, _indice, propriedade) => {
+    const nome = String(propriedade || '').toLowerCase();
+    if (nome === 'ispadindex' || nome === 'isoptimizedforsequentialkey') return 0;
+    return 0;
+  });
   db.function('COLUMNPROPERTY', { varargs: true }, (_id, _coluna, propriedade) => {
     const nome = String(propriedade || '').toLowerCase();
     if (nome === 'isdeterministic' || nome === 'isprecise') return 1;

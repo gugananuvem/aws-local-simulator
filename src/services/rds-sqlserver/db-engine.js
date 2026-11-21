@@ -522,7 +522,7 @@ class DbEngine {
     const primeiroSelect = resultados.find(resultado => resultado.type === 'select');
     if (primeiroSelect) {
       this._aplicarTiposShim(sqlBruto, primeiroSelect);
-      return primeiroSelect;
+      return this._normalizarDatasEmColunasNumericas(primeiroSelect);
     }
 
     for (let i = resultados.length - 1; i >= 0; i--) {
@@ -1124,6 +1124,46 @@ class DbEngine {
       const tipo = nome && tipos[nome];
       return tipo ? { ...coluna, type: tipo } : coluna;
     });
+  }
+
+  /**
+   * Versoes anteriores gravaram datetime('now') como TEXTO em colunas INTEGER.
+   * O TDS converte texto em coluna numerica para 0; normalizamos esse legado
+   * para Unix timestamp para que consultas antigas tambem nao devolvam zero.
+   * @private
+   */
+  _normalizarDatasEmColunasNumericas(resultado) {
+    if (!resultado || resultado.type !== 'select' || !Array.isArray(resultado.columns)) {
+      return resultado;
+    }
+    const indiceNumericos = resultado.columns
+      .map((coluna, indice) => (
+        /^(?:INT|INTEGER|BIGINT|SMALLINT|TINYINT)$/i.test(String((coluna && coluna.type) || ''))
+          ? indice
+          : -1
+      ))
+      .filter((indice) => indice >= 0);
+    if (indiceNumericos.length === 0) return resultado;
+
+    let alterou = false;
+    const linhas = (resultado.rows || []).map((linha) => {
+      if (!linha || typeof linha !== 'object') return linha;
+      const copia = Array.isArray(linha) ? [...linha] : { ...linha };
+      for (const indice of indiceNumericos) {
+        const chave = Array.isArray(linha) ? indice : resultado.columns[indice].name;
+        const valor = copia[chave];
+        if (typeof valor !== 'string' || !/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(valor)) {
+          continue;
+        }
+        const sufixoFuso = /(?:Z|[+-]\d{2}:?\d{2})$/.test(valor) ? '' : 'Z';
+        const milissegundos = Date.parse(`${valor.replace(' ', 'T')}${sufixoFuso}`);
+        if (!Number.isFinite(milissegundos)) continue;
+        copia[chave] = Math.floor(milissegundos / 1000);
+        alterou = true;
+      }
+      return copia;
+    });
+    return alterou ? { ...resultado, rows: linhas } : resultado;
   }
 
   /**

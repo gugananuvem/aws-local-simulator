@@ -125,6 +125,17 @@ class SqlTranslator {
       return sql;
     }
 
+    // GETDATE() usado em INSERT/UPDATE precisa gerar número (Unix timestamp),
+    // não texto: colunas INT do SQLite com afinidade numérica gravam o texto de
+    // datetime('now') como TEXT e o TDS devolve 0. Em SELECT o valor continua
+    // sendo datetime('now') para chegar ao cliente como DATETIME.
+    const codigoOriginal = this._mascarar(sql).code;
+    const semPrefixo = codigoOriginal.replace(
+      /^(?:\s|USE\s+[^;]*;|SET\s+[^;]*;|GO\s*(?:\r?\n|;))*/i,
+      ''
+    );
+    const gravarDataHora = /^(?:INSERT|UPDATE|MERGE)\b/i.test(semPrefixo);
+
     // Ao listar parametros de procedure numerada, o SMO embrulha o SELECT em
     // BEGIN/END com uma CTE mycte sobre sys.numbered_procedure_parameters. O
     // tradutor nao executa blocos procedurais, então removemos o envelope e
@@ -200,6 +211,12 @@ class SqlTranslator {
     resultado = this._removerShimAvailabilityGroups(resultado);
     resultado = this._removerShimRemoteDataArchive(resultado);
     resultado = this._removerShimDataRetention(resultado);
+    // O SMO usa a sintaxe T-SQL "[alias] = expressao" na lista de SELECT.
+    // O SQLite so aceita "expressao AS [alias]".
+    resultado = resultado.replace(
+      /\[(ledger_transaction_id_column_name|ledger_sequence_number_column_name|ledger_operation_type_column_name|ledger_operation_type_desc_column_name)\]\s*=\s*(MAX\(CASE[\s\S]*?END\))/gi,
+      (_correspondencia, nome, expressao) => `${expressao} AS [${nome}]`
+    );
     resultado = resultado.replace(
       /\bDROP\s+TABLE\s+#{1,2}[A-Za-z_]\w*/gi,
       (correspondencia, deslocamento, texto) => {
@@ -286,7 +303,7 @@ class SqlTranslator {
     resultado = this._traduzirConcatenacao(resultado);
     resultado = this._traduzirMerge(resultado);
     resultado = this._traduzirUpdateJoin(resultado);
-    resultado = this._traduzirFuncoes(resultado);
+    resultado = this._traduzirFuncoes(resultado, gravarDataHora);
     resultado = this._traduzirTop(resultado);
     resultado = this._traduzirDdl(resultado);
     resultado = this._normalizarWhitespace(resultado);
@@ -810,20 +827,53 @@ class SqlTranslator {
    * @private
    */
   _removerShimDataRetention(sql) {
-    if (!/#temp_data_retention_property\b/i.test(sql)) return sql;
-    const inicio = sql.search(
-      /\bIF\s+serverproperty\s*\(\s*N?['"]engineedition['"]\s*\)\s*=\s*9\b/i
+    if (!/#temp_data_retention(?:_table)?_property\b/i.test(sql)) return sql;
+
+    // Remove o bloco IF ... EXEC sp_executesql que so preenche a tabela no
+    // Azure SQL DB (engineedition = 9). Nas edicoes simuladas ela fica vazia.
+    let resultado = sql.replace(
+      /\bIF\s+(?:EXISTS\s*)?\(?\s*serverproperty\s*\(\s*N?['"]engineedition['"]\s*\)\s*=\s*9\s*\)?\s*\r?\n[ \t]*EXEC(?:UTE)?\s+(?:sys\.)?sp_executesql\s+N?'(?:''|[^'])*'\s*;?/gi,
+      ''
     );
-    if (inicio < 0) return sql;
 
-    const fim = sql.search(/\bSELECT\s+dtb\.is_ansi_null_default_on\s+AS\s+\[AnsiNullDefault\]/i);
-    if (fim <= inicio) return sql;
+    // CROSS APPLY nao existe no SQLite. Como o simulador nao registra tabelas
+    // ledger, a tabela temporaria de colunas pode permanecer vazia.
+    resultado = resultado.replace(
+      /\bINSERT\s+INTO\s+#tmp_ledger_view_column_names\b[\s\S]*?\bGROUP\s+BY\s+x\.t_obj_id\s*/gi,
+      ';\r\n'
+    );
 
-    const criacao = sql
-      .slice(0, inicio)
-      .trim()
-      .replace(/\bCREATE\s+TABLE\b/i, (correspondencia) => `${correspondencia} IF NOT EXISTS`);
-    return `${criacao}; ${sql.slice(fim)}`;
+    // Formato antigo do batch: depois de remover o IF/EXEC, tudo que vem antes
+    // do SELECT final depende apenas de DMVs ausentes e pode ser descartado.
+    const fimAntigo = resultado.search(
+      /\bSELECT\s+dtb\.is_ansi_null_default_on\s+AS\s+\[AnsiNullDefault\]/i
+    );
+    if (fimAntigo >= 0) {
+      const criacao = resultado
+        .slice(0, fimAntigo)
+        .trim()
+        .replace(/\bCREATE\s+TABLE\b/i, (correspondencia) => `${correspondencia} IF NOT EXISTS`);
+      return `${criacao}; ${resultado.slice(fimAntigo)}`;
+    }
+
+    // O SMO 19 separa as instrucoes apenas por quebras de linha. O SQLite exige
+    // ';' para distinguir CREATE/INSERT/SELECT/DROP dentro do mesmo lote.
+    resultado = resultado.replace(
+      /\r?\n[ \t]*(?=(?:CREATE\s+TABLE\s+#|INSERT\s+INTO\s+#|DROP\s+TABLE\s+#)\b)/gi,
+      ';\n'
+    );
+    resultado = resultado.replace(
+      /\r?\n[ \t]*(?=SELECT\s*\r?\n\s*CAST\s*\(\s*\r?\n?\s*serverproperty\s*\(\s*N?['"]Servername['"])/i,
+      ';\n'
+    );
+
+    // Uma execucao interrompida pode deixar as temporarias no arquivo SQLite;
+    // IF NOT EXISTS torna a repeticao do batch inofensiva.
+    resultado = resultado.replace(
+      /\bCREATE\s+TABLE\s+(#(?:temp_data_retention_table_property|external_data|tmp_ledger_details|tmp_ledger_view_column_names))\b/gi,
+      (correspondencia, nome) => `CREATE TABLE IF NOT EXISTS ${nome}`
+    );
+    return resultado;
   }
 
   /**
@@ -847,7 +897,12 @@ class SqlTranslator {
       'identity_columns', 'foreign_key_columns', 'column_encryption_keys',
       'xml_schema_collections', 'sensitivity_classifications',
       'change_tracking_tables', 'filetables', 'periods',
-      'remote_data_archive_tables', 'schemas',
+      'remote_data_archive_tables', 'external_tables',
+      'external_data_sources', 'external_file_formats', 'partitions', 'masked_columns',
+      'filetable_system_defined_objects', 'spatial_index_tessellations',
+      'spatial_indexes', 'hash_indexes', 'xml_indexes', 'selective_xml_index_paths',
+      'stats', 'key_constraints', 'fulltext_indexes', 'fulltext_catalogs',
+      'fulltext_stoplists', 'registered_search_property_lists', 'fulltext_index_columns', 'schemas',
       'all_parameters', 'parameters', 'triggers', 'database_permissions',
       'procedures', 'numbered_procedures', 'assemblies', 'assembly_modules',
       'table_types', 'assembly_types'
@@ -1227,6 +1282,23 @@ class SqlTranslator {
     // essa propriedade com GetBoolean() e estoura "Specified cast is not valid".
     if (/\bIsXTPSupported\b/i.test(sql)) {
       return { IsXTPSupported: 'BIT' };
+    }
+
+    // O SMO le HasCompressedPartitions com GetBoolean(); sem tipo TDS explicito
+    // o SQLite devolve INTN e o Script() da tabela estoura InvalidCastException.
+    if (/\bHasCompressedPartitions\b/i.test(sql)) {
+      return {
+        Server_Name: 'TEXT',
+        Database_Name: 'TEXT',
+        Schema: 'TEXT',
+        Name: 'TEXT',
+        HasCompressedPartitions: 'BIT'
+      };
+    }
+
+    // Mesmo padrao de HasCompressedPartitions: o SMO le com GetBoolean().
+    if (/\bHasXmlCompressedPartitions\b/i.test(sql)) {
+      return { HasXmlCompressedPartitions: 'BIT' };
     }
 
     // PhysicalMemoryUsageInKB e lido pelo SMO como Int64; o SELECT devolve INT
@@ -2039,19 +2111,20 @@ class SqlTranslator {
   }
 
   /** Traduz funções escalares do T-SQL para equivalentes SQLite. @private */
-  _traduzirFuncoes(sql) {
+  _traduzirFuncoes(sql, gravarDataHora = false) {
     let resultado = sql;
+    const agora = gravarDataHora ? 'unixepoch()' : "datetime('now')";
 
     for (let passada = 0; passada < 2; passada += 1) {
       resultado = this._substituirTodos(
         resultado,
         '\\b(?:GETDATE|SYSDATETIME)\\s*\\(\\s*\\)',
-        () => "datetime('now')"
+        () => agora
       );
       resultado = this._substituirTodos(
         resultado,
         '\\bCURRENT_TIMESTAMP\\b(?:\\s*\\(\\s*\\))?',
-        () => "datetime('now')"
+        () => agora
       );
       resultado = this._substituirTodos(
         resultado,

@@ -314,6 +314,39 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(indices.rows).toEqual([{ id: 0, descricao: 'HEAP' }]);
   });
 
+  test('expõe metadados de Always Encrypted como NULL para colunas comuns', () => {
+    engine.execute('principal', 'CREATE TABLE clientes (id INT NOT NULL)');
+
+    const coluna = engine.execute('principal',
+      "SELECT encryption_type, encryption_algorithm_name, column_encryption_key_id " +
+      "FROM sys.all_columns WHERE name = 'id'"
+    );
+    expect(coluna.rows).toEqual([{
+      encryption_type: null,
+      encryption_algorithm_name: null,
+      column_encryption_key_id: null
+    }]);
+
+    const db = engine.getOrCreateDatabase('principal');
+    const info = db.prepare('PRAGMA main.table_info(all_columns)').all()
+      .find((campo) => campo.name === 'encryption_type');
+    expect(info.notnull).toBe(0);
+  });
+
+  test('cria as tabelas de metadados consultadas ao gerar o CREATE da tabela', () => {
+    const tabelas = [
+      'external_tables', 'external_data_sources', 'external_file_formats',
+      'partitions', 'masked_columns', 'filetable_system_defined_objects',
+      'spatial_index_tessellations', 'spatial_indexes', 'hash_indexes',
+      'xml_indexes', 'selective_xml_index_paths', 'stats', 'key_constraints',
+      'fulltext_indexes', 'fulltext_catalogs', 'fulltext_stoplists',
+      'registered_search_property_lists', 'fulltext_index_columns'
+    ];
+    for (const tabela of tabelas) {
+      expect(() => engine.execute('principal', `SELECT * FROM sys.${tabela}`)).not.toThrow();
+    }
+  });
+
   test('expõe server_role_members, default_constraints e politicas do msdb', () => {
     const papeis = engine.execute('principal',
       "SELECT r.name AS papel, p.name AS membro FROM sys.server_role_members m " +

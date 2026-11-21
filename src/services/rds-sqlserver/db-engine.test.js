@@ -98,6 +98,30 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('GETDATE() em INSERT grava Unix timestamp em coluna INT', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('principal', 'CREATE TABLE evento (id INTEGER PRIMARY KEY AUTOINCREMENT, datahora INT NOT NULL)');
+      comTradutor.execute('principal', 'INSERT INTO evento (datahora) VALUES (GETDATE())');
+
+      const linha = comTradutor.execute('principal', 'SELECT id, datahora FROM evento').rows[0];
+      expect(typeof linha.datahora).toBe('number');
+      expect(linha.datahora).toBeGreaterThan(1_700_000_000);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('converte texto de data herdado em coluna INT para Unix timestamp', () => {
+    engine.execute('principal', 'CREATE TABLE evento (id INTEGER PRIMARY KEY AUTOINCREMENT, datahora INT NOT NULL)');
+    const db = engine.getOrCreateDatabase('principal');
+    db.prepare('INSERT INTO evento (datahora) VALUES (?)').run('2026-11-21 16:34:53');
+
+    const linha = engine.execute('principal', 'SELECT datahora FROM evento').rows[0];
+    expect(typeof linha.datahora).toBe('number');
+    expect(linha.datahora).toBe(Math.floor(Date.parse('2026-11-21T16:34:53Z') / 1000));
+  });
+
   test('converte parâmetros nomeados do RPC em placeholders ligados', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
 
