@@ -2433,6 +2433,7 @@ class SqlTranslator {
         continue;
       }
       let traduzido = this._traduzirTipos(trecho);
+      traduzido = this._removerOpcoesRestricao(traduzido);
       traduzido = this._removerOnPrimary(traduzido);
       traduzido = this._traduzirIdentity(traduzido);
       traduzido = this._removerChavePrimariaRedundante(traduzido);
@@ -2460,6 +2461,19 @@ class SqlTranslator {
       resultado = this._substituirTodos(resultado, fonte, () => tipo);
     }
     return resultado;
+  }
+
+  /**
+   * Remove as opções de storage do SQL Server (CLUSTERED/NONCLUSTERED e
+   * WITH (...)) das restrições de chave primária/única em nível de tabela.
+   * O SQLite não aceita essas cláusulas em CREATE TABLE.
+   * @private
+   */
+  _removerOpcoesRestricao(sql) {
+    return sql.replace(
+      /(\b(?:CONSTRAINT\s+(?:\[[^\]]+\]|"[^"]+"|\w+)\s+)?(?:PRIMARY\s+KEY|UNIQUE))\s+(?:CLUSTERED|NONCLUSTERED)?\s*(\([^)]*\))(?:\s*WITH\s*\([^)]*\))?/gi,
+      (_correspondencia, inicio, colunas) => `${inicio} ${colunas}`
+    );
   }
 
   /** Remove as cláusulas ON/TEXTIMAGE_ON [PRIMARY] de um trecho DDL. @private */

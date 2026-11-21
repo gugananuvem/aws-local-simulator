@@ -92,6 +92,15 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         'CREATE TABLE t (id INTEGER)'
       ],
       [
+        'remove CLUSTERED e WITH de PRIMARY KEY composta',
+        'CREATE TABLE [dbo].[TB051] ([IdUsuario] [nvarchar](21) NOT NULL, ' +
+          '[IDServico] [int] NOT NULL, CONSTRAINT [PK051] PRIMARY KEY CLUSTERED ' +
+          '([IdUsuario] ASC, [IDServico] ASC) ' +
+          'WITH (PAD_INDEX = OFF, IGNORE_DUP_KEY = OFF) ON [PRIMARY]) ON [PRIMARY]',
+        'CREATE TABLE [TB051] ([IdUsuario] TEXT NOT NULL, [IDServico] INTEGER NOT NULL, ' +
+          'CONSTRAINT [PK051] PRIMARY KEY ([IdUsuario] ASC, [IDServico] ASC))'
+      ],
+      [
         'remove GO do meio do lote',
         'SELECT 1\nGO\nSELECT 2',
         'SELECT 1 SELECT 2'
