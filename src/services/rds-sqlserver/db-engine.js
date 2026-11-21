@@ -487,7 +487,8 @@ class DbEngine {
     this._resultadoRotina = null;
     let parametros = Array.isArray(params) ? params : params == null ? [] : [params];
     const restante = this._executarDdlDatabase(sqlBruto);
-    const semRotinas = this._executarDdlProcedures(restante, db);
+    const { restante: semDefaults, defaults } = this._executarDefaultsTabela(restante);
+    const semRotinas = this._executarDdlProcedures(semDefaults, db);
     const semFuncoes = this._executarDdlFunctions(semRotinas, db);
     let sqlTraduzido = this._traduzir(semFuncoes);
     if (parametros.length && this.translator && typeof this.translator.substituirParametros === 'function') {
@@ -501,6 +502,7 @@ class DbEngine {
     }
     const instrucoes = this._dividirEmInstrucoes(sqlTraduzido);
     if (instrucoes.length === 0) {
+      this._criarTriggersDefaults(defaults, db);
       if (this._resultadoRotina) {
         const resultado = this._resultadoRotina;
         this._resultadoRotina = null;
@@ -518,6 +520,8 @@ class DbEngine {
         throw this._traduzirErroSqlite(erro);
       }
     }
+
+    this._criarTriggersDefaults(defaults, db);
 
     const primeiroSelect = resultados.find(resultado => resultado.type === 'select');
     if (primeiroSelect) {
@@ -574,6 +578,92 @@ class DbEngine {
       padrao.lastIndex = correspondência.index;
     }
     return restante;
+  }
+
+  /**
+   * ALTER TABLE ... ADD DEFAULT (...) FOR coluna nao existe no SQLite. Extrai
+   * esses comandos do lote e devolve os dados para criar os triggers depois que
+   * o CREATE TABLE correspondente tiver sido executado.
+   * @private
+   */
+  _executarDefaultsTabela(sqlBruto) {
+    let restante = String(sqlBruto || '');
+    const defaults = [];
+    const padrao = /\bALTER\s+TABLE\s+(?:(?:\[[^\]]+\]|"[^"]+"|\w+)\s*\.\s*)?(?:\[([^\]]+)\]|"([^"]+)"|(\w+))\s+ADD\s+DEFAULT\s*\((.+?)\)\s*FOR\s+(?:\[([^\]]+)\]|"([^"]+)"|(\w+))/gi;
+    let correspondência;
+
+    while ((correspondência = padrao.exec(restante)) !== null) {
+      defaults.push({
+        nomeTabela: correspondência[1] || correspondência[2] || correspondência[3],
+        expressao: correspondência[4],
+        nomeColuna: correspondência[5] || correspondência[6] || correspondência[7],
+        expressaoTraduzida: String(this._traduzir(correspondência[4])).trim()
+      });
+      restante = restante.slice(0, correspondência.index)
+        + restante.slice(correspondência.index + correspondência[0].length);
+      padrao.lastIndex = correspondência.index;
+    }
+
+    return { restante, defaults };
+  }
+
+  /**
+   * Aplica os defaults extraidos como triggers AFTER INSERT e os registra no
+   * catalogo do database para o SMO.
+   * @private
+   */
+  _criarTriggersDefaults(defaults, db) {
+    if (!Array.isArray(defaults) || defaults.length === 0) return;
+
+    for (const { nomeTabela, nomeColuna, expressao, expressaoTraduzida } of defaults) {
+      const tabelaSegura = nomeTabela.replace(/"/g, '""');
+      const colunaSegura = nomeColuna.replace(/"/g, '""');
+      const nomeDefault = `DF__${nomeTabela}__${nomeColuna}`;
+      const nomeDefaultSeguro = nomeDefault.replace(/"/g, '""');
+
+      try {
+        db.exec(`
+          CREATE TRIGGER IF NOT EXISTS "${nomeDefaultSeguro}"
+          AFTER INSERT ON "${tabelaSegura}"
+          WHEN NEW."${colunaSegura}" IS NULL
+          BEGIN
+            UPDATE "${tabelaSegura}" SET "${colunaSegura}" = ${expressaoTraduzida}
+            WHERE rowid = NEW.rowid;
+          END
+        `);
+      } catch (erro) {
+        logger.debug(`[RDS SQL Server] Trigger de default ignorado (${nomeTabela}.${nomeColuna}): ${erro.message}`);
+      }
+
+      try {
+        const objeto = db.prepare(
+          "SELECT object_id FROM main.objects WHERE name = ? AND type = 'U'"
+        ).get(nomeTabela);
+        if (objeto) {
+          const linhaColuna = db.prepare(
+            'SELECT cid FROM pragma_table_info(?) WHERE name = ?'
+          ).get(nomeTabela, nomeColuna);
+          const parentColumnId = linhaColuna ? linhaColuna.cid + 1 : 1;
+          const objectId = 900000000 + objeto.object_id * 1000 + parentColumnId;
+          const data = new Date().toISOString().slice(0, 19).replace('T', ' ');
+          db.prepare(`
+            INSERT OR REPLACE INTO main.default_constraints
+              (name, object_id, parent_object_id, parent_column_id, create_date, modify_date, definition)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(nomeDefault, objectId, objeto.object_id, parentColumnId, data, data, `(${expressao})`);
+          db.prepare(`
+            INSERT OR REPLACE INTO main.objects
+              (name, object_id, schema_id, principal_id, type, type_desc, create_date, parent_object_id)
+            VALUES (?, ?, 1, 1, 'D', 'DEFAULT_CONSTRAINT', ?, ?)
+          `).run(nomeDefault, objectId, data, objeto.object_id);
+          db.prepare(
+            'UPDATE main.all_columns SET default_object_id = ? WHERE object_id = ? AND column_id = ?'
+          ).run(objectId, objeto.object_id, parentColumnId);
+        }
+      } catch (erro) {
+        logger.debug(`[RDS SQL Server] Catalogo de default ignorado (${nomeTabela}.${nomeColuna}): ${erro.message}`);
+      }
+    }
   }
 
   /**

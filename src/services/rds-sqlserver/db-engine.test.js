@@ -391,6 +391,52 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('aplica ADD DEFAULT do script do SSMS como trigger de INSERT', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('principal', [
+        'CREATE FUNCTION [dbo].[TOUNIX_TIMESTAMP] (@ctimestamp datetime)',
+        'RETURNS integer AS BEGIN',
+        '  declare @return integer',
+        "  SELECT @return = DATEDIFF(SECOND,{d '1970-01-01'}, @ctimestamp)",
+        '  return @return',
+        'END'
+      ].join('\r\n'));
+      comTradutor.execute('principal', `
+        DROP TABLE IF EXISTS [TB001];
+        CREATE TABLE [dbo].[TB001](
+          [Id] [nvarchar](21) NOT NULL,
+          [DataCriacao] [bigint] NULL,
+          [DataAtualiacao] [bigint] NULL,
+          PRIMARY KEY CLUSTERED ([Id] ASC)
+            WITH (PAD_INDEX = OFF, IGNORE_DUP_KEY = OFF) ON [PRIMARY]
+        ) ON [PRIMARY];
+        ALTER TABLE [dbo].[TB001] ADD DEFAULT ([DBO].[TOUNIX_TIMESTAMP](getdate())) FOR [DataCriacao];
+        ALTER TABLE [dbo].[TB001] ADD DEFAULT ([DBO].[TOUNIX_TIMESTAMP](getdate())) FOR [DataAtualiacao];
+      `);
+
+      comTradutor.execute('principal', "INSERT INTO [TB001] ([Id]) VALUES ('teste')");
+      const linhas = comTradutor.execute('principal',
+        'SELECT Id, DataCriacao, DataAtualiacao FROM TB001').rows;
+      expect(linhas).toHaveLength(1);
+      expect(linhas[0].Id).toBe('teste');
+      expect(linhas[0].DataCriacao).toBeGreaterThan(0);
+      expect(linhas[0].DataAtualiacao).toBeGreaterThan(0);
+
+      const defaults = comTradutor.execute('principal', `
+        SELECT d.name, d.definition FROM sys.default_constraints AS d
+        WHERE d.parent_object_id = (SELECT object_id FROM sys.objects WHERE name = 'TB001')
+        ORDER BY d.name
+      `).rows;
+      expect(defaults.map((linha) => linha.name)).toEqual([
+        'DF__TB001__DataAtualiacao', 'DF__TB001__DataCriacao'
+      ]);
+    } finally {
+      comTradutor.execute('principal', 'DROP TABLE IF EXISTS [TB001]');
+      comTradutor.close();
+    }
+  });
+
   test('lote de refresh do SSMS retorna os databases de usuario apos CREATE', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {
