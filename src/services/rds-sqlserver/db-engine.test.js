@@ -188,7 +188,7 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
-  test('sys.numbered_procedures informa o numero 1 ao abrir Modify no SSMS', () => {
+  test('sys.numbered_procedures nao lista a procedure base ao abrir Modify no SSMS', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {
       comTradutor.execute('principal', 'CREATE PROCEDURE PROC_NUMERADA AS SELECT 1');
@@ -198,7 +198,18 @@ describe('DbEngine (RDS SQL Server)', () => {
         INNER JOIN sys.numbered_procedures AS nsp ON nsp.object_id = sp.object_id
         WHERE sp.name = 'PROC_NUMERADA'
       `).rows;
-      expect(numeros).toEqual([{ Number: 1 }]);
+      expect(numeros).toEqual([]);
+      const definicoes = comTradutor.execute('principal', `
+        SELECT nsp.definition AS [Definition]
+        FROM sys.numbered_procedures AS nsp WHERE nsp.name = 'PROC_NUMERADA'
+      `).rows;
+      expect(definicoes).toEqual([]);
+      expect(comTradutor.execute('principal', `
+        SELECT sm.definition AS [Definition]
+        FROM sys.sql_modules AS sm
+        JOIN sys.procedures AS p ON p.object_id = sm.object_id
+        WHERE p.name = 'PROC_NUMERADA'
+      `).rows[0].Definition).toContain('CREATE PROCEDURE');
       comTradutor.execute('principal', 'DROP PROCEDURE PROC_NUMERADA');
     } finally {
       comTradutor.close();
@@ -253,6 +264,28 @@ describe('DbEngine (RDS SQL Server)', () => {
       expect(() => comTradutor.execute('principal',
         "SELECT dbo.TOUNIX_TIMESTAMP({d '1970-01-01 00:00:10'}) AS ts"
       )).toThrow(/Invalid object name/);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('definition de funcao guarda o CREATE completo exigido pelo SMO', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute(
+        'principal',
+        'CREATE FUNCTION [dbo].[F_DEFINICAO] (@v int) RETURNS int AS BEGIN RETURN @v END'
+      );
+      const registro = comTradutor.execute('principal', `
+        SELECT m.definition FROM sys.sql_modules AS m
+        JOIN sys.objects AS o ON o.object_id = m.object_id
+        WHERE o.name = 'F_DEFINICAO'
+      `).rows[0];
+      expect(registro.definition).toContain('CREATE FUNCTION [dbo].[F_DEFINICAO]');
+      expect(registro.definition).toContain('RETURNS int');
+      expect(comTradutor.execute('principal', 'SELECT dbo.F_DEFINICAO(7) AS v').rows)
+        .toEqual([{ v: 7 }]);
+      comTradutor.execute('principal', 'DROP FUNCTION [dbo].[F_DEFINICAO]');
     } finally {
       comTradutor.close();
     }

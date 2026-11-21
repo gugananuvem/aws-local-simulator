@@ -598,7 +598,8 @@ class DbEngine {
     if (criacao) {
       catalogoSistema.criarProcedimento(db, {
         nome: criacao[2],
-        definicao: criacao[4].trim().replace(/;+\s*$/, ''),
+        definicao: criacao[0].trim().replace(/;+\s*$/, ''),
+        corpo: criacao[4].trim().replace(/;+\s*$/, ''),
         parametros: this._parametrosProcedimento(criacao[3]),
         alterar: /^alter/i.test(criacao[1])
       });
@@ -626,7 +627,7 @@ class DbEngine {
           const valor = argumentos[indice] || parametro.valorPadrao || 'NULL';
           return `DECLARE ${parametro.nome} ${parametro.tipo} = ${valor}`;
         });
-        const corpo = [declaracoes.join('; '), procedimento.definicao]
+        const corpo = [declaracoes.join('; '), procedimento.corpo || procedimento.definicao]
           .filter(Boolean)
           .join('; ');
         this._nivelProcedimento = (this._nivelProcedimento || 0) + 1;
@@ -660,7 +661,8 @@ class DbEngine {
     if (criacao) {
       const funcao = catalogoSistema.criarFuncao(db, {
         nome: criacao[2],
-        definicao: this._limparCorpoRotina(criacao[5]),
+        definicao: criacao[0],
+        corpo: this._limparCorpoRotina(criacao[5]),
         parametros: this._parametrosProcedimento(criacao[3]),
         tipoRetorno: criacao[4],
         alterar: /^alter/i.test(criacao[1])
@@ -753,7 +755,7 @@ class DbEngine {
     });
 
     let retorno = null;
-    for (const instrucao of this._dividirInstrucoesFuncao(funcao.definicao)) {
+    for (const instrucao of this._dividirInstrucoesFuncao(funcao.corpo || funcao.definicao)) {
       const texto = instrucao.trim();
       if (!texto) continue;
       let correspondencia = /^DECLARE\s+(@[A-Za-z_]\w*)(?:\s+[\w\s(),]+?)?(?:\s*=\s*([\s\S]*))?$/i.exec(texto);

@@ -1069,6 +1069,74 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(
         translator.translate('SELECT procedure_number FROM sys.numbered_procedures')
       ).toContain('FROM main.numbered_procedures');
+      expect(translator.columnTypesFor(
+        'SELECT nsp.procedure_number AS [Number] FROM sys.numbered_procedures AS nsp'
+      )).toEqual({ Number: 'SMALLINT' });
+      expect(translator.translate(
+        'SELECT nsp.definition FROM sys.numbered_procedures AS nsp ' +
+        'WHERE nsp.procedure_number = @_msparam_0'
+      )).toContain('procedure_number = CAST(? AS INTEGER)');
+    });
+
+    test('remove o envelope BEGIN/END da lista de parametros de procedure numerada', () => {
+      const sql = [
+        'Begin',
+        '  With mycte(object_id, procedure_number, name, parameter_id,',
+        '    system_type_id, user_type_id, max_length, precision,',
+        '    scale, is_output, is_cursor_ref, default_value)',
+        '  as (select object_id, procedure_number, name, parameter_id,',
+        '    system_type_id, user_type_id, max_length, precision,',
+        '    scale, is_output, is_cursor_ref, null as default_value',
+        '    FROM sys.numbered_procedure_parameters)',
+        '',
+        'SELECT param.parameter_id AS [ID], param.name AS [Name]',
+        'FROM sys.all_objects AS sp',
+        'INNER JOIN sys.numbered_procedures AS nsp ON nsp.object_id = sp.object_id',
+        'INNER JOIN mycte AS param ON param.object_id = nsp.object_id',
+        '  AND CAST(param.procedure_number AS int) = nsp.procedure_number',
+        'WHERE nsp.procedure_number = @_msparam_0',
+        'ORDER BY [ID] ASC',
+        'end'
+      ].join('\n');
+      const traduzido = translator.translate(sql);
+      expect(traduzido).not.toMatch(/\bbegin\b|\bend\b/i);
+      expect(traduzido).toContain('main.all_parameters AS param');
+      expect(traduzido).toContain('procedure_number = CAST(? AS INTEGER)');
+    });
+
+    test('preenche Text e BodyStartIndex ao gerar o script de procedure numerada', () => {
+      const sql =
+        'SELECT NULL AS [Text], NULL AS [BodyStartIndex], nsp.definition AS [Definition] ' +
+        'FROM sys.numbered_procedures AS nsp WHERE nsp.procedure_number = @_msparam_0';
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain('nsp.definition AS [Text]');
+      expect(traduzido).toContain("instr(nsp.definition, 'BEGIN') - 1");
+      expect(traduzido).not.toContain('NULL AS [Text]');
+      expect(traduzido).not.toContain('NULL AS [BodyStartIndex]');
+    });
+
+    test('devolve opcoes do usuario como bit para o Script() de funcoes', () => {
+      const sql =
+        'declare @UserOption int ' +
+        "select @UserOption=convert(int, c.value) from sys.configurations c where c.name='user options' " +
+        'SELECT CAST(@UserOption & 1 AS bit) AS [DisableDefaultConstraintCheck], ' +
+        'CAST(@UserOption & 16 AS bit) AS [AnsiNulls]';
+      expect(translator.translate(sql)).toBe(
+        'SELECT CAST(0 AS bit) AS [DisableDefaultConstraintCheck], ' +
+        'CAST(0 AS bit) AS [AnsiNulls]'
+      );
+      expect(translator.columnTypesFor(sql)).toEqual(expect.objectContaining({
+        AnsiNulls: 'BIT',
+        QuotedIdentifier: 'BIT',
+        DisableDefaultConstraintCheck: 'BIT'
+      }));
+    });
+
+    test('converte is_output parametrico para INTEGER no script de funcoes', () => {
+      const sql =
+        'SELECT CAST(1 AS bit) AS [IsNativelyCompiled], ret_param.is_output ' +
+        'FROM sys.all_objects AS udf WHERE ret_param.is_output = @_msparam_0';
+      expect(translator.translate(sql)).toContain('is_output = CAST(? AS INTEGER)');
     });
 
     test('informa os tipos TDS esperados pelo SMO nas views de sistema', () => {
@@ -1096,7 +1164,20 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         IsNativelyCompiled: 'BIT',
         ImplementationType: 'INT',
         FunctionType: 'INT',
-        CreateDate: 'DATETIME'
+        CreateDate: 'DATETIME',
+        IsSchemaOwned: 'BIT',
+        IsSystemObject: 'BIT',
+        AnsiNullsStatus: 'BIT',
+        QuotedIdentifierStatus: 'BIT',
+        IsSchemaBound: 'BIT',
+        ReturnsNullOnNullInput: 'BIT',
+        IsDeterministic: 'BIT',
+        IsInlineable: 'BIT',
+        Recompile: 'BIT',
+        Startup: 'BIT',
+        ForReplication: 'BIT',
+        InlineType: 'TINYINT',
+        XmlDocumentConstraint: 'TINYINT'
       });
     });
 

@@ -125,6 +125,63 @@ class SqlTranslator {
       return sql;
     }
 
+    // Ao listar parametros de procedure numerada, o SMO embrulha o SELECT em
+    // BEGIN/END com uma CTE mycte sobre sys.numbered_procedure_parameters. O
+    // tradutor nao executa blocos procedurais, então removemos o envelope e
+    // usamos sys.all_parameters (toda procedure comum tem numero 1).
+    if (/\bWith\s+mycte\s*\(/i.test(sql) && /\bnumbered_procedure_parameters\b/i.test(sql)) {
+      const selecao = sql.match(/\n\s*SELECT\b[\s\S]*$/i);
+      if (selecao) {
+        sql = selecao[0].replace(/\r?\n\s*end\s*$/i, '');
+        sql = sql
+          .replace(/\bmycte\s+AS\s+param\b/gi, 'sys.all_parameters AS param')
+          .replace(/\s+AND\s+CAST\(param\.procedure_number\s+AS\s+int\)=nsp\.procedure_number/gi, '');
+      }
+    }
+
+    // Ao gerar o script de uma procedure numerada, o SMO le a propriedade
+    // [Text]. O SQL Server devolve NULL nessa coluna e monta o texto a partir
+    // de [Definition], mas o caminho do SMO exige o texto preenchido: se [Text]
+    // chegar nulo, GetTextProperty() lanca NullReferenceException.
+    if (/\bnumbered_procedures\b/i.test(sql) && /\bNULL\s+AS\s+\[Text\]/i.test(sql)) {
+      sql = sql.replace(/\bNULL\s+AS\s+\[Text\]/gi, 'nsp.definition AS [Text]');
+    }
+
+    // Quando o cliente tambem pede [BodyStartIndex], ele divide o texto em
+    // cabecalho/corpo usando esse indice. Preenchê-lo evita que o SMO tente
+    // recalcular o indice a partir de um cabecalho que nao existe.
+    if (/\bnumbered_procedures\b/i.test(sql) && /\bNULL\s+AS\s+\[BodyStartIndex\]/i.test(sql)) {
+      sql = sql.replace(
+        /\bNULL\s+AS\s+\[BodyStartIndex\]/gi,
+        "CASE WHEN instr(nsp.definition, 'BEGIN') > 0 " +
+          "THEN instr(nsp.definition, 'BEGIN') - 1 ELSE 0 END AS [BodyStartIndex]"
+      );
+    }
+
+    // O SMO envia procedure_number como nvarchar ('1'). Como a coluna da view
+    // e uma constante sem afinidade, o SQLite compara inteiro com texto e nao
+    // devolve linha; sem isso o NumberedStoredProcedure fica sem Text e o
+    // Script() lanca NullReferenceException.
+    if (/\bnumbered_procedures\b/i.test(sql)) {
+      sql = sql.replace(
+        /(\bprocedure_number\s*=\s*)(@_msparam_\d+)/gi,
+        '$1CAST($2 AS INTEGER)'
+      );
+    }
+
+    // O SMO le as opcoes do usuario antes de gerar o script de uma funcao.
+    // O batch declara @UserOption e devolve um bit por opcao; o SQLite nao
+    // executa declaracao, entao devolvemos as colunas com os valores padrao.
+    if (/\bdeclare\s+@UserOption\b/i.test(sql) && /\[AnsiNulls\]/i.test(sql)) {
+      const colunas = [...sql.matchAll(/AS\s+\[([A-Za-z]+)\]/g)]
+        .map((correspondencia) => correspondencia[1]);
+      if (colunas.length) {
+        return `SELECT ${colunas
+          .map((nome) => `CAST(0 AS bit) AS [${nome}]`)
+          .join(', ')}`;
+      }
+    }
+
     // O SMO encerra consultas de disponibilidade com varios DROP TABLE sem
     // ponto e virgula. No SQLite cada DROP precisa ser um comando separado e
     // IF EXISTS evita falhar quando a tabela temporaria nunca foi criada.
@@ -179,6 +236,12 @@ class SqlTranslator {
       // como nvarchar no primeiro parametro; o CASE termina com 'end)='.
       resultado = resultado.replace(
         /(\bend\s*\)\s*=\s*)(@_msparam_\d+)/gi,
+        '$1CAST($2 AS INTEGER)'
+      );
+      // O script de "Modify" de uma funcao procura o parametro de retorno com
+      // is_output = '1'. O SQLite compara texto com numero e nao encontraria.
+      resultado = resultado.replace(
+        /(\bis_output\s*=\s*)(@_msparam_\d+)/gi,
         '$1CAST($2 AS INTEGER)'
       );
     }
@@ -943,6 +1006,30 @@ class SqlTranslator {
 
     const código = this._mascarar(sql).code;
 
+    // O SMO le cada opcao do usuario com GetBoolean(); sem o tipo TDS
+    // explicito as colunas chegam como INTN e o Script() estoura cast.
+    if (/\bdeclare\s+@UserOption\b/i.test(sql) && /\bAnsiNulls\b/i.test(sql)) {
+      const tipos = {};
+      for (const nome of [
+        'DisableDefaultConstraintCheck', 'ImplicitTransactions', 'CursorCloseOnCommit',
+        'AnsiWarnings', 'AnsiPadding', 'AnsiNulls', 'AbortOnArithmeticErrors',
+        'IgnoreArithmeticErrors', 'QuotedIdentifier', 'NoCount', 'AnsiNullDefaultOn',
+        'AnsiNullDefaultOff', 'ConcatenateNullYieldsNull', 'NumericRoundAbort',
+        'AbortTransactionOnError'
+      ]) {
+        tipos[nome] = 'BIT';
+      }
+      return tipos;
+    }
+
+    // sys.numbered_procedures.procedure_number e SMALLINT no SQL Server. O
+    // SSMS le essa coluna com GetInt16(); sem o tipo explicito o TDS chega
+    // como INTN de 4 bytes e o script de "Modify" falha com
+    // "Specified cast is not valid" (Microsoft.SqlServer.SqlEnum).
+    if (/\bnumbered_procedures\b/i.test(sql)) {
+      return { Number: 'SMALLINT' };
+    }
+
     // Batch de propriedades do database (#tempbackup): o SQLite nao preserva
     // CAST/DECLARE, então declara-se tipo por tipo para o SMO nao estourar
     // "Specified cast is not valid" ao ler bools, datas, floats e GUIDs.
@@ -1230,7 +1317,20 @@ class SqlTranslator {
         IsNativelyCompiled: 'BIT',
         ImplementationType: 'INT',
         FunctionType: 'INT',
-        CreateDate: 'DATETIME'
+        CreateDate: 'DATETIME',
+        IsSchemaOwned: 'BIT',
+        IsSystemObject: 'BIT',
+        AnsiNullsStatus: 'BIT',
+        QuotedIdentifierStatus: 'BIT',
+        IsSchemaBound: 'BIT',
+        ReturnsNullOnNullInput: 'BIT',
+        IsDeterministic: 'BIT',
+        IsInlineable: 'BIT',
+        Recompile: 'BIT',
+        Startup: 'BIT',
+        ForReplication: 'BIT',
+        InlineType: 'TINYINT',
+        XmlDocumentConstraint: 'TINYINT'
       };
     }
 

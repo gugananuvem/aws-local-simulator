@@ -469,6 +469,12 @@ const DDL_DATABASE = `
     parameter_id INTEGER NOT NULL,
     name TEXT,
     user_type_id INTEGER NOT NULL DEFAULT 56,
+    system_type_id INTEGER NOT NULL DEFAULT 56,
+    max_length INTEGER NOT NULL DEFAULT -1,
+    precision TINYINT NOT NULL DEFAULT 0,
+    scale TINYINT NOT NULL DEFAULT 0,
+    xml_collection_id INTEGER NOT NULL DEFAULT 0,
+    is_xml_document BIT NOT NULL DEFAULT 0,
     is_output BIT NOT NULL DEFAULT 0,
     has_default_value BIT NOT NULL DEFAULT 0,
     default_value TEXT,
@@ -517,7 +523,8 @@ const DDL_DATABASE = `
     assembly_id INTEGER,
     assembly_class TEXT,
     assembly_method TEXT,
-    execute_as_principal_id INTEGER
+    execute_as_principal_id INTEGER,
+    null_on_null_input BIT NOT NULL DEFAULT 0
   );
 
   CREATE VIEW IF NOT EXISTS table_types AS
@@ -601,7 +608,11 @@ const DDL_DATABASE = `
     definition TEXT,
     is_recompiled BIT NOT NULL DEFAULT 0,
     execute_as_principal_id INTEGER,
-    returns_type TEXT DEFAULT 'int'
+    returns_type TEXT DEFAULT 'int',
+    null_on_null_input BIT NOT NULL DEFAULT 1,
+    inline_type TINYINT NOT NULL DEFAULT 0,
+    is_inlineable BIT NOT NULL DEFAULT 0,
+    corpo TEXT
   );
 
   CREATE TABLE IF NOT EXISTS system_sql_modules (
@@ -611,8 +622,10 @@ const DDL_DATABASE = `
     execute_as_principal_id INTEGER
   );
 
-  CREATE VIEW IF NOT EXISTS all_sql_modules AS
-    SELECT object_id, definition, 0 AS uses_native_compilation
+  DROP VIEW IF EXISTS all_sql_modules;
+  CREATE VIEW all_sql_modules AS
+    SELECT object_id, definition, 0 AS uses_native_compilation,
+           0 AS inline_type, 0 AS is_inlineable
     FROM sql_modules;
 
   CREATE TABLE IF NOT EXISTS extended_properties (
@@ -721,13 +734,16 @@ const DDL_DATABASE = `
   CREATE VIEW IF NOT EXISTS views AS SELECT * FROM all_views;
   CREATE VIEW IF NOT EXISTS columns AS SELECT * FROM all_columns;
   CREATE VIEW IF NOT EXISTS all_objects AS SELECT * FROM objects;
-  -- O SSMS, ao abrir "Modify" de uma procedure, consulta sys.numbered_procedures
-  -- para descobrir o numero da rotina. Procedures comuns tem numero 1.
+  -- O SSMS consulta sys.numbered_procedures ao abrir "Modify" de uma procedure.
+  -- No SQL Server a view so lista procedures criadas com numero explicito (;2,
+  -- ;3, ...); a procedure base (numero 1) nao aparece aqui. O simulador nao
+  -- registra procedures numeradas, entao a view existe mas devolve zero linhas.
+  -- Devolver a procedure base fazia o SMO gerar o CREATE PROCEDURE duas vezes.
   CREATE VIEW IF NOT EXISTS numbered_procedures AS
-    SELECT o.object_id, 1 AS procedure_number, o.name, m.definition
+    SELECT o.object_id, CAST(1 AS SMALLINT) AS procedure_number, o.name, m.definition
     FROM all_objects AS o
     LEFT JOIN sql_modules AS m ON m.object_id = o.object_id
-    WHERE o.type IN ('P', 'PC');
+    WHERE 1 = 0;
   CREATE VIEW IF NOT EXISTS system_views AS SELECT * FROM all_views WHERE is_ms_shipped = 1;
 `;
 
@@ -1145,16 +1161,22 @@ function nomeDatabaseLocal(db, dbName) {
  * @private
  */
 function sincronizarCatalogoDatabase(db, dbName) {
+  // A definicao da view pode mudar entre versoes; CREATE VIEW IF NOT EXISTS
+  // nao substitui uma view antiga que devolvia a procedure base como numero 1.
+  db.exec('DROP VIEW IF EXISTS main.numbered_procedures;');
   db.exec(DDL_DATABASE);
-  // databases antigos nao tem returns_type; a migracao precisa acontecer antes
-  // de ler as funcoes salvas logo abaixo.
-  migrarColunas(db, 'main', 'sql_modules', [['returns_type', "TEXT DEFAULT 'int'"]]);
+  // databases antigos nao tem returns_type/corpo; a migracao precisa acontecer
+  // antes de ler as funcoes salvas logo abaixo.
+  migrarColunas(db, 'main', 'sql_modules', [
+    ['returns_type', "TEXT DEFAULT 'int'"],
+    ['corpo', 'TEXT']
+  ]);
 
   // As tabelas objects/sql_modules/all_parameters sao reconstruidas abaixo.
   // Guarda as rotinas registradas para reinstalla-las depois da reconstrucao.
   const rotinasSalvas = db.prepare(`
     SELECT p.name, p.object_id, p.schema_id, p.principal_id, p.create_date,
-           p.modify_date, p.is_ms_shipped, m.definition
+           p.modify_date, p.is_ms_shipped, m.definition, m.corpo
     FROM main.procedures AS p
     LEFT JOIN main.sql_modules AS m ON m.object_id = p.object_id
   `).all();
@@ -1168,7 +1190,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
   // parametros para reinstala-las no final.
   const funcoesSalvas = db.prepare(`
     SELECT o.object_id, o.name, o.schema_id, o.principal_id, o.create_date,
-           o.modify_date, o.is_ms_shipped, m.definition, m.returns_type
+           o.modify_date, o.is_ms_shipped, m.definition, m.returns_type, m.corpo
     FROM main.objects AS o
     LEFT JOIN main.sql_modules AS m ON m.object_id = o.object_id
     WHERE o.type = 'FN'
@@ -1258,7 +1280,13 @@ function sincronizarCatalogoDatabase(db, dbName) {
   migrarColunas(db, 'main', 'all_parameters', [
     ['has_default_value', 'BIT NOT NULL DEFAULT 0'],
     ['default_value', 'TEXT'],
-    ['is_readonly', 'BIT NOT NULL DEFAULT 0']
+    ['is_readonly', 'BIT NOT NULL DEFAULT 0'],
+    ['system_type_id', 'INTEGER NOT NULL DEFAULT 56'],
+    ['max_length', 'INTEGER NOT NULL DEFAULT -1'],
+    ['precision', 'TINYINT NOT NULL DEFAULT 0'],
+    ['scale', 'TINYINT NOT NULL DEFAULT 0'],
+    ['xml_collection_id', 'INTEGER NOT NULL DEFAULT 0'],
+    ['is_xml_document', 'BIT NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'main', 'procedures', [
     ['is_auto_executed', 'BIT NOT NULL DEFAULT 0']
@@ -1269,6 +1297,15 @@ function sincronizarCatalogoDatabase(db, dbName) {
       ['execute_as_principal_id', 'INTEGER']
     ]);
   }
+  migrarColunas(db, 'main', 'sql_modules', [
+    ['returns_type', "TEXT DEFAULT 'int'"],
+    ['null_on_null_input', 'BIT NOT NULL DEFAULT 1'],
+    ['inline_type', 'TINYINT NOT NULL DEFAULT 0'],
+    ['is_inlineable', 'BIT NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'main', 'assembly_modules', [
+    ['null_on_null_input', 'BIT NOT NULL DEFAULT 0']
+  ]);
   migrarColunas(db, 'main', 'synonyms', [
     ['base_object_name', "TEXT DEFAULT ''"]
   ]);
@@ -1748,6 +1785,22 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     }
   });
 
+  // OBJECT_NAME e usado pelo SMO para montar o nome de procedures numeradas
+  // ao gerar o script de "Modificar".
+  db.function('OBJECT_NAME', { varargs: true }, (id) => {
+    if (id == null) return null;
+    try {
+      const objeto = db.prepare('SELECT name FROM main.objects WHERE object_id = ?')
+        .get(Number(id));
+      if (objeto) return objeto.name;
+      const tabela = db.prepare('SELECT name FROM main.sqlite_master WHERE rowid = ?')
+        .get(Number(id));
+      return tabela ? tabela.name : null;
+    } catch (_erro) {
+      return null;
+    }
+  });
+
   db.function('DB_ID', { varargs: true }, (nome) => {
     const alvo = nome == null ? dbName : nome;
     const indice = databases()
@@ -1949,7 +2002,7 @@ function restaurarProcedimentos(db, rotinas, parametros) {
     VALUES (?, ?, ?, ?, 'P', 'SQL_STORED_PROCEDURE', ?, ?)
   `);
   const inserirModulo = db.prepare(`
-    INSERT INTO main.sql_modules (object_id, definition) VALUES (?, ?)
+    INSERT INTO main.sql_modules (object_id, definition, corpo) VALUES (?, ?, ?)
   `);
   const inserirParametro = db.prepare(`
     INSERT INTO main.all_parameters
@@ -1968,7 +2021,20 @@ function restaurarProcedimentos(db, rotinas, parametros) {
       rotina.name, objectId, rotina.schema_id || 1, rotina.principal_id || 1,
       rotina.create_date || dataHoraAtualSql(), rotina.is_ms_shipped || 0
     );
-    inserirModulo.run(objectId, rotina.definition || '');
+    const parametrosDaRotina = parametros.filter((parametro) =>
+      parametro.object_id === rotina.object_id && Number(parametro.parameter_id) > 0
+    );
+    const corpoRotina = rotina.corpo == null
+      ? extrairCorpoFuncao(rotina.definition)
+      : rotina.corpo;
+    const definicaoRotina = temCabecalhoProcedimento(rotina.definition)
+      ? rotina.definition
+      : montarDefinicaoProcedimento(db, {
+          nome: rotina.name,
+          parametros: parametrosDaRotina,
+          corpo: corpoRotina
+        });
+    inserirModulo.run(objectId, definicaoRotina || '', corpoRotina);
     parametros
       .filter((parametro) => parametro.object_id === rotina.object_id)
       .forEach((parametro) => inserirParametro.run(
@@ -1992,7 +2058,8 @@ function restaurarFuncoes(db, funcoes, parametros) {
     VALUES (?, ?, ?, ?, 'FN', 'SQL_SCALAR_FUNCTION', ?, ?)
   `);
   const inserirModulo = db.prepare(`
-    INSERT INTO main.sql_modules (object_id, definition, returns_type) VALUES (?, ?, ?)
+    INSERT INTO main.sql_modules (object_id, definition, returns_type, corpo)
+    VALUES (?, ?, ?, ?)
   `);
   const inserirParametro = db.prepare(`
     INSERT INTO main.all_parameters
@@ -2009,7 +2076,26 @@ function restaurarFuncoes(db, funcoes, parametros) {
       funcao.name, objectId, funcao.schema_id || 1, funcao.principal_id || 1,
       funcao.create_date || dataHoraAtualSql(), funcao.is_ms_shipped || 0
     );
-    inserirModulo.run(objectId, funcao.definition || '', funcao.returns_type || 'int');
+    const parametrosDaFuncao = parametros.filter((parametro) =>
+      parametro.object_id === funcao.object_id && Number(parametro.parameter_id) > 0
+    );
+    const corpoFuncao = funcao.corpo == null
+      ? extrairCorpoFuncao(funcao.definition)
+      : funcao.corpo;
+    const definicaoFuncao = temCabecalhoFuncao(funcao.definition)
+      ? funcao.definition
+      : montarDefinicaoFuncao(db, {
+          nome: funcao.name,
+          parametros: parametrosDaFuncao,
+          tipoRetorno: funcao.returns_type,
+          corpo: corpoFuncao
+        });
+    inserirModulo.run(
+      objectId,
+      definicaoFuncao || '',
+      funcao.returns_type || 'int',
+      corpoFuncao
+    );
     parametros
       .filter((parametro) => parametro.object_id === funcao.object_id)
       .forEach((parametro) => inserirParametro.run(
@@ -2021,6 +2107,30 @@ function restaurarFuncoes(db, funcoes, parametros) {
         parametro.has_default_value,
         parametro.default_value
       ));
+    // Databases criados antes do suporte a scripting nao guardavam o
+    // parametro de retorno (parameter_id = 0) exigido pelo SMO.
+    if (!parametros.some((parametro) =>
+      parametro.object_id === funcao.object_id && Number(parametro.parameter_id) === 0
+    )) {
+      const nomeTipo = String(funcao.returns_type || 'int').split('(')[0].trim();
+      const tipo = db.prepare(`
+        SELECT user_type_id, system_type_id, max_length, precision, scale
+        FROM main.types WHERE name = ? COLLATE NOCASE
+      `).get(nomeTipo);
+      db.prepare(`
+        INSERT INTO main.all_parameters
+          (object_id, parameter_id, name, user_type_id, system_type_id,
+           max_length, precision, scale, is_output)
+        VALUES (?, 0, NULL, ?, ?, ?, ?, ?, 1)
+      `).run(
+        objectId,
+        tipo ? tipo.user_type_id : 56,
+        tipo ? tipo.system_type_id : 56,
+        tipo && tipo.max_length != null ? tipo.max_length : -1,
+        tipo ? tipo.precision : 0,
+        tipo ? tipo.scale : 0
+      );
+    }
   }
 }
 
@@ -2028,11 +2138,35 @@ function dataHoraAtualSql() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
+/** Verifica se o definition da procedure ja tem o cabecalho exigido pelo SMO. @private */
+function temCabecalhoProcedimento(definicao) {
+  return /\b(?:CREATE|ALTER)\s+(?:OR\s+ALTER\s+)?PROC(?:EDURE)?\b/i.test(String(definicao || ''));
+}
+
+/** Monta um CREATE PROCEDURE completo para databases com definition so do corpo. @private */
+function montarDefinicaoProcedimento(db, { nome, parametros = [], corpo = '' }) {
+  const nomesTipos = new Map(
+    db.prepare('SELECT user_type_id, name FROM main.types').all()
+      .map((tipo) => [tipo.user_type_id, tipo.name])
+  );
+  const argumentos = parametros
+    .filter((parametro) => Number(parametro.parameter_id) > 0)
+    .map((parametro) => {
+      const nomeTipo = parametro.tipo || nomesTipos.get(parametro.user_type_id) || 'int';
+      const saida = parametro.is_output ? ' OUTPUT' : '';
+      return `${parametro.name || `@p${parametro.parameter_id}`} ${nomeTipo}${saida}`;
+    })
+    .join(', ');
+  const textoCorpo = String(corpo || '').trim();
+  const corpoSql = /^BEGIN\b/i.test(textoCorpo) ? textoCorpo : `BEGIN\n${textoCorpo}\nEND`;
+  return `CREATE PROCEDURE [dbo].[${nomeSimplesProcedimento(nome)}] ${argumentos}\nAS\n${corpoSql}`;
+}
+
 /**
  * Registra uma stored procedure no catalogo do database, tornando-a visivel
  * em sys.procedures/sys.objects e guardando o corpo em sys.sql_modules.
  */
-function criarProcedimento(db, { nome, definicao, parametros = [], alterar = false }) {
+function criarProcedimento(db, { nome, definicao, corpo, parametros = [], alterar = false }) {
   db.exec(DDL_DATABASE);
   const nomeProc = nomeSimplesProcedimento(nome);
   if (!nomeProc) throw erroTsqlProcedimento(102, 1, 'Incorrect syntax near PROCEDURE.');
@@ -2065,9 +2199,13 @@ function criarProcedimento(db, { nome, definicao, parametros = [], alterar = fal
       (name, object_id, schema_id, principal_id, create_date, modify_date)
     VALUES (?, ?, 1, 1, ?, ?)
   `).run(nomeProc, objectId, data, data);
+  const corpoProc = corpo == null ? extrairCorpoFuncao(definicao) : corpo;
+  const definicaoProc = temCabecalhoProcedimento(definicao)
+    ? String(definicao)
+    : montarDefinicaoProcedimento(db, { nome: nomeProc, parametros, corpo: corpoProc });
   db.prepare(`
-    INSERT INTO main.sql_modules (object_id, definition) VALUES (?, ?)
-  `).run(objectId, String(definicao || ''));
+    INSERT INTO main.sql_modules (object_id, definition, corpo) VALUES (?, ?, ?)
+  `).run(objectId, definicaoProc, corpoProc);
 
   const inserirParametro = db.prepare(`
     INSERT INTO main.all_parameters
@@ -2097,7 +2235,7 @@ function criarProcedimento(db, { nome, definicao, parametros = [], alterar = fal
 function obterProcedimento(db, nome) {
   db.exec(DDL_DATABASE);
   const linha = db.prepare(`
-    SELECT p.object_id, p.name, m.definition
+    SELECT p.object_id, p.name, m.definition, m.corpo
     FROM main.procedures AS p
     LEFT JOIN main.sql_modules AS m ON m.object_id = p.object_id
     WHERE p.name = ? COLLATE NOCASE
@@ -2118,7 +2256,12 @@ function obterProcedimento(db, nome) {
     valorPadrao: parametro.has_default_value ? parametro.default_value : null
   }));
 
-  return { nome: linha.name, definicao: linha.definition || '', parametros };
+  return {
+    nome: linha.name,
+    definicao: linha.definition || '',
+    corpo: linha.corpo == null ? extrairCorpoFuncao(linha.definition) : linha.corpo,
+    parametros
+  };
 }
 
 /** Remove uma procedure do catalogo. */
@@ -2140,11 +2283,48 @@ function removerProcedimento(db, nome, seExistir = false) {
   return true;
 }
 
+/** Verifica se o definition gravado ja possui o cabecalho exigido pelo SMO. @private */
+function temCabecalhoFuncao(definicao) {
+  return /\b(?:CREATE|ALTER)\s+FUNCTION\b/i.test(String(definicao || ''));
+}
+
+/** Extrai somente o corpo executavel de um CREATE FUNCTION gravado no catalogo. @private */
+function extrairCorpoFuncao(definicao) {
+  const texto = String(definicao || '');
+  if (!temCabecalhoFuncao(texto)) return texto;
+  const parte = /\bAS\s+([\s\S]+)$/i.exec(texto);
+  return parte ? parte[1].trim() : texto;
+}
+
+/**
+ * Monta um CREATE FUNCTION completo para databases antigos que guardavam apenas
+ * o corpo em sys.sql_modules.definition. O SMO exige o cabecalho para gerar o
+ * script de "Modificar".
+ * @private
+ */
+function montarDefinicaoFuncao(db, { nome, parametros = [], tipoRetorno = 'int', corpo = '' }) {
+  const nomesTipos = new Map(
+    db.prepare('SELECT user_type_id, name FROM main.types').all()
+      .map((tipo) => [tipo.user_type_id, tipo.name])
+  );
+  const argumentos = parametros
+    .filter((parametro) => Number(parametro.parameter_id) > 0)
+    .map((parametro) => {
+      const nomeTipo = parametro.tipo || nomesTipos.get(parametro.user_type_id) || 'int';
+      return `${parametro.name || `@p${parametro.parameter_id}`} ${nomeTipo}`;
+    })
+    .join(', ');
+  const textoCorpo = String(corpo || '').trim();
+  const corpoSql = /^BEGIN\b/i.test(textoCorpo) ? textoCorpo : `BEGIN\n${textoCorpo}\nEND`;
+  return `CREATE FUNCTION [dbo].[${nomeSimplesProcedimento(nome)}] (${argumentos})\n` +
+    `RETURNS ${tipoRetorno || 'int'}\nAS\n${corpoSql}`;
+}
+
 /**
  * Registra uma funcao escalar do usuario em sys.objects/sys.sql_modules. O
  * corpo tambem e registrado como funcao SQLite pelo DbEngine.
  */
-function criarFuncao(db, { nome, definicao, parametros = [], tipoRetorno = 'int', alterar = false }) {
+function criarFuncao(db, { nome, definicao, corpo, parametros = [], tipoRetorno = 'int', alterar = false }) {
   db.exec(DDL_DATABASE);
   const nomeFuncao = nomeSimplesProcedimento(nome);
   if (!nomeFuncao) throw erroTsqlProcedimento(102, 1, 'Incorrect syntax near FUNCTION.');
@@ -2171,10 +2351,14 @@ function criarFuncao(db, { nome, definicao, parametros = [], tipoRetorno = 'int'
       (name, object_id, schema_id, principal_id, type, type_desc, create_date)
     VALUES (?, ?, 1, 1, 'FN', 'SQL_SCALAR_FUNCTION', ?)
   `).run(nomeFuncao, objectId, data);
+  const corpoFuncao = corpo == null ? extrairCorpoFuncao(definicao) : corpo;
+  const definicaoFuncao = temCabecalhoFuncao(definicao)
+    ? String(definicao)
+    : montarDefinicaoFuncao(db, { nome: nomeFuncao, parametros, tipoRetorno, corpo: corpoFuncao });
   db.prepare(`
-    INSERT INTO main.sql_modules (object_id, definition, returns_type)
-    VALUES (?, ?, ?)
-  `).run(objectId, String(definicao || ''), String(tipoRetorno || 'int'));
+    INSERT INTO main.sql_modules (object_id, definition, returns_type, corpo)
+    VALUES (?, ?, ?, ?)
+  `).run(objectId, definicaoFuncao, String(tipoRetorno || 'int'), corpoFuncao);
 
   const inserirParametro = db.prepare(`
     INSERT INTO main.all_parameters
@@ -2197,6 +2381,26 @@ function criarFuncao(db, { nome, definicao, parametros = [], tipoRetorno = 'int'
     );
   });
 
+  // O SMO localiza o tipo de retorno de uma funcao escalar pelo parametro
+  // com is_output = 1 (parameter_id = 0 em sys.parameters).
+  const nomeTipoRetorno = String(tipoRetorno || 'int').split('(')[0].trim();
+  const tipoRetornoLinha = db.prepare(
+    'SELECT user_type_id, system_type_id, max_length, precision, scale FROM main.types WHERE name = ? COLLATE NOCASE'
+  ).get(nomeTipoRetorno);
+  db.prepare(`
+    INSERT INTO main.all_parameters
+      (object_id, parameter_id, name, user_type_id, system_type_id,
+       max_length, precision, scale, is_output)
+    VALUES (?, 0, NULL, ?, ?, ?, ?, ?, 1)
+  `).run(
+    objectId,
+    tipoRetornoLinha ? tipoRetornoLinha.user_type_id : 56,
+    tipoRetornoLinha ? tipoRetornoLinha.system_type_id : 56,
+    tipoRetornoLinha && tipoRetornoLinha.max_length != null ? tipoRetornoLinha.max_length : -1,
+    tipoRetornoLinha ? tipoRetornoLinha.precision : 0,
+    tipoRetornoLinha ? tipoRetornoLinha.scale : 0
+  );
+
   return { nome: nomeFuncao, objectId };
 }
 
@@ -2204,7 +2408,7 @@ function criarFuncao(db, { nome, definicao, parametros = [], tipoRetorno = 'int'
 function obterFuncao(db, nome) {
   db.exec(DDL_DATABASE);
   const linha = db.prepare(`
-    SELECT o.object_id, o.name, m.definition
+    SELECT o.object_id, o.name, m.definition, m.corpo, m.returns_type
     FROM main.objects AS o
     LEFT JOIN main.sql_modules AS m ON m.object_id = o.object_id
     WHERE o.type = 'FN' AND o.name = ? COLLATE NOCASE
@@ -2217,14 +2421,22 @@ function obterFuncao(db, nome) {
   );
   const parametros = db.prepare(`
     SELECT name, user_type_id, has_default_value, default_value
-    FROM main.all_parameters WHERE object_id = ? ORDER BY parameter_id
+    FROM main.all_parameters
+    WHERE object_id = ? AND parameter_id > 0
+    ORDER BY parameter_id
   `).all(linha.object_id).map((parametro) => ({
     nome: parametro.name,
     tipo: nomesTipos.get(parametro.user_type_id) || 'int',
     valorPadrao: parametro.has_default_value ? parametro.default_value : null
   }));
 
-  return { nome: linha.name, definicao: linha.definition || '', parametros };
+  return {
+    nome: linha.name,
+    definicao: linha.definition || '',
+    corpo: linha.corpo == null ? extrairCorpoFuncao(linha.definition) : linha.corpo,
+    tipoRetorno: linha.returns_type || 'int',
+    parametros
+  };
 }
 
 /** Lista as funcoes escalares registradas no database (para restaurar as UDFs ao abrir). */
