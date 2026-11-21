@@ -489,6 +489,51 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('ADD CONSTRAINT FOREIGN KEY critica tabela/coluna ausente e FK duplicada', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    const ddl = (nome, tabela, coluna, referenciada, colunaRef) =>
+      `ALTER TABLE [dbo].[${tabela}] WITH CHECK ADD CONSTRAINT [${nome}] ` +
+      `FOREIGN KEY([${coluna}]) REFERENCES [dbo].[${referenciada}] ([${colunaRef}])`;
+    const erroDe = (sql) => {
+      try {
+        comTradutor.execute('principal', sql);
+      } catch (erro) {
+        return erro;
+      }
+      return null;
+    };
+
+    try {
+      comTradutor.execute('principal', `
+        CREATE TABLE [dbo].[TB_FK_REF] ([Id] [nvarchar](21) NOT NULL PRIMARY KEY);
+        CREATE TABLE [dbo].[TB_FK_ERR] ([Id] [nvarchar](21) NOT NULL, [IdRef] [nvarchar](21) NULL);
+      `);
+
+      let erro = erroDe(ddl('FK_SEM_TABELA', 'TB_FK_AUSENTE', 'IdRef', 'TB_FK_REF', 'Id'));
+      expect(erro.number).toBe(4902);
+      expect(erro.message).toContain('Cannot find the object "dbo.TB_FK_AUSENTE"');
+
+      erro = erroDe(ddl('FK_SEM_REFERENCIA', 'TB_FK_ERR', 'IdRef', 'TB_FK_AUSENTE', 'Id'));
+      expect(erro.number).toBe(208);
+      expect(erro.message).toContain("Invalid object name 'dbo.TB_FK_AUSENTE'");
+
+      erro = erroDe(ddl('FK_SEM_COLUNA', 'TB_FK_ERR', 'ColunaInexistente', 'TB_FK_REF', 'Id'));
+      expect(erro.number).toBe(207);
+      expect(erro.message).toContain("Invalid column name 'ColunaInexistente'");
+
+      comTradutor.execute('principal',
+        ddl('FK_VALIDA', 'TB_FK_ERR', 'IdRef', 'TB_FK_REF', 'Id'));
+      erro = erroDe(ddl('FK_VALIDA', 'TB_FK_ERR', 'IdRef', 'TB_FK_REF', 'Id'));
+      expect(erro.number).toBe(2714);
+      expect(erro.message).toContain("There is already an object named 'FK_VALIDA'");
+    } finally {
+      for (const tabela of ['TB_FK_ERR', 'TB_FK_REF']) {
+        comTradutor.execute('principal', `DROP TABLE IF EXISTS [${tabela}]`);
+      }
+      comTradutor.close();
+    }
+  });
+
   test('lote de refresh do SSMS retorna os databases de usuario apos CREATE', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {

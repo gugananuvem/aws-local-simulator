@@ -666,7 +666,38 @@ class DbEngine {
   _persistirForeignKeys(foreignKeys, db) {
     if (!Array.isArray(foreignKeys) || foreignKeys.length === 0) return;
     const data = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const buscarObjeto = db.prepare('SELECT object_id FROM main.tables WHERE name = ?');
+    const buscarColuna = db.prepare(
+      'SELECT column_id FROM main.all_columns WHERE object_id = ? AND name = ?'
+    );
+    const buscarFk = db.prepare(
+      'SELECT name FROM main.foreign_key_definitions WHERE name = ?'
+    );
+
     for (const chave of foreignKeys) {
+      // O SQLite aceita ALTER TABLE com WITH CHECK e uma constraint que nao
+      // existe porque o comando e removido do lote. O SQL Server valida e
+      // devolve os erros abaixo; sem isso o SSMS acha que a FK foi criada.
+      const tabela = buscarObjeto.get(chave.nomeTabela);
+      if (!tabela) {
+        throw this._erroTsql(4902, 1,
+          `Cannot find the object "dbo.${chave.nomeTabela}" because it does not exist or you do not have permissions.`);
+      }
+      const referenciada = buscarObjeto.get(chave.nomeReferenciada);
+      if (!referenciada) {
+        throw this._erroTsql(208, 1, `Invalid object name 'dbo.${chave.nomeReferenciada}'.`);
+      }
+      if (buscarFk.get(chave.nome)) {
+        throw this._erroTsql(2714, 4,
+          `There is already an object named '${chave.nome}' in the database.`);
+      }
+      if (!buscarColuna.get(tabela.object_id, chave.nomeColuna)) {
+        throw this._erroTsql(207, 1, `Invalid column name '${chave.nomeColuna}'.`);
+      }
+      if (!buscarColuna.get(referenciada.object_id, chave.nomeColunaReferenciada)) {
+        throw this._erroTsql(207, 1, `Invalid column name '${chave.nomeColunaReferenciada}'.`);
+      }
+
       try {
         db.prepare(`
           INSERT OR REPLACE INTO main.foreign_key_definitions
