@@ -1195,14 +1195,31 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(translator.columnTypesFor(
         'SELECT CAST(CASE WHEN 1=1 THEN 1 ELSE 0 END AS bit) AS [IsEncrypted] ' +
         'FROM sys.all_views v'
-      )).toEqual({
+      )).toMatchObject({
         IsEncrypted: 'BIT',
         IsSchemaBound: 'BIT',
         HasClusteredIndex: 'BIT',
+        ReturnsViewMetadata: 'BIT',
+        HasAfterTrigger: 'BIT',
+        HasNonClusteredIndex: 'BIT',
+        DateLastModified: 'DATETIME',
         LedgerViewType: 'TINYINT',
         IsDroppedLedgerView: 'BIT',
         CreateDate: 'DATETIME'
       });
+    });
+
+    test('preenche [Text] da view para o SMO gerar o ALTER VIEW', () => {
+      const sql = [
+        'SELECT v.name AS [Name], NULL AS [Text],',
+        'ISNULL(smv.definition, ssmv.definition) AS [Definition]',
+        'FROM sys.all_views AS v',
+        'LEFT OUTER JOIN sys.sql_modules AS smv ON smv.object_id = v.object_id',
+        'LEFT OUTER JOIN sys.system_sql_modules AS ssmv ON ssmv.object_id = v.object_id'
+      ].join(' ');
+      expect(translator.translate(sql)).toContain(
+        'COALESCE(smv.definition, ssmv.definition) AS [Text]'
+      );
     });
 
     test('informa BIT e DATETIME nas colunas da lista de procedures e funcoes', () => {

@@ -158,6 +158,20 @@ class SqlTranslator {
       sql = sql.replace(/\bNULL\s+AS\s+\[Text\]/gi, 'nsp.definition AS [Text]');
     }
 
+    // O SMO precisa de [Text] preenchido para gerar "ALTER VIEW". No SQL Server
+    // a coluna vem como NULL e o texto e montado de [Definition]; aqui devolvemos
+    // a propria definicao para o caminho de alteracao nao gerar script vazio.
+    if (
+      /\b(?:sys|main)\.(?:all_views|views|system_views)\b/i.test(sql) &&
+      /\bNULL\s+AS\s+\[Text\]/i.test(sql) &&
+      /\bJOIN\s+(?:sys|main)\.sql_modules\s+AS\s+smv\b/i.test(sql)
+    ) {
+      sql = sql.replace(
+        /\bNULL\s+AS\s+\[Text\]/gi,
+        'COALESCE(smv.definition, ssmv.definition) AS [Text]'
+      );
+    }
+
     // Quando o cliente tambem pede [BodyStartIndex], ele divide o texto em
     // cabecalho/corpo usando esse indice. Preenchê-lo evita que o SMO tente
     // recalcular o indice a partir de um cabecalho que nao existe.
@@ -1388,7 +1402,23 @@ class SqlTranslator {
       return {
         IsEncrypted: 'BIT',
         IsSchemaBound: 'BIT',
+        AnsiNullsStatus: 'BIT',
+        HasColumnSpecification: 'BIT',
+        IsSystemObject: 'BIT',
+        IsSchemaOwned: 'BIT',
+        QuotedIdentifierStatus: 'BIT',
+        ReturnsViewMetadata: 'BIT',
+        HasAfterTrigger: 'BIT',
+        HasInsertTrigger: 'BIT',
+        HasDeleteTrigger: 'BIT',
+        HasInsteadOfTrigger: 'BIT',
+        HasUpdateTrigger: 'BIT',
+        HasIndex: 'BIT',
+        IsIndexable: 'BIT',
+        HasNonClusteredIndex: 'BIT',
         HasClusteredIndex: 'BIT',
+        HasPrimaryClusteredIndex: 'BIT',
+        DateLastModified: 'DATETIME',
         LedgerViewType: 'TINYINT',
         IsDroppedLedgerView: 'BIT',
         CreateDate: 'DATETIME'

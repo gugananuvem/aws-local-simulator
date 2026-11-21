@@ -347,6 +347,19 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     }
   });
 
+  test('expõe colunas de metadados exigidas pelo script de views do SMO 19', () => {
+    engine.execute('principal', 'CREATE VIEW vw_teste AS SELECT 1 AS valor');
+
+    const metadados = engine.execute('principal',
+      "SELECT has_opaque_metadata, modify_date FROM sys.all_views WHERE name = 'vw_teste'"
+    );
+    expect(metadados.rows).toEqual([{
+      has_opaque_metadata: 0,
+      modify_date: '2023-01-01 00:00:00'
+    }]);
+    expect(() => engine.execute('principal', 'SELECT name FROM sys.stats')).not.toThrow();
+  });
+
   test('expõe server_role_members, default_constraints e politicas do msdb', () => {
     const papeis = engine.execute('principal',
       "SELECT r.name AS papel, p.name AS membro FROM sys.server_role_members m " +

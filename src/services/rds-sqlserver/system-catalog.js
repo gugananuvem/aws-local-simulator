@@ -450,9 +450,11 @@ const DDL_DATABASE = `
     principal_id INTEGER DEFAULT 1,
     type TEXT NOT NULL DEFAULT 'V',
     create_date DATETIME,
+    modify_date DATETIME DEFAULT '2023-01-01 00:00:00',
     is_ms_shipped BIT NOT NULL DEFAULT 0,
     ledger_view_type TINYINT NOT NULL DEFAULT 0,
     is_dropped_ledger_view BIT NOT NULL DEFAULT 0,
+    has_opaque_metadata BIT NOT NULL DEFAULT 0,
     definition TEXT
   );
 
@@ -838,6 +840,7 @@ const DDL_DATABASE = `
   );
 
   CREATE TABLE IF NOT EXISTS stats (
+    name TEXT NOT NULL DEFAULT '',
     object_id INTEGER NOT NULL,
     stats_id INTEGER NOT NULL,
     no_recompute BIT NOT NULL DEFAULT 0
@@ -1469,7 +1472,9 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['is_xml_document', 'BIT NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'main', 'all_views', [
-    ['is_dropped_ledger_view', 'BIT NOT NULL DEFAULT 0']
+    ['is_dropped_ledger_view', 'BIT NOT NULL DEFAULT 0'],
+    ['has_opaque_metadata', 'BIT NOT NULL DEFAULT 0'],
+    ['modify_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"]
   ]);
   migrarColunas(db, 'main', 'types', [
     ['schema_id', 'INTEGER NOT NULL DEFAULT 4'],
@@ -1504,6 +1509,9 @@ function sincronizarCatalogoDatabase(db, dbName) {
   ]);
   migrarColunas(db, 'main', 'assembly_modules', [
     ['null_on_null_input', 'BIT NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'main', 'stats', [
+    ['name', "TEXT NOT NULL DEFAULT ''"]
   ]);
   migrarColunas(db, 'main', 'synonyms', [
     ['base_object_name', "TEXT DEFAULT ''"]
