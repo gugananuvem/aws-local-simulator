@@ -873,6 +873,23 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(resultado).toContain('SELECT tbl.name AS [Name]');
       expect(resultado).not.toMatch(/\bEXECUTE\b/i);
     });
+
+    test('remove o bloco IF/EXEC de retencao de dados mantendo o SELECT de Database', () => {
+      const entrada = [
+        'create table #temp_data_retention_property (db_id int not null, is_data_retention_enabled bit)',
+        "if serverproperty('engineedition') = 9",
+        "exec sp_executesql N'insert into #temp_data_retention_property " +
+          "select dr_db.database_id, dr_db.is_data_retention_enabled from sys.databases dr_db'",
+        'SELECT dtb.is_ansi_null_default_on AS [AnsiNullDefault], dtb.name AS [Name] ' +
+          'FROM master.sys.databases AS dtb WHERE (dtb.name=@_msparam_0)',
+        'drop table #temp_data_retention_property'
+      ].join('\r\n');
+
+      const resultado = translator.translate(entrada);
+      expect(resultado).toMatch(/CREATE TABLE IF NOT EXISTS _tmp_temp_data_retention_property/i);
+      expect(resultado).toContain('AS [AnsiNullDefault]');
+      expect(resultado).not.toMatch(/\bEXEC\b|\bIF\s+serverproperty/i);
+    });
   });
 
   describe('construtos não suportados', () => {

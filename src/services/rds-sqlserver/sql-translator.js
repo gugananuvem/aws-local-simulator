@@ -134,6 +134,7 @@ class SqlTranslator {
 
     let resultado = this._removerShimAvailabilityGroups(sql);
     resultado = this._removerShimRemoteDataArchive(resultado);
+    resultado = this._removerShimDataRetention(resultado);
     resultado = resultado.replace(
       /\bDROP\s+TABLE\s+#{1,2}[A-Za-z_]\w*/gi,
       (correspondencia, deslocamento, texto) => {
@@ -590,6 +591,29 @@ class SqlTranslator {
     const inicio = sql.search(/\bIF\s+EXISTS\s*\(/i);
     const fim = sql.search(/\bSELECT\s+tbl\.name\s+AS\s+\[Name\]/i);
     if (inicio < 0 || fim <= inicio) return sql;
+    const criacao = sql
+      .slice(0, inicio)
+      .trim()
+      .replace(/\bCREATE\s+TABLE\b/i, (correspondencia) => `${correspondencia} IF NOT EXISTS`);
+    return `${criacao}; ${sql.slice(fim)}`;
+  }
+
+  /**
+   * O SMO preenche #temp_data_retention_property com IF/EXEC dinamico apenas no
+   * Azure SQL DB (engineedition = 9). Nas edicoes simuladas (2/3/4) a tabela
+   * permanece vazia e o SELECT final devolve DataRetentionEnabled = 0.
+   * @private
+   */
+  _removerShimDataRetention(sql) {
+    if (!/#temp_data_retention_property\b/i.test(sql)) return sql;
+    const inicio = sql.search(
+      /\bIF\s+serverproperty\s*\(\s*N?['"]engineedition['"]\s*\)\s*=\s*9\b/i
+    );
+    if (inicio < 0) return sql;
+
+    const fim = sql.search(/\bSELECT\s+dtb\.is_ansi_null_default_on\s+AS\s+\[AnsiNullDefault\]/i);
+    if (fim <= inicio) return sql;
+
     const criacao = sql
       .slice(0, inicio)
       .trim()

@@ -195,15 +195,69 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       'FROM sys.syslanguages s ORDER BY s.name ASC'
     );
     expect(idiomas.rows).toEqual(expect.arrayContaining([{
-      Name: 'us_english', Alias: 'English', LocaleID: 1033, LangID: 1033
+      Name: 'us_english', Alias: 'English', LocaleID: 1033, LangID: 0
     }, {
-      Name: 'Portuguese (Brazil)', Alias: 'Portuguese', LocaleID: 1046, LangID: 1046
+      Name: 'Portuguese (Brazil)', Alias: 'Portuguese', LocaleID: 1046, LangID: 27
     }]));
+
+    // O SSMS/SMO converte o RunValue de `sp_configure 'default language'` (0)
+    // em LCID usando exatamente esta consulta antes de abrir o New Database.
+    expect(engine.execute('principal',
+      'SELECT lcid FROM sys.syslanguages WHERE langid = 0'
+    ).rows).toEqual([{ lcid: 1033 }]);
 
     const automacao = engine.execute('principal',
       'SELECT fn_syspolicy_is_automation_enabled() AS habilitado'
     );
     expect(automacao.rows).toEqual([{ habilitado: 1 }]);
+  });
+
+  test('corrige langids antigos ao reabrir um database', () => {
+    engine.execute('principal',
+      "UPDATE sys.syslanguages SET langid = 1033 WHERE name = 'us_english'"
+    );
+    expect(engine.execute('principal',
+      'SELECT lcid FROM sys.syslanguages WHERE langid = 0'
+    ).rows).toEqual([]);
+    engine.close();
+
+    const engineReaberta = new DbEngine(dataDir, new SqlTranslator('sqlserver-ee'));
+    try {
+      expect(engineReaberta.execute('principal',
+        'SELECT lcid FROM sys.syslanguages WHERE langid = 0'
+      ).rows).toEqual([{ lcid: 1033 }]);
+    } finally {
+      engineReaberta.close();
+    }
+  });
+
+  test('migra lcid de sys.syslanguages para INT', () => {
+    const db = engine.getOrCreateDatabase('principal');
+    db.exec(`
+      ALTER TABLE sys.syslanguages RENAME TO syslanguages_antigo;
+      CREATE TABLE sys.syslanguages (
+        name TEXT NOT NULL PRIMARY KEY,
+        alias TEXT NOT NULL,
+        langid SMALLINT NOT NULL DEFAULT 0,
+        lcid SMALLINT NOT NULL DEFAULT 1033
+      );
+      INSERT INTO sys.syslanguages (name, alias, langid, lcid)
+        SELECT name, alias, langid, lcid FROM sys.syslanguages_antigo;
+      DROP TABLE sys.syslanguages_antigo;
+    `);
+    engine.close();
+
+    const reaberta = new DbEngine(dataDir, new SqlTranslator('sqlserver-ee'));
+    try {
+      const colunas = reaberta.getOrCreateDatabase('principal')
+        .prepare('PRAGMA sys.table_info(syslanguages)').all();
+      expect(colunas.find((coluna) => coluna.name === 'lcid').type).toBe('INT');
+      expect(reaberta.execute('principal',
+        'SELECT lcid FROM sys.syslanguages WHERE langid = 0'
+      ).rows).toEqual([{ lcid: 1033 }]);
+    } finally {
+      reaberta.close();
+    }
   });
 
   test('expõe sys.configurations com SMO e DMO habilitado', () => {

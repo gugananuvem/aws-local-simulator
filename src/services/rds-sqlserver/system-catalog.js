@@ -160,8 +160,8 @@ const DDL_SISTEMA = `
   CREATE TABLE IF NOT EXISTS syslanguages (
     name TEXT NOT NULL PRIMARY KEY,
     alias TEXT NOT NULL,
-    langid SMALLINT NOT NULL DEFAULT 1033,
-    lcid SMALLINT NOT NULL DEFAULT 1033
+    langid SMALLINT NOT NULL DEFAULT 0,
+    lcid INT NOT NULL DEFAULT 1033
   );
 
   CREATE TABLE IF NOT EXISTS server_permissions (
@@ -664,6 +664,22 @@ const DDL_MSDB = `
   );
 `;
 
+// `langid` e um ID sequencial do Database Engine (us_english = 0), nao o LCID do Windows.
+// O SSMS/SMO le `sp_configure 'default language'` (RunValue = 0) e procura esse langid
+// em sys.syslanguages; se nao achar, o dialog New Database falha com
+// "This language id is not present in sys.syslanguages catalog".
+const IDIOMAS = [
+  ['us_english', 'English', 0, 1033],
+  ['German', 'German', 1, 1031],
+  ['French', 'French', 2, 1036],
+  ['Japanese', 'Japanese', 3, 1041],
+  ['Spanish', 'Spanish', 5, 3082],
+  ['Italian', 'Italian', 6, 1040],
+  ['Portuguese', 'Portuguese', 9, 2070],
+  ['Portuguese (Brazil)', 'Portuguese', 27, 1046],
+  ['Chinese (Simplified)', 'Chinese', 30, 2052]
+];
+
 const CONFIGURACOES = [
   ['show advanced options', 16383, 0, 1, 0, 0, 'Show advanced options'],
   ['Agent XPs', 16384, 0, 1, 1, 1, 'Agent XPs enabled'],
@@ -701,6 +717,28 @@ function migrarColunas(db, schema, tabela, definicoes) {
       db.exec(`ALTER TABLE ${schema}.${tabela} ADD COLUMN ${nome} ${definicao}`);
     }
   }
+}
+
+/**
+ * `sys.syslanguages.lcid` e INT no SQL Server. Versoes anteriores do simulador
+ * usavam SMALLINT, e o SMO ignora LocaleID quando a coluna TDS tem 2 bytes.
+ * Recria a tabela preservando as linhas para corrigir databases ja existentes.
+ * @private
+ */
+function migrarLcidParaInt(db, schema) {
+  const coluna = db.prepare(`PRAGMA ${schema}.table_info(syslanguages)`)
+    .all()
+    .find((info) => info.name === 'lcid');
+  if (!coluna || String(coluna.type).toUpperCase() === 'INT') return;
+
+  db.exec(`DROP TABLE IF EXISTS ${schema}.syslanguages_legado`);
+  db.exec(`ALTER TABLE ${schema}.syslanguages RENAME TO syslanguages_legado`);
+  criarTabelas(db, schema);
+  db.exec(`
+    INSERT OR REPLACE INTO ${schema}.syslanguages (name, alias, langid, lcid)
+    SELECT name, alias, langid, lcid FROM ${schema}.syslanguages_legado
+  `);
+  db.exec(`DROP TABLE ${schema}.syslanguages_legado`);
 }
 
 /**
@@ -761,18 +799,18 @@ function popularTabelas(db, schema, nomesDatabases) {
     inserirMembroPapel.run(1001, principalId);
     inserirMembroPapel.run(1009, principalId);
   }
-  db.prepare(`
-    INSERT OR IGNORE INTO ${schema}.syslanguages (name, alias, langid, lcid) VALUES
-      ('us_english', 'English', 1033, 1033),
-      ('Portuguese (Brazil)', 'Portuguese', 1046, 1046),
-      ('Portuguese', 'Portuguese', 2070, 2070),
-      ('Spanish', 'Spanish', 1034, 1034),
-      ('French', 'French', 1036, 1036),
-      ('German', 'German', 1031, 1031),
-      ('Italian', 'Italian', 1040, 1040),
-      ('Japanese', 'Japanese', 1041, 1041),
-      ('Chinese (Simplified)', 'Chinese', 2052, 2052)
-  `).run();
+  const inserirIdioma = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.syslanguages (name, alias, langid, lcid)
+    VALUES (?, ?, ?, ?)
+  `);
+  // UPDATE tambem corrige databases antigos que tinham langid = lcid.
+  const atualizarIdioma = db.prepare(`
+    UPDATE ${schema}.syslanguages SET alias = ?, langid = ?, lcid = ? WHERE name = ?
+  `);
+  IDIOMAS.forEach((idioma) => {
+    inserirIdioma.run(...idioma);
+    atualizarIdioma.run(idioma[1], idioma[2], idioma[3], idioma[0]);
+  });
   db.prepare(`
     INSERT OR IGNORE INTO ${schema}.sql_logins (principal_id) VALUES (1), (2)
   `).run();
@@ -1310,8 +1348,9 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
     ['is_remote_data_archive_enabled', 'BIT NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'sys', 'syslanguages', [
-    ['lcid', 'SMALLINT NOT NULL DEFAULT 1033']
+    ['lcid', 'INT NOT NULL DEFAULT 1033']
   ]);
+  migrarLcidParaInt(db, 'sys');
   migrarColunas(db, 'sys', 'server_principals', [
     ['create_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],
     ['modify_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],

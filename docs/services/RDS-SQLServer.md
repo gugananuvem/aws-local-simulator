@@ -222,6 +222,11 @@ antigos; `sys.server_principals` inclui `create_date`, `modify_date`,
 `default_language_name`, `default_database_name`, `is_fixed_role`, `sa`, `admin` e as roles
 fixas. `database_principals` tem `modify_date`, `authentication_type`, `default_schema_name`,
 `default_language_lcid`, `default_language_name`, `state` e `is_disabled`.
+`sys.syslanguages` usa `langid` sequencial do Database Engine (`us_english = 0`,
+`Portuguese (Brazil) = 27`) e `lcid INT` (`1033`, `1046`, etc.); databases antigos com
+`langid = lcid` ou `lcid SMALLINT` são migrados ao abrir a conexão. Sem essa distinção o SSMS
+falha ao abrir **New Database** com `This language id is not present in sys.syslanguages catalog`
+e, depois, com `Specified cast is not valid. (Microsoft.SqlServer.Smo)`.
 
 Funções T-SQL registradas no SQLite (não são interceptadas por regex): `SERVERPROPERTY`,
 `CONNECTIONPROPERTY`, `IS_SRVROLEMEMBER`, `SUSER_SNAME`, `SUSER_ID`, `ORIGINAL_LOGIN`,
@@ -253,6 +258,7 @@ A instância se apresenta como `Standard Edition (64-bit)` / `EngineEdition = 2`
 | Batch de descoberta de servidor do SSMS (`xp_msver` + `#SVer`) | Substituído por resultset sintético; `Server_Status` só entra quando pedido no SQL bruto |
 | Batch de versão/protocolo do SSMS | Expandido em 3 resultsets (`Tables[0..2]`) |
 | Batch de metadados do cliente (`xp_instance_regread`, `database_files`, `IsCaseSensitive`) | Substituído por resultset com paths/collation sintéticos |
+| `IF serverproperty('engineedition') = 9` + `EXEC sp_executesql` de `#temp_data_retention_property` | Bloco ignorado nas edições 2/3/4; `DataRetentionEnabled = 0`, tabela temporária preservada |
 | Batches `Server` e `Information` do SMO | Detectados por `@SmoAuditLevel` + `PolicyHealthState`, com shims próprios |
 | Verificação de AlwaysOn (`xp_qv`) | Devolve `AlwaysOn = -1` (instância não AlwaysOn) |
 | `@@MICROSOFTVERSION`, `@@SPID`, `@@TRANCOUNT`, `@@VERSION` | `268439491`, `1`, `0` e `'16.00.4035.2'` |
