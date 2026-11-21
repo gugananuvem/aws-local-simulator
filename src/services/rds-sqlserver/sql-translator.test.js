@@ -679,6 +679,12 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       });
     });
 
+    test('declara FLOAT na query isolada de tamanho do log do New Database', () => {
+      const sql = 'SELECT s.size * CONVERT(float,8) AS [Size] ' +
+        'FROM sys.database_files AS s WHERE (s.type = 1)';
+      expect(translator.columnTypesFor(sql)).toMatchObject({ Size: 'FLOAT' });
+    });
+
     test('expande o batch de versao do SSMS em tres resultsets', () => {
       const lotes = translator.expandirResultSets(
         'DECLARE @edition sysname; ' +
@@ -849,6 +855,30 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       ].join('\n');
 
       expect(translator.translate(sql)).toBe('SELECT 0 AS [ErrorLogSizeKb]');
+    });
+
+    test('devolve todas as colunas do batch de Settings do SMO', () => {
+      const sql = [
+        'declare @SmoAuditLevel int',
+        "exec master.dbo.xp_instance_regread N'HKEY_LOCAL_MACHINE', N'Software\\Microsoft\\MSSQLServer\\MSSQLServer', N'AuditLevel', @SmoAuditLevel OUTPUT",
+        'declare @NumErrorLogs int',
+        "exec master.dbo.xp_instance_regread N'HKEY_LOCAL_MACHINE', N'Software\\Microsoft\\MSSQLServer\\MSSQLServer', N'NumErrorLogs', @NumErrorLogs OUTPUT",
+        'declare @SmoPerfMonMode int',
+        "exec master.dbo.xp_instance_regread N'HKEY_LOCAL_MACHINE', N'Software\\Microsoft\\MSSQLServer\\MSSQLServer', N'Performance', @SmoPerfMonMode OUTPUT",
+        'SELECT',
+        '@SmoAuditLevel AS [AuditLevel],',
+        'ISNULL(@NumErrorLogs, -1) AS [NumberOfLogFiles],',
+        "ISNULL(SERVERPROPERTY('instancedefaultdatapath'),'') AS [DefaultFile],",
+        "SERVERPROPERTY('instancedefaultlogpath') AS [DefaultLog],",
+        '@SmoPerfMonMode AS [PerfMonMode]'
+      ].join('\n');
+
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain('AS [AuditLevel]');
+      expect(traduzido).toContain('AS [NumberOfLogFiles]');
+      expect(traduzido).toContain('AS [DefaultFile]');
+      expect(traduzido).toContain("'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA' AS [DefaultLog]");
+      expect(traduzido).toContain('AS [PerfMonMode]');
     });
 
     test('usa colunas proprias no batch completo de propriedades do servidor', () => {

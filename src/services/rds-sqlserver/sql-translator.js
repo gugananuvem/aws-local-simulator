@@ -1017,8 +1017,11 @@ class SqlTranslator {
     // explicitos o SQLite devolve INT e o SMO estoura "Specified cast is
     // not valid".
     const ehFilegroups = /\b(?:sys|main)\.filegroups\b/i.test(sql);
+    // O SSMS tambem envia uma query isolada so com [Size] para somar o tamanho
+    // do log. Sem o tipo explicito o SQLite devolve INTN e o GetDouble() do
+    // SMO estoura "Specified cast is not valid".
     const ehArquivos = /\b(?:sys|main)\.database_files\b/i.test(sql) &&
-      /\[(?:IsPrimaryFile|UsedSpace|GrowthType|MaxSize|Growth|IsReadOnlyMedia|IsOffline|IsSparse)\]/i.test(sql);
+      /\[(?:IsPrimaryFile|UsedSpace|GrowthType|Size|MaxSize|Growth|IsReadOnlyMedia|IsOffline|IsSparse)\]/i.test(sql);
     if (ehFilegroups || ehArquivos) {
       return {
         Name: 'TEXT',
@@ -1235,6 +1238,26 @@ class SqlTranslator {
     ) {
       const caminho = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
       return `SELECT '${caminho}' AS [MasterDBPath], '${caminho}' AS [MasterDBLogPath]`;
+    }
+
+    // Batch de Settings do SMO: le registry do servidor e devolve varias
+    // colunas de uma vez. Sem este caso o handler generico de xp_instance_
+    // regread devolve somente a ultima coluna ([PerfMonMode]) e o SMO fica com
+    // DefaultFile/DefaultLog vazios ao abrir o New Database.
+    if (
+      /\bSmoAuditLevel\b/i.test(sql) &&
+      /\bNumberOfLogFiles\b/i.test(sql) &&
+      /\bSmoPerfMonMode\b/i.test(sql) &&
+      /\binstancedefaultdatapath\b/i.test(sql)
+    ) {
+      const caminho = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
+      return (
+        'SELECT 2 AS [AuditLevel], 12 AS [NumberOfLogFiles], 2 AS [LoginMode], ' +
+        `'${caminho}' AS [DefaultFile], '${caminho}' AS [DefaultLog], ` +
+        '0 AS [ErrorLogSizeKb], -1 AS [TapeLoadWaitTime], ' +
+        "'' AS [MailProfile], " +
+        `'${caminho}' AS [BackupDirectory], 1000 AS [PerfMonMode]`
+      );
     }
 
     // Propriedades caras do Server, lidas uma a uma via xp_regread/xp_instance_

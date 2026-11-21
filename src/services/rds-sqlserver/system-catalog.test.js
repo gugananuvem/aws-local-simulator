@@ -216,6 +216,19 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(resultado.rows[0].PhysicalMemoryUsageInKB).toBe(8388608);
   });
 
+  test('devolve caminhos padrao de dados e log para o New Database', () => {
+    const caminhos = engine.execute('principal',
+      "SELECT SERVERPROPERTY('InstanceDefaultDataPath') AS DefaultFile, " +
+      "SERVERPROPERTY('InstanceDefaultLogPath') AS DefaultLog, " +
+      "SERVERPROPERTY('PathSeparator') AS Separador"
+    ).rows[0];
+
+    expect(caminhos.DefaultFile)
+      .toBe('C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA');
+    expect(caminhos.DefaultLog).toBe(caminhos.DefaultFile);
+    expect(caminhos.Separador).toBe('\\');
+  });
+
   test('registra SERVERPROPERTY, CONNECTIONPROPERTY e IS_SRVROLEMEMBER', () => {
     const propriedades = engine.execute('principal',
       "SELECT SERVERPROPERTY('Edition') AS Edition, " +

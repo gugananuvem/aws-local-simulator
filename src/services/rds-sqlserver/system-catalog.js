@@ -34,6 +34,9 @@ const EDICOES = {
 
 const VERSAO = '16.00.4035.2';
 
+/** Diretorio padrao de dados/log usado pelo SSMS ao criar um database. */
+const DIRETORIO_DADOS_PADRAO = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
+
 /**
  * DDL das tabelas de sistema. Os tipos T-SQL são preservados de propósito:
  * o SQLite aceita TINYINT/BIT como nomes de tipo e a camada TDS usa essa
@@ -1123,7 +1126,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
   `).all();
 
   const nomeDb = nomeDatabaseLocal(db, dbName);
-  const diretorioDados = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
+  const diretorioDados = DIRETORIO_DADOS_PADRAO;
   const arquivoDados = path.join(diretorioDados, `${nomeDb}.mdf`);
   const arquivoLog = path.join(diretorioDados, `${nomeDb}_log.ldf`);
 
@@ -1469,6 +1472,12 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     INSTANCENAME: null,
     COMPUTERNAMEPHYSICALNETBIOS: 'LOCAL',
     COLLATION: 'SQL_Latin1_General_CP1_CI_AS',
+    // O SSMS le essas duas propriedades com GetString() na aba Filegroups do
+    // New Database. Sem elas o DefaultLog chega como DBNull e o SMO estoura
+    // "Data is Null. This method or property cannot be called on Null values".
+    INSTANCEDEFAULTDATAPATH: DIRETORIO_DADOS_PADRAO,
+    INSTANCEDEFAULTLOGPATH: DIRETORIO_DADOS_PADRAO,
+    PATHSEPARATOR: '\\',
     LICENSETYPE: 'PER_CORE',
     ISSINGLEUSER: 0,
     ISXTPSUPPORTED: 0,
