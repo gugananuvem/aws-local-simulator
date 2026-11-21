@@ -236,6 +236,60 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     ]);
   });
 
+  test('carrega assembly_types e índices consultados pelo designer', () => {
+    engine.execute(
+      'principal',
+      'CREATE TABLE [dbo].[TB_TESTE_INDICES] ([Id] INT NOT NULL, [Nome] NVARCHAR(50) NULL)'
+    );
+
+    const tiposAssembly = engine.execute('principal', `
+      select a.name as user_type_name, schema_name(a.schema_id) as user_type_schema,
+             a.max_length, a.precision, a.scale, s1.name as def_name, s2.name as rule_name,
+             a.is_nullable, schema_name(s1.schema_id) as def_schema,
+             schema_name(s2.schema_id) as rule_schema, a.collation_name,
+             a.assembly_id, a.assembly_class, a.is_binary_ordered, a.is_fixed_length,
+             a.user_type_id
+      from (sys.assembly_types a inner join sys.assembly_types b on a.is_user_defined = 1)
+      left outer join sys.objects s1 on s1.object_id = a.default_object_id and s1.type = 'D'
+      left outer join sys.objects s2 on s2.object_id = a.rule_object_id and s2.type = 'R'
+      order by a.user_type_id
+    `).rows;
+    expect(tiposAssembly).toEqual([]);
+
+    const indices = engine.execute('principal', `
+      select ind.name, dsp.name as space_name, ind.index_id, ind.type, ind.is_unique,
+             ind.ignore_dup_key, ind.is_primary_key, ind.is_unique_constraint,
+             ind.fill_factor, ind.is_padded, ind.is_disabled, ind.is_hypothetical,
+             ind.allow_row_locks, ind.allow_page_locks,
+             convert(bit, IndexProperty(ind.object_id, ind.name, N'IsFulltextKey')) as is_FulltextKey,
+             sta.no_recompute, ind_col.index_column_id, col.name as column_nName,
+             ind_col.key_ordinal, ind_col.is_descending_key, ind_col.is_included_column,
+             ind_col.partition_ordinal, ind_col.column_id, ind.data_space_id,
+             ind.has_filter, ind.filter_definition
+      from sys.indexes ind
+      left outer join sys.stats sta on sta.object_id = ind.object_id and sta.stats_id = ind.index_id
+      left outer join (sys.index_columns ind_col inner join sys.columns col
+        on col.object_id = ind_col.object_id and col.column_id = ind_col.column_id)
+        on ind_col.object_id = ind.object_id and ind_col.index_id = ind.index_id
+      left outer join sys.data_spaces dsp on dsp.data_space_id = ind.data_space_id
+      where ind.object_id = object_id(N'dbo.TB_TESTE_INDICES')
+        and ind.index_id >= 0 and ind.type <> 3 and ind.type <> 4
+        and ind.is_hypothetical = 0
+      order by ind.index_id, ind_col.key_ordinal
+    `).rows;
+    expect(indices.length).toBeGreaterThan(0);
+    expect(indices[0]).toMatchObject({
+      index_id: 0,
+      type: 0,
+      is_unique: 0,
+      is_padded: 0,
+      is_hypothetical: 0,
+      allow_row_locks: 1,
+      allow_page_locks: 1,
+      has_filter: 0
+    });
+  });
+
   test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {
     const configuracoes = engine.execute('master', `
       SELECT configuration_id, name, value_in_use FROM sys.configurations

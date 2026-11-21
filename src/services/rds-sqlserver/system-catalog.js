@@ -598,9 +598,16 @@ const DDL_DATABASE = `
            user_type_id AS type_table_object_id, 0 AS is_memory_optimized
     FROM types WHERE is_table_type = 1;
 
-  CREATE VIEW IF NOT EXISTS assembly_types AS
+  -- O script de user-defined types do designer le colunas de assembly_types que
+  -- nao existiam na view antiga. DROP/CREATE garante a atualizacao em databases
+  -- ja abertos pelo simulador.
+  DROP VIEW IF EXISTS assembly_types;
+  CREATE VIEW assembly_types AS
     SELECT name, user_type_id AS object_id, schema_id, 1 AS assembly_id,
-           is_user_defined, 1 AS is_assembly_type
+           is_user_defined, 1 AS is_assembly_type, max_length, precision,
+           scale, is_nullable, default_object_id, rule_object_id,
+           collation_name, '' AS assembly_class, 0 AS is_binary_ordered,
+           0 AS is_fixed_length, user_type_id
     FROM types WHERE is_assembly_type = 1;
 
   CREATE TABLE IF NOT EXISTS indexes (
@@ -616,6 +623,7 @@ const DDL_DATABASE = `
     data_space_id INTEGER NOT NULL DEFAULT 1,
     is_unique BIT NOT NULL DEFAULT 0,
     fill_factor INTEGER NOT NULL DEFAULT 0,
+    is_padded BIT NOT NULL DEFAULT 0,
     ignore_dup_key BIT NOT NULL DEFAULT 0,
     allow_row_locks BIT NOT NULL DEFAULT 1,
     allow_page_locks BIT NOT NULL DEFAULT 1,
@@ -1924,6 +1932,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
   migrarColunas(db, 'main', 'indexes', [
     ['is_unique', 'BIT NOT NULL DEFAULT 0'],
     ['fill_factor', 'INTEGER NOT NULL DEFAULT 0'],
+    ['is_padded', 'BIT NOT NULL DEFAULT 0'],
     ['ignore_dup_key', 'BIT NOT NULL DEFAULT 0'],
     ['allow_row_locks', 'BIT NOT NULL DEFAULT 1'],
     ['allow_page_locks', 'BIT NOT NULL DEFAULT 1'],
