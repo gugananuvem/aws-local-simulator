@@ -763,8 +763,12 @@ const DDL_DATABASE = `
   );
 
   CREATE TABLE IF NOT EXISTS foreign_key_columns (
+    constraint_object_id INTEGER NOT NULL,
+    constraint_column_id INTEGER NOT NULL DEFAULT 1,
     parent_object_id INTEGER NOT NULL,
-    parent_column_id INTEGER NOT NULL
+    parent_column_id INTEGER NOT NULL,
+    referenced_object_id INTEGER NOT NULL,
+    referenced_column_id INTEGER NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS column_encryption_keys (
@@ -1079,6 +1083,11 @@ const VIEWS_DO_SISTEMA = Object.freeze({
     ['is_disabled', 'BIT', 1], ['is_not_for_replication', 'BIT', 1],
     ['is_not_trusted', 'BIT', 1], ['is_system_named', 'BIT', 1],
     ['delete_referential_action', 'TINYINT', 1], ['update_referential_action', 'TINYINT', 1]
+  ],
+  foreign_key_columns: [
+    ['constraint_object_id', 'INT', 4], ['constraint_column_id', 'INT', 4],
+    ['parent_object_id', 'INT', 4], ['parent_column_id', 'INT', 4],
+    ['referenced_object_id', 'INT', 4], ['referenced_column_id', 'INT', 4]
   ],
   functions: [['is_inlineable', 'BIT', 1]],
   identity_columns: [['column_id', 'INT', 4], ['seed_value', 'SQL_VARIANT', 8000]],
@@ -1534,6 +1543,12 @@ function sincronizarCatalogoDatabase(db, dbName) {
   ]);
   migrarColunas(db, 'main', 'default_constraints', [
     ['is_system_named', 'BIT NOT NULL DEFAULT 1']
+  ]);
+  migrarColunas(db, 'main', 'foreign_key_columns', [
+    ['constraint_object_id', 'INTEGER NOT NULL DEFAULT 0'],
+    ['constraint_column_id', 'INTEGER NOT NULL DEFAULT 1'],
+    ['referenced_object_id', 'INTEGER NOT NULL DEFAULT 0'],
+    ['referenced_column_id', 'INTEGER NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'main', 'indexes', [
     ['is_unique', 'BIT NOT NULL DEFAULT 0'],

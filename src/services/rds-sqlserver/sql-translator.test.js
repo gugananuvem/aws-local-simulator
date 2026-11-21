@@ -1276,6 +1276,14 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       }));
     });
 
+    test('informa INT na coluna ID das colunas de foreign key no script da tabela', () => {
+      expect(translator.columnTypesFor(
+        'SELECT fk.constraint_column_id AS [ID], cfk.name AS [Name] ' +
+        'FROM sys.foreign_key_columns AS fk ' +
+        'INNER JOIN sys.columns AS cfk ON fk.parent_column_id = cfk.column_id'
+      )).toEqual(expect.objectContaining({ ID: 'INT' }));
+    });
+
     test('informa BIT e DATETIME nas colunas da lista de procedures e funcoes', () => {
       const sql =
         'SELECT sp.name AS [Name], ' +

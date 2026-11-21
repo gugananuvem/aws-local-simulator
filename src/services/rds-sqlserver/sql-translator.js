@@ -1394,6 +1394,12 @@ class SqlTranslator {
       };
     }
 
+    if (/\b(?:sys|main)\.foreign_key_columns\b/i.test(sql)) {
+      return {
+        ID: 'INT'
+      };
+    }
+
     if (/\b(?:sys|main)\.all_columns\b/i.test(sql) && /\bas\s+\[DataType\]/i.test(sql)) {
       return {
         ID: 'INT',

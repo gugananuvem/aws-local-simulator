@@ -368,6 +368,17 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     }
   });
 
+  test('expõe as colunas de foreign_key_columns exigidas pelo script de tabelas', () => {
+    const colunas = engine.execute('principal',
+      'SELECT constraint_column_id, constraint_object_id, parent_column_id, ' +
+      'referenced_object_id, referenced_column_id FROM sys.foreign_key_columns'
+    ).columns.map((coluna) => coluna.name);
+    expect(colunas).toEqual([
+      'constraint_column_id', 'constraint_object_id', 'parent_column_id',
+      'referenced_object_id', 'referenced_column_id'
+    ]);
+  });
+
   test('expõe colunas de metadados exigidas pelo script de views do SMO 19', () => {
     engine.execute('principal', 'CREATE VIEW vw_teste AS SELECT 1 AS valor');
 
