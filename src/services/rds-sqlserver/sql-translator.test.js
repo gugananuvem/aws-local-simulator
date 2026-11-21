@@ -519,6 +519,10 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         "SELECT CAST(serverproperty(N'Servername') AS sysname) AS [Name]"
       )).toBe("SELECT CAST(serverproperty('Servername') AS TEXT) AS [Name]");
 
+      expect(translator.translate(
+        "SELECT CAST(COALESCE(DATABASEPROPERTYEX('master', 'lastgoodcheckdbtime'), 0) AS datetime) AS [LastGoodCheckDbTime]"
+      )).toContain('AS TEXT) AS [LastGoodCheckDbTime]');
+
       expect(translator.translate('select @@trancount')).toBe('select 0');
     });
 

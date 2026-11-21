@@ -134,8 +134,9 @@ sqlcmd -S tcp:localhost,1433 -U admin -P 'Senha123456' -d master -Q "SELECT GETD
 >
 > **Status verificado:** o caminho validado é o `Microsoft.Data.SqlClient` 3.1.3 usado pelo
 > SSMS 19 (`FILE_VERSION=3.13.23069.2`) e pelos probes SMO: login, lotes de conexão, RPCs
-> `sp_executesql`, listagem de databases/logins/roles, tabelas, colunas, System Views e
-> scripts de login funcionam sem diálogos de erro. O `sqlcmd` com **ODBC Driver 17** ainda falha
+> `sp_executesql`, listagem de databases/logins/roles, tabelas, colunas, System Views,
+> scripts de login e `Database.Create()` do diálogo **New Database** funcionam sem diálogos de
+> erro. O `sqlcmd` com **ODBC Driver 17** ainda falha
 > com `Sqlcmd: Error: Microsoft ODBC Driver 17 for SQL Server : Erro de protocolo no fluxo TDS.`
 > — o LOGIN7 chega ao listener, mas a negociação do driver não é compatível; prefira SSMS/SMO
 > ou `Microsoft.Data.SqlClient` neste simulador.
@@ -171,6 +172,15 @@ Suporte atual:
   `database_id` único globalmente. `CREATE` de database existente retorna erro 1801, `DROP` de
   database inexistente retorna erro 911 e `DROP` de database de sistema retorna erro 1805;
   `DROP DATABASE IF EXISTS` é aceito sem erro;
+- lotes de refresh do SSMS contendo `CREATE TABLE #tmp...; SELECT ...` são divididos também por
+  `;`, mesmo quando o tradutor fornece `splitBatches()` — sem isso o `CREATE` engolia o `SELECT`
+  e o nó **Databases** voltava vazio após criar um database;
+- `CAST(... AS datetime)` passa a `TEXT` com timestamp ISO: o valor devolvido por
+  `DATABASEPROPERTYEX(..., 'lastgoodcheckdbtime')` é string, e o SMO quebrava ao tentar converter
+  o inteiro `2023` do SQLite para `DateTime` (`LastGoodCheckDbTime`);
+- `sys.fulltext_languages`, `sys.database_scoped_configurations` e as linhas de
+  `sys.configurations` com ids `115`, `124`, `1126`, `1127` e `1555` são criadas/migradas ao abrir
+  a conexão — o pós-`Create()` do SMO lê essas tabelas logo após `Database.Create()`;
 - subconjunto procedural de inicialização de clientes (ver abaixo).
 
 Limitações do listener: sem TLS, sem Windows/Integrated Auth, sem MARS. A compatibilidade com
@@ -189,7 +199,12 @@ Probes executados contra uma instância isolada do listener TDS (`127.0.0.1:1433
   `id → DataType.Name=[int], SqlDataType=[Int], MaxLength=[4]` e
   `nome → DataType.Name=[varchar], SqlDataType=[VarChar], MaxLength=[8000]`;
 - `Logins` lista `admin` e `sa`, e `LoginProperties`/`LoginScript` funcionam sem erro;
-- `sys.all_views`, `sys.tables` e `sys.objects` são listados pelo Object Explorer;
+- `sys.all_views`, `sys.tables` e `sys.objects` são listados pelo Object Explorer; o nó
+  **System Databases** exibe as tabelas de sistema corretamente (confirmação visual no SSMS 19);
+- `Database.Create()` conclui sem erro: o database é lido de volta com `Containment`,
+  `Collation`, configurações 115/124/1126/1127/1555 e `database_scoped_configurations`;
+- o lote de refresh do Object Explorer (`CREATE TABLE #tmp...; SELECT ...`) devolve os databases
+  de usuário — `Ultrapoints2` aparece em **Databases** após criar e dar refresh;
 - duplo-clique em login no SSMS abre sem diálogo de erro.
 
 > O SSMS foi aberto com `-S 127.0.0.1,1433 -U admin -nosplash`; a senha é digitada no diálogo.
@@ -218,8 +233,11 @@ incluem `server_role_members`, `asymmetric_keys`, `certificates`, `credentials`,
 `server_triggers`, `server_assembly_modules`, `server_sql_modules`, `backup_devices`,
 `cryptographic_providers`, `dm_cryptographic_provider_properties`, `syslanguages`,
 `server_permissions`, `sql_logins`, `database_mirroring`, `server_principal_credentials` e
-`dm_os_process_memory`, `database_recovery_status`, `change_tracking_databases` e
-`database_filestream_options`. `sys.databases` expõe collation/containment/acesso/usuário,
+`dm_os_process_memory`, `database_recovery_status`, `change_tracking_databases`,
+`database_filestream_options`, `fulltext_languages` e `database_scoped_configurations`.
+`sys.configurations` contém as linhas com ids `115`, `124`, `1126`, `1127` e `1555` usadas pelo
+SMO depois de `CREATE DATABASE`; catálogos antigos são migrados automaticamente ao abrir a
+conexão. `sys.databases` expõe collation/containment/acesso/usuário,
 `is_ledger_on`, `is_remote_data_archive_enabled`, as opções ANSI/ANSI-WARNINGS/QUOTED-IDENTIFIER
 e os campos de idioma padrão lidos pelo SMO ao criar um database, com migração automática para
 databases antigos; `sys.server_principals` inclui `create_date`, `modify_date`,
@@ -254,7 +272,7 @@ A instância se apresenta como `Standard Edition (64-bit)` / `EngineEdition = 2`
 | CTE (`WITH ...`) | Suportado nativamente |
 | `MERGE`, `UPDATE ... JOIN` simples | Reescrita para UPSERT/subquery |
 | `CREATE VIEW`, `CREATE TRIGGER` | Repassados quando o SQLite suporta |
-| `CREATE DATABASE` / `DROP DATABASE` | Aplicados no `DbEngine` e removidos do lote (inclusive `CONTAINMENT`, `ON PRIMARY`, `LOG ON`, `WITH LEDGER`); `sys.databases` e tabelas de recuperação sincronizadas, `database_id` único |
+| `CREATE DATABASE` / `DROP DATABASE` | Aplicados no `DbEngine` e removidos do lote (inclusive `CONTAINMENT`, `ON PRIMARY`, `LOG ON`, `WITH LEDGER`); `sys.databases` e tabelas de recuperação sincronizadas, `database_id` único; duplicado/inexistente/database de sistema geram erros TDS 1801/911/1805 |
 | `DECLARE`/`SET` literais e batches com `GO` | Subconjunto straight-line |
 | `sysname` em DDL | Mapeado para `TEXT` |
 | `IF EXISTS (...)` / `IF (...)` com comando simples ou bloco `BEGIN...END` | Condição descartada; corpo executado |
@@ -267,7 +285,8 @@ A instância se apresenta como `Standard Edition (64-bit)` / `EngineEdition = 2`
 | Batches `Server` e `Information` do SMO | Detectados por `@SmoAuditLevel` + `PolicyHealthState`, com shims próprios |
 | Verificação de AlwaysOn (`xp_qv`) | Devolve `AlwaysOn = -1` (instância não AlwaysOn) |
 | `@@MICROSOFTVERSION`, `@@SPID`, `@@TRANCOUNT`, `@@VERSION` | `268439491`, `1`, `0` e `'16.00.4035.2'` |
-| `CAST(... AS sysname|UNIQUEIDENTIFIER|XML)` | Mapeado para `TEXT` |
+| `CREATE TABLE #tmp...; SELECT ...` (refresh do SSMS) | As instruções são executadas separadamente por `;`, mesmo depois de `splitBatches()`; o `SELECT` final volta a retornar linhas |
+| `CAST(... AS sysname|UNIQUEIDENTIFIER|XML|DATETIME|DATETIME2|SMALLDATETIME|DATE|TIME)` | Mapeado para `TEXT` (timestamp ISO quando aplicável) |
 | `CAST(... AS DECIMAL/NUMERIC(p,s))` | Família `decimal`, TDS `0x6A` com `precision`/`scale` |
 | Literais hex `0x...` | Convertidos em decimal |
 | `dbo.` / `[dbo].` em nomes de objetos | Removido (SQLite não tem esquemas) |

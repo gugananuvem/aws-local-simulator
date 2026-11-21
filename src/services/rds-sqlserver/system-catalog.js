@@ -157,6 +157,13 @@ const DDL_SISTEMA = `
     is_advanced BIT NOT NULL DEFAULT 1
   );
 
+  -- O SMO le as configuracoes escopo de database apos CREATE DATABASE.
+  CREATE TABLE IF NOT EXISTS database_scoped_configurations (
+    name TEXT NOT NULL PRIMARY KEY,
+    value INT NOT NULL DEFAULT 0,
+    value_for_secondary INT NOT NULL DEFAULT 2
+  );
+
   CREATE TABLE IF NOT EXISTS endpoints (
     name TEXT NOT NULL PRIMARY KEY,
     endpoint_id INT NOT NULL UNIQUE,
@@ -224,6 +231,15 @@ const DDL_SISTEMA = `
     alias TEXT NOT NULL,
     langid SMALLINT NOT NULL DEFAULT 0,
     lcid INT NOT NULL DEFAULT 1033
+  );
+
+  -- O SMO consulta sys.fulltext_languages ao atualizar as propriedades de um
+  -- database recem-criado (configuration_id 1126). Sem a tabela, o Create falha
+  -- com "no such table: sys.fulltext_languages".
+  CREATE TABLE IF NOT EXISTS fulltext_languages (
+    lcid INT NOT NULL PRIMARY KEY,
+    language_id SMALLINT NOT NULL DEFAULT 0,
+    name TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS server_permissions (
@@ -745,7 +761,14 @@ const IDIOMAS = [
 const CONFIGURACOES = [
   ['show advanced options', 16383, 0, 1, 0, 0, 'Show advanced options'],
   ['Agent XPs', 16384, 0, 1, 1, 1, 'Agent XPs enabled'],
-  ['default language', 148, 0, 9999, 0, 0, 'default language'],
+  // O SMO le estas configuracoes apos CREATE DATABASE. Sem as linhas com ids
+  // 115, 124, 1126, 1127 e 1555 o GetColumnData estoura IndexOutOfRange.
+  ['max worker threads', 115, 128, 65535, 0, 0, 'Maximum worker threads'],
+  ['default language', 124, 0, 9999, 0, 0, 'default language'],
+  ['nested triggers', 148, 0, 1, 1, 1, 'Allow triggers to be invoked within triggers'],
+  ['default full-text language', 1126, 0, 2147483647, 1033, 1033, 'default full-text language'],
+  ['full-text upgrade option', 1127, 0, 2, 0, 0, 'full-text upgrade option'],
+  ['remote data archive', 1555, 0, 1, 0, 0, 'Allow the use of the REMOTE_DATA_ARCHIVE data access for databases'],
   ['max server memory (MB)', 1544, 16, 2147483647, 2147483647, 1, 'Maximum size of memory'],
   ['min server memory (MB)', 1543, 0, 2147483647, 0, 1, 'Minimum size of memory'],
   ['SMO and DMO Enabled', 16387, 0, 1, 1, 1, 'SMO and DMO enabled'],
@@ -804,6 +827,26 @@ function migrarLcidParaInt(db, schema) {
 }
 
 /**
+ * Databases criados por versoes anteriores tinham `default language` com o id
+ * errado (148) e nao tinham as configuracoes de full-text. O SMO le essas
+ * linhas pelo configuration_id logo apos CREATE DATABASE.
+ * @private
+ */
+function migrarConfiguracoes(db, schema) {
+  db.exec(`
+    UPDATE OR IGNORE ${schema}.configurations
+      SET configuration_id = 124 WHERE name = 'default language' AND configuration_id <> 124;
+    DELETE FROM ${schema}.configurations WHERE name = 'nested triggers';
+  `);
+  const inserir = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.configurations
+      (name, configuration_id, minimum, maximum, value, value_in_use, description, is_dynamic, is_advanced)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)
+  `);
+  CONFIGURACOES.forEach((config) => inserir.run(...config));
+}
+
+/**
  * Popula as tabelas de sistema de forma idempotente, refletindo databases
  * criados/removidos desde a última conexão.
  * @private
@@ -856,6 +899,17 @@ function popularTabelas(db, schema, nomesDatabases) {
   `);
   CONFIGURACOES.forEach((config) => inserirConfiguracao.run(...config));
 
+  const inserirConfiguracaoEscopo = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.database_scoped_configurations
+      (name, value, value_for_secondary) VALUES (?, ?, ?)
+  `);
+  [
+    ['MAXDOP', 0, 0],
+    ['LEGACY_CARDINALITY_ESTIMATION', 0, 2],
+    ['PARAMETER_SNIFFING', 1, 2],
+    ['QUERY_OPTIMIZER_HOTFIXES', 0, 2]
+  ].forEach((config) => inserirConfiguracaoEscopo.run(...config));
+
   db.prepare(`
     INSERT OR IGNORE INTO ${schema}.server_principals (name, principal_id, type, sid)
     VALUES ('sa', 1, 'S', X'01'), ('admin', 2, 'S', X'02')
@@ -890,6 +944,11 @@ function popularTabelas(db, schema, nomesDatabases) {
     inserirIdioma.run(...idioma);
     atualizarIdioma.run(idioma[1], idioma[2], idioma[3], idioma[0]);
   });
+  const inserirIdiomaFullText = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.fulltext_languages (lcid, language_id, name)
+    VALUES (?, ?, ?)
+  `);
+  IDIOMAS.forEach((idioma) => inserirIdiomaFullText.run(idioma[3], idioma[2], idioma[1]));
   db.prepare(`
     INSERT OR IGNORE INTO ${schema}.sql_logins (principal_id) VALUES (1), (2)
   `).run();
@@ -1488,6 +1547,7 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
     ['lcid', 'INT NOT NULL DEFAULT 1033']
   ]);
   migrarLcidParaInt(db, 'sys');
+  migrarConfiguracoes(db, 'sys');
   migrarColunas(db, 'sys', 'server_principals', [
     ['create_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],
     ['modify_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],

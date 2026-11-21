@@ -141,6 +141,49 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('CREATE TABLE duplicado retorna o erro 2714 do SQL Server', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('principal', 'CREATE TABLE clientes (id INT)');
+      try {
+        comTradutor.execute('principal', 'CREATE TABLE clientes (id INT)');
+        throw new Error('CREATE TABLE duplicado deveria falhar');
+      } catch (erro) {
+        expect(erro.number).toBe(2714);
+        expect(erro.state).toBe(1);
+        expect(erro.class).toBe(16);
+        expect(erro.message).toContain("There is already an object named 'clientes' in the database.");
+      }
+
+      const tabelas = comTradutor.execute('principal', 'SELECT name FROM sys.tables').rows;
+      expect(tabelas).toEqual([{ name: 'clientes' }]);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('lote de refresh do SSMS retorna os databases de usuario apos CREATE', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('master', 'CREATE DATABASE Ultrapoints2');
+      const resultado = comTradutor.execute(
+        'master',
+        "create table #tmp_sync_states (database_id int, sync_state tinyint); " +
+        "SELECT dtb.name AS [Database_Name], dtb.state AS [Database_Status] " +
+        "FROM master.sys.databases AS dtb " +
+        "LEFT OUTER JOIN #tmp_sync_states AS sync_state ON dtb.database_id = sync_state.database_id " +
+        "WHERE (CAST(case when dtb.name in ('master','model','msdb','tempdb') " +
+        "then 1 else dtb.is_distributor end AS bit)=0 and " +
+        "CAST(isnull(dtb.source_database_id, 0) AS bit)=0) " +
+        "ORDER BY [Database_Name] ASC; drop table #tmp_sync_states"
+      );
+
+      expect(resultado.rows).toEqual([{ Database_Name: 'Ultrapoints2', Database_Status: 0 }]);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
   test('DROP de database inexistente e CREATE duplicado retornam erro do SQL Server', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {

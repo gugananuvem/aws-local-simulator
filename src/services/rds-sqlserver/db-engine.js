@@ -310,6 +310,9 @@ class DbEngine {
     if (this.translator && typeof this.translator.splitBatches === 'function') {
       partes = this.translator.splitBatches(sql);
       if (!Array.isArray(partes)) partes = [sql];
+      // splitBatches() separa apenas por GO. O SMO envia CREATE TABLE #tmp; SELECT ...
+      // no mesmo lote; sem esta divisao o CREATE engole o SELECT e o resultado volta vazio.
+      partes = partes.flatMap(parte => this._dividirPorPontoEVirgula(parte));
     } else {
       partes = this._dividirPorPontoEVirgula(sql)
         .flatMap(parte => this._dividirPorGo(parte));
@@ -482,7 +485,11 @@ class DbEngine {
 
     for (const instrucao of instrucoes) {
       const usarParametros = instrucoes.length === 1 || this._temPlaceholders(instrucao);
-      resultados.push(this._executarInstrucao(db, instrucao, usarParametros ? parametros : []));
+      try {
+        resultados.push(this._executarInstrucao(db, instrucao, usarParametros ? parametros : []));
+      } catch (erro) {
+        throw this._traduzirErroSqlite(erro);
+      }
     }
 
     const primeiroSelect = resultados.find(resultado => resultado.type === 'select');
@@ -555,6 +562,23 @@ class DbEngine {
     erro.state = state;
     erro.class = 16;
     return erro;
+  }
+
+  /**
+   * O SQLite devolve `table X already exists` sem numero de erro; o cliente TDS
+   * transformaria isso em 50000 e o SSMS nao apontaria o objeto duplicado.
+   * @private
+   */
+  _traduzirErroSqlite(erro) {
+    if (!erro || erro.number) return erro;
+    const mensagem = String(erro.message || erro);
+    const correspondencia = mensagem.match(/\b(?:table|view)\s+(.+?)\s+already exists\b/i);
+    if (!correspondencia) return erro;
+
+    let nome = correspondencia[1].trim();
+    nome = nome.split('.').pop().replace(/^["'\[`]|["'\]`]$/g, '');
+    return this._erroTsql(2714, 1,
+      `There is already an object named '${nome}' in the database.`);
   }
 
   /**

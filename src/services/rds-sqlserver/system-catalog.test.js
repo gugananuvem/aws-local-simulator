@@ -83,6 +83,76 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(propriedades.d).toBe('2023-01-01 00:00:00');
   });
 
+  test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {
+    const configuracoes = engine.execute('master', `
+      SELECT configuration_id, name, value_in_use FROM sys.configurations
+      WHERE configuration_id IN (115, 124, 1126, 1127, 1555)
+      ORDER BY configuration_id
+    `).rows;
+    expect(configuracoes).toEqual([
+      { configuration_id: 115, name: 'max worker threads', value_in_use: 0 },
+      { configuration_id: 124, name: 'default language', value_in_use: 0 },
+      { configuration_id: 1126, name: 'default full-text language', value_in_use: 1033 },
+      { configuration_id: 1127, name: 'full-text upgrade option', value_in_use: 0 },
+      { configuration_id: 1555, name: 'remote data archive', value_in_use: 0 }
+    ]);
+
+    const fullText = engine.execute('master',
+      "SELECT name FROM sys.fulltext_languages WHERE lcid = 1033").rows;
+    expect(fullText).toEqual([{ name: 'English' }]);
+
+    const escopo = engine.execute('principal', `
+      SELECT name, value, value_for_secondary FROM sys.database_scoped_configurations
+      ORDER BY name
+    `).rows;
+    expect(escopo).toEqual([
+      { name: 'LEGACY_CARDINALITY_ESTIMATION', value: 0, value_for_secondary: 2 },
+      { name: 'MAXDOP', value: 0, value_for_secondary: 0 },
+      { name: 'PARAMETER_SNIFFING', value: 1, value_for_secondary: 2 },
+      { name: 'QUERY_OPTIMIZER_HOTFIXES', value: 0, value_for_secondary: 2 }
+    ]);
+  });
+
+  test('migra configurações de catálogos criados por versões anteriores', () => {
+    engine.execute('master', 'SELECT 1 AS ok');
+    engine.close();
+    const bruto = new (require('better-sqlite3'))(':memory:');
+    try {
+      const master = path.join(dataDir, 'master.db').replace(/'/g, "''");
+      bruto.exec(`ATTACH DATABASE '${master}' AS sys`);
+      bruto.exec(`
+        DELETE FROM sys.configurations WHERE name = 'nested triggers';
+        UPDATE sys.configurations SET configuration_id = 148 WHERE name = 'default language';
+        DELETE FROM sys.configurations WHERE name = 'default full-text language';
+        DELETE FROM sys.database_scoped_configurations;
+        DELETE FROM sys.fulltext_languages;
+      `);
+      bruto.exec('DETACH DATABASE sys');
+    } finally {
+      bruto.close();
+    }
+
+    engine = new DbEngine(dataDir, new SqlTranslator('sqlserver-ee'));
+    const idioma = engine.execute('master',
+      "SELECT configuration_id, value_in_use FROM sys.configurations WHERE name = 'default language'"
+    ).rows;
+    expect(idioma).toEqual([{ configuration_id: 124, value_in_use: 0 }]);
+
+    const configuracoes = engine.execute('master', `
+      SELECT configuration_id FROM sys.configurations
+      WHERE configuration_id IN (115, 124, 1126, 1127, 1555)
+      ORDER BY configuration_id
+    `).rows;
+    expect(configuracoes.map((linha) => linha.configuration_id)).toEqual([115, 124, 1126, 1127, 1555]);
+
+    expect(engine.execute('master',
+      "SELECT name FROM sys.fulltext_languages WHERE lcid = 1033").rows)
+      .toEqual([{ name: 'English' }]);
+    expect(engine.execute('principal',
+      "SELECT value FROM sys.database_scoped_configurations WHERE name = 'MAXDOP'").rows)
+      .toEqual([{ value: 0 }]);
+  });
+
   test('aceita a forma master.sys.databases', () => {
     const resultado = engine.execute('principal', 'SELECT name FROM master.sys.databases');
     expect(resultado.rows.map((linha) => linha.name)).toContain('master');

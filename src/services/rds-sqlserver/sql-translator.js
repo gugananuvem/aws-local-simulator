@@ -1505,7 +1505,7 @@ class SqlTranslator {
       // montado pelo SMO vira Server[@Name='0'] e a conexão falha.
       resultado = this._substituirTodos(
         resultado,
-        '\\bAS\\s+(?:SYSNAME|UNIQUEIDENTIFIER|XML)\\b',
+        '\\bAS\\s+(?:SYSNAME|UNIQUEIDENTIFIER|XML|DATETIME2|DATETIME|SMALLDATETIME|DATE|TIME)\\b',
         () => 'AS TEXT'
       );
       resultado = this._traduzirDateAdd(resultado);
