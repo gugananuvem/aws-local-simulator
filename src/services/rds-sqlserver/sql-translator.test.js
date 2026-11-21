@@ -1232,6 +1232,22 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(translator.translate(sql)).toContain('is_output = CAST(? AS INTEGER)');
     });
 
+    test('converte os filtros numericos da lista de Keys para INTEGER', () => {
+      const sql =
+        "SELECT i.name AS [Name], '/Index[@Name=' + quotename(i.name) + ']' AS [Urn] " +
+        'FROM sys.tables AS tbl INNER JOIN sys.indexes AS i ' +
+        'ON (i.index_id > @_msparam_0 and i.is_hypothetical = @_msparam_1) AND (i.object_id=tbl.object_id) ' +
+        'WHERE (i.is_primary_key + 2*i.is_unique_constraint=@_msparam_2 ' +
+        'and CAST(case when i.is_memory_optimized=1 then 1 else 0 end AS bit)=@_msparam_3)' +
+        'and(tbl.name=@_msparam_4 and SCHEMA_NAME(tbl.schema_id)=@_msparam_5)';
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain('i.index_id > CAST(? AS INTEGER)');
+      expect(traduzido).toContain('i.is_hypothetical = CAST(? AS INTEGER)');
+      expect(traduzido).toContain('i.is_unique_constraint=CAST(? AS INTEGER)');
+      expect(traduzido).toContain('AS bit)=CAST(? AS INTEGER)');
+      expect(traduzido).toContain('tbl.name=?');
+    });
+
     test('informa os tipos TDS esperados pelo SMO nas views de sistema', () => {
       expect(translator.columnTypesFor(
         'SELECT CAST(CASE WHEN 1=1 THEN 1 ELSE 0 END AS bit) AS [IsEncrypted] ' +

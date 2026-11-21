@@ -276,6 +276,14 @@ class SqlTranslator {
         '$1CAST($2 AS INTEGER)'
       );
     }
+    // O SSMS envia os filtros numericos da lista de Keys como nvarchar. Sem o
+    // CAST, o SQLite compara texto com numero e nao devolve a PK clusterizada.
+    if (/Index\[@Name=/.test(resultado) && /\bi\.index_id\s*>\s*@_msparam_/i.test(resultado)) {
+      resultado = resultado.replace(
+        /@_msparam_([0-3])\b/g,
+        (_, indice) => `CAST(@_msparam_${indice} AS INTEGER)`
+      );
+    }
     resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
     resultado = this._removerColchetesSimples(resultado);
