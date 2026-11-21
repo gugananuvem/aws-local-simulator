@@ -310,7 +310,9 @@ function encodeValue(value, meta) {
     const { negativo, valor } = decimaisEscalados(value, meta.scale || 0);
     const buffer = Buffer.allocUnsafe(1 + maxLength);
     buffer.writeUInt8(maxLength, 0);
-    buffer.writeUInt8(negativo ? 1 : 0, 1);
+    // [MS-TDS]: 0 = negativo, 1 = nao negativo (invertido em relacao ao
+    // decimal do .NET). Escrever 0 para positivo faz o cliente ler -1.
+    buffer.writeUInt8(negativo ? 0 : 1, 1);
     let resto = valor;
     for (let indice = 0; indice < maxLength - 1; indice++) {
       buffer.writeUInt8(Number(resto & 0xFFn), 2 + indice);

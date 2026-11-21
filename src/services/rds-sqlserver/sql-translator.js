@@ -310,6 +310,12 @@ class SqlTranslator {
       /\bnull\s+AS\s+\[VolumeFreeSpace\]/gi,
       '-1 AS [VolumeFreeSpace]'
     );
+    // O SMO inverte allow_row_locks/allow_page_locks com "~". No SQLite
+    // "~1" devolve -2 (verdadeiro), e o script gerado sai com ALLOW_*_LOCKS=OFF.
+    resultado = resultado.replace(
+      /~(\s*\w+\s*\.\s*)?(allow_row_locks|allow_page_locks)\b/gi,
+      (_correspondência, prefixo, coluna) => `(1 - ${prefixo || ''}${coluna})`
+    );
     resultado = this._traduzirLiteraisHex(resultado);
     resultado = this._traduzirLiteraisData(resultado);
     resultado = this._traduzirProcedural(resultado);
@@ -907,7 +913,8 @@ class SqlTranslator {
       'data_spaces', 'filegroups', 'database_files', 'all_columns', 'columns',
       'types', 'database_principals',
       'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
-      'default_constraints', 'check_constraints', 'index_columns', 'computed_columns',
+      'default_constraints', 'check_constraints', 'edge_constraints',
+      'index_resumable_operations', 'index_columns', 'computed_columns',
       'identity_columns', 'foreign_keys', 'foreign_key_columns', 'column_encryption_keys',
       'xml_schema_collections', 'sensitivity_classifications',
       'change_tracking_tables', 'filetables', 'periods',
@@ -1321,6 +1328,77 @@ class SqlTranslator {
       return { IsXTPSupported: 'BIT' };
     }
 
+    // Colunas de um indice. Sem tipos explicitos a regra de propriedades de
+    // tabela casa primeiro e o SMO recebe IsIncluded/Descending como INTN,
+    // descartando a coluna e deixando Table.PrimaryKey nulo.
+    if (/\bIndex_Name\b/i.test(sql) && /\bIsIncluded\b/i.test(sql) && /\bindex_columns\b/i.test(sql)) {
+      return {
+        Server_Name: 'TEXT',
+        Database_Name: 'TEXT',
+        Table_Schema: 'TEXT',
+        Table_Name: 'TEXT',
+        Index_Name: 'TEXT',
+        ID: 'INT',
+        Name: 'TEXT',
+        IsIncluded: 'BIT',
+        Descending: 'BIT',
+        IsComputed: 'BIT',
+        ColumnStoreOrderOrdinal: 'INT'
+      };
+    }
+
+    // Query de propriedades de um indice unico (abre o no Keys/Constraints do
+    // Object Explorer). O SMO le HasSparseColumn/HasFilter/IsPartitioned como
+    // Boolean e ResumableOperationState como byte; sem tipos explicitos o
+    // SQLite devolve INTN e o SMO falha ao carregar a PrimaryKey.
+    if (/\bResumableOperationState\b/i.test(sql) && /\bindex_resumable_operations\b/i.test(sql)) {
+      return {
+        Name: 'TEXT',
+        ID: 'INT',
+        IsSystemObject: 'BIT',
+        NoAutomaticRecomputation: 'BIT',
+        FillFactor: 'TINYINT',
+        IsClustered: 'BIT',
+        IndexKeyType: 'INT',
+        IsUnique: 'BIT',
+        IgnoreDuplicateKeys: 'BIT',
+        DisallowRowLocks: 'BIT',
+        DisallowPageLocks: 'BIT',
+        PadIndex: 'BIT',
+        IsDisabled: 'BIT',
+        IsSystemNamed: 'BIT',
+        IsFullTextKey: 'BIT',
+        IsXmlIndex: 'BIT',
+        SecondaryXmlIndexType: 'TINYINT',
+        ParentXmlIndex: 'TEXT',
+        SpatialIndexType: 'TINYINT',
+        BoundingBoxXMin: 'FLOAT',
+        BoundingBoxYMin: 'FLOAT',
+        BoundingBoxXMax: 'FLOAT',
+        BoundingBoxYMax: 'FLOAT',
+        Level1Grid: 'SMALLINT',
+        Level2Grid: 'SMALLINT',
+        Level3Grid: 'SMALLINT',
+        Level4Grid: 'SMALLINT',
+        CellsPerObject: 'INT',
+        IsSpatialIndex: 'BIT',
+        HasSparseColumn: 'BIT',
+        HasFilter: 'BIT',
+        FilterDefinition: 'TEXT',
+        PartitionScheme: 'TEXT',
+        IsPartitioned: 'BIT',
+        FileStreamFileGroup: 'TEXT',
+        FileStreamPartitionScheme: 'TEXT',
+        IsFileTableDefined: 'BIT',
+        IndexType: 'TINYINT',
+        BucketCount: 'INT',
+        CompressionDelay: 'INT',
+        IndexedXmlPathName: 'TEXT',
+        ResumableOperationState: 'TINYINT',
+        IsOptimizedForSequentialKey: 'BIT'
+      };
+    }
+
     // O SMO le os metadados de indices com tipos explicitos (BIT/TINYINT/
     // SMALLINT/INT/FLOAT). Sem isso o SQLite devolve INTN e o Script() da
     // tabela com primary key estoura "Specified cast is not valid".
@@ -1439,12 +1517,10 @@ class SqlTranslator {
       };
     }
 
-    if (/\b(?:sys|main)\.foreign_key_columns\b/i.test(sql)) {
-      return {
-        ID: 'INT'
-      };
-    }
-
+    // A query de colunas do Object Explorer e do Script() referencia
+    // foreign_key_columns em subconsulta, mas tambem le all_columns. A regra
+    // de all_columns deve vir primeiro para nao devolver apenas ID:INT e
+    // deixar Nullable/Computed/IsForeignKey sem tipo BIT (cast invalido).
     if (/\b(?:sys|main)\.all_columns\b/i.test(sql) && /\bas\s+\[DataType\]/i.test(sql)) {
       return {
         ID: 'INT',
@@ -1478,6 +1554,12 @@ class SqlTranslator {
         IsMasked: 'BIT',
         IsClassified: 'BIT',
         GraphType: 'INT'
+      };
+    }
+
+    if (/\b(?:sys|main)\.foreign_key_columns\b/i.test(sql)) {
+      return {
+        ID: 'INT'
       };
     }
 
@@ -2517,13 +2599,29 @@ class SqlTranslator {
       /\[(NVARCHAR|VARCHAR|NCHAR|CHAR|UNIQUEIDENTIFIER|SYSNAME|XML|TEXT|SMALLDATETIME|DATETIME2|DATETIME|DATE|TIME|SMALLMONEY|MONEY|DECIMAL|NUMERIC|DOUBLE(?:\s+PRECISION)?|FLOAT|REAL|VARBINARY|BINARY|IMAGE|BIGINT|SMALLINT|TINYINT|INTEGER|INT|BIT)\](?=\s*(?:$|[(),]|\b))/gi,
       (_correspondencia, tipo) => tipo
     );
+    const marcadores = new Map();
     for (const [regex, tipo] of TIPOS_DDL) {
       // Tipos sem argumentos não devem casar com funções já traduzidas,
       // como datetime('now'), gerada a partir de GETDATE().
       const fonte = regex.source.includes('\\(')
         ? regex.source
         : `${regex.source}(?!\\s*\\()`;
-      resultado = this._substituirTodos(resultado, fonte, () => tipo);
+      // O SQLite nao preserva o tipo T-SQL original; guardamos o tipo em
+      // hexadecimal dentro de um comentario para o catalogo reconstruir
+      // user_type_id/max_length/precision/scale ao gerar scripts no SSMS.
+      // Usamos marcadores porque o tipo traduzido tambem aparece no comentario
+      // e o _substituirTodos() repetiria a substituicao ate o limite de 500.
+      resultado = this._substituirTodos(resultado, fonte, (_correspondencia, original) => {
+        const chave = `__TSQL_TIPO_${marcadores.size}__`;
+        marcadores.set(
+          chave,
+          `${tipo} /*TSQL:${Buffer.from(String(original).trim()).toString('hex').toUpperCase()}*/`
+        );
+        return chave;
+      });
+    }
+    for (const [chave, valor] of marcadores) {
+      resultado = resultado.split(chave).join(valor);
     }
     return resultado;
   }
@@ -2569,16 +2667,22 @@ class SqlTranslator {
     );
   }
 
-  /** Converte IDENTITY(1,1) em AUTOINCREMENT sem duplicar INTEGER/PRIMARY KEY. @private */
+  /** Converte IDENTITY(seed,increment) em AUTOINCREMENT sem perder os valores. @private */
   _traduzirIdentity(sql) {
     let resultado = sql;
+    const padraoIdentity = /\bIDENTITY\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)/i;
 
     for (let tentativa = 0; tentativa < 20; tentativa += 1) {
       const máscara = this._mascarar(resultado);
-      const correspondência = /\bIDENTITY\s*\(\s*\d+\s*,\s*\d+\s*\)/i.exec(máscara.code);
+      const correspondência = padraoIdentity.exec(máscara.code);
       if (!correspondência) {
         break;
       }
+      // O SQLite nao guarda seed/increment; o catalogo le este marcador para
+      // devolver IDENTITY(seed,increment) ao gerar o script no SSMS.
+      // Usa '_' em vez de ',' porque o separador de definicoes do catalogo
+      // quebra a coluna em cada virgula, inclusive dentro de comentarios.
+      const marcador = ` /*TSQLID:${correspondência[1]}_${correspondência[2]}*/`;
       const limites = this._limitesColuna(máscara.code, correspondência.index);
       const códigoColuna = máscara.code.slice(limites.início, limites.fim);
       const temChave = /\bPRIMARY\s+KEY\b/i.test(códigoColuna);
@@ -2589,19 +2693,20 @@ class SqlTranslator {
         const ponto = limites.início + chave.index + chave[0].length;
         resultado = resultado.slice(0, ponto) + ' AUTOINCREMENT' + resultado.slice(ponto);
         const novaMáscara = this._mascarar(resultado);
-        const novamente = /\bIDENTITY\s*\(\s*\d+\s*,\s*\d+\s*\)/i.exec(novaMáscara.code);
+        const novamente = padraoIdentity.exec(novaMáscara.code);
         if (!novamente) {
           break;
         }
+        const novosLimites = this._limitesColuna(novaMáscara.code, novamente.index);
         resultado =
           resultado.slice(0, novamente.index) +
           resultado.slice(novamente.index + novamente[0].length);
+        const fimColuna = novosLimites.fim - novamente[0].length;
+        resultado = resultado.slice(0, fimColuna) + marcador + resultado.slice(fimColuna);
         continue;
       }
 
-      const substituição = temInteger
-        ? 'PRIMARY KEY AUTOINCREMENT'
-        : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+      const substituição = `${temInteger ? 'PRIMARY KEY AUTOINCREMENT' : 'INTEGER PRIMARY KEY AUTOINCREMENT'}${marcador}`;
       resultado =
         resultado.slice(0, correspondência.index) +
         substituição +

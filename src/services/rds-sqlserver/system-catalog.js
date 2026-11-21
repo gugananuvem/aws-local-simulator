@@ -581,8 +581,32 @@ const DDL_DATABASE = `
     allow_row_locks BIT NOT NULL DEFAULT 1,
     allow_page_locks BIT NOT NULL DEFAULT 1,
     filter_definition TEXT,
+    has_filter BIT NOT NULL DEFAULT 0,
     compression_delay INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (object_id, index_id)
+  );
+
+  -- Usada pelo SMO ao carregar propriedades de indices em qualquer database.
+  CREATE TABLE IF NOT EXISTS index_resumable_operations (
+    object_id INTEGER NOT NULL,
+    index_id INTEGER NOT NULL,
+    state TINYINT NOT NULL DEFAULT 2,
+    PRIMARY KEY (object_id, index_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS edge_constraints (
+    name TEXT NOT NULL DEFAULT '',
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    principal_id INTEGER DEFAULT 1,
+    schema_id INTEGER NOT NULL DEFAULT 1,
+    parent_object_id INTEGER NOT NULL,
+    type CHAR(2) NOT NULL DEFAULT 'EC',
+    type_desc TEXT NOT NULL DEFAULT 'EDGE_CONSTRAINT',
+    create_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    modify_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_schema_published BIT NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS data_spaces (
@@ -705,6 +729,30 @@ const DDL_DATABASE = `
     is_system_named BIT NOT NULL DEFAULT 1,
     uses_database_collation BIT NOT NULL DEFAULT 0,
     definition TEXT
+  );
+
+  -- Consultada pelo SMO ao carregar as propriedades de um indice.
+  CREATE TABLE IF NOT EXISTS index_resumable_operations (
+    object_id INTEGER NOT NULL,
+    index_id INTEGER NOT NULL,
+    state TINYINT NOT NULL DEFAULT 2,
+    PRIMARY KEY (object_id, index_id)
+  );
+
+  -- Consultada pelo Object Explorer ao listar as edge constraints de uma tabela.
+  CREATE TABLE IF NOT EXISTS edge_constraints (
+    name TEXT NOT NULL DEFAULT '',
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    principal_id INTEGER DEFAULT 1,
+    schema_id INTEGER NOT NULL DEFAULT 1,
+    parent_object_id INTEGER NOT NULL,
+    type CHAR(2) NOT NULL DEFAULT 'EC',
+    type_desc TEXT NOT NULL DEFAULT 'EDGE_CONSTRAINT',
+    create_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    modify_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_schema_published BIT NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS index_columns (
@@ -992,7 +1040,7 @@ const OBJETOS_DO_CATALOGO = new Set([
   'views', 'system_views', 'synonyms', 'indexes', 'data_spaces', 'types',
   'filegroups', 'database_files', 'all_columns', 'columns',
   'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
-  'default_constraints', 'check_constraints', 'index_columns', 'computed_columns', 'identity_columns',
+  'default_constraints', 'check_constraints', 'edge_constraints', 'index_resumable_operations', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_keys', 'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
@@ -1033,8 +1081,193 @@ const TIPOS_SQL = Object.freeze({
   UNIQUEIDENTIFIER: ['uniqueidentifier', 36, 36, 16, 0, 0],
   SQL_VARIANT: ['sql_variant', 98, 98, 8016, 0, 0],
   XML: ['xml', 241, 241, 16, 0, 0],
-  BLOB: ['varbinary', 165, 165, 8000, 0, 0]
+  BLOB: ['varbinary', 165, 165, 8000, 0, 0],
+  SYSNAME: ['nvarchar', 231, 231, 256, 0, 0],
+  DATETIME2: ['datetime2', 43, 43, 8, 27, 7],
+  SMALLDATETIME: ['smalldatetime', 35, 35, 4, 16, 0],
+  SMALLMONEY: ['smallmoney', 122, 122, 4, 10, 4],
+  VARBINARY: ['varbinary', 165, 165, 8000, 0, 0],
+  BINARY: ['binary', 173, 173, 8000, 0, 0],
+  IMAGE: ['image', 34, 34, 16, 0, 0]
 });
+
+/**
+ * Reconstrói a definicao usada em sys.all_columns a partir do tipo T-SQL
+ * original gravado pelo tradutor (ex.: NVARCHAR(21), DECIMAL(18, 2)).
+ * @private
+ */
+function definicaoTsql(tipoOriginal) {
+  const texto = String(tipoOriginal || '').trim().replace(/^\[|\]$/g, '');
+  const casamento = /^([A-Za-z_][\w]*)\s*(?:\(\s*([^)]*)\s*\))?$/.exec(texto);
+  const nome = casamento ? casamento[1].toUpperCase() : 'NVARCHAR';
+  const args = casamento && casamento[2]
+    ? casamento[2].split(',').map((valor) => valor.trim().toUpperCase())
+    : [];
+  const definicao = [...(TIPOS_SQL[nome] || TIPOS_SQL.TEXT)];
+  const tamanho = args[0];
+
+  if (tamanho === 'MAX') {
+    definicao[3] = -1;
+  } else if ((nome === 'NVARCHAR' || nome === 'NCHAR') && tamanho) {
+    definicao[3] = Number(tamanho) * 2;
+  } else if (['VARCHAR', 'CHAR', 'VARBINARY', 'BINARY'].includes(nome) && tamanho) {
+    definicao[3] = Number(tamanho);
+  }
+
+  if ((nome === 'DECIMAL' || nome === 'NUMERIC') && tamanho) {
+    definicao[4] = Number(tamanho) || definicao[4];
+    definicao[5] = args[1] === undefined ? 0 : Number(args[1]);
+  }
+  if (nome === 'DATETIME2' && tamanho) definicao[5] = Number(tamanho);
+
+  return definicao;
+}
+
+/** Separa a lista de colunas de um CREATE TABLE por virgulas de primeiro nivel. @private */
+function dividirDefinicoes(texto) {
+  const partes = [];
+  let atual = '';
+  let profundidade = 0;
+  let delimitador = '';
+  for (const caractere of texto) {
+    if (delimitador) {
+      atual += caractere;
+      if ((delimitador === ']' && caractere === ']') || caractere === delimitador) delimitador = '';
+      continue;
+    }
+    if (caractere === "'" || caractere === '"' || caractere === '`') {
+      delimitador = caractere;
+      atual += caractere;
+      continue;
+    }
+    if (caractere === '[') {
+      delimitador = ']';
+      atual += caractere;
+      continue;
+    }
+    if (caractere === '(') profundidade += 1;
+    if (caractere === ')') profundidade -= 1;
+    if (caractere === ',' && profundidade === 0) {
+      partes.push(atual);
+      atual = '';
+      continue;
+    }
+    atual += caractere;
+  }
+  partes.push(atual);
+  return partes;
+}
+
+/**
+ * Extrai os tipos T-SQL originais, as colunas IDENTITY e a chave primaria do
+ * DDL gravado no sqlite_master. O SQLite nao preserva essas informacoes.
+ * @private
+ */
+function extrairMetadadosDdl(sql) {
+  const resultado = { colunas: new Map(), pk: null };
+  const texto = String(sql || '');
+  const inicio = /\bCREATE\s+TABLE\b/i.exec(texto);
+  if (!inicio) return resultado;
+
+  let abertura = -1;
+  let delimitador = '';
+  for (let i = inicio.index + inicio[0].length; i < texto.length; i += 1) {
+    const caractere = texto[i];
+    if (delimitador) {
+      if ((delimitador === ']' && caractere === ']') || caractere === delimitador) delimitador = '';
+      continue;
+    }
+    if (caractere === "'" || caractere === '"' || caractere === '`') {
+      delimitador = caractere;
+      continue;
+    }
+    if (caractere === '[') {
+      delimitador = ']';
+      continue;
+    }
+    if (caractere === '(') {
+      abertura = i;
+      break;
+    }
+  }
+  if (abertura < 0) return resultado;
+
+  let profundidade = 0;
+  let fechamento = -1;
+  delimitador = '';
+  for (let i = abertura; i < texto.length; i += 1) {
+    const caractere = texto[i];
+    if (delimitador) {
+      if ((delimitador === ']' && caractere === ']') || caractere === delimitador) delimitador = '';
+      continue;
+    }
+    if (caractere === "'" || caractere === '"' || caractere === '`') {
+      delimitador = caractere;
+      continue;
+    }
+    if (caractere === '[') {
+      delimitador = ']';
+      continue;
+    }
+    if (caractere === '(') profundidade += 1;
+    else if (caractere === ')') {
+      profundidade -= 1;
+      if (profundidade === 0) {
+        fechamento = i;
+        break;
+      }
+    }
+  }
+  if (fechamento < 0) return resultado;
+
+  for (const parte of dividirDefinicoes(texto.slice(abertura + 1, fechamento))) {
+    const trecho = parte.trim();
+    if (!trecho) continue;
+    const marcador = /\/\*TSQL:([0-9A-Fa-f]+)\*\//.exec(trecho);
+    const nomeColuna = /^\s*(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([A-Za-z_][\w]*))/.exec(trecho);
+    if (marcador && nomeColuna) {
+      let tipoOriginal = '';
+      try {
+        tipoOriginal = Buffer.from(marcador[1], 'hex').toString('utf8');
+      } catch {
+        tipoOriginal = '';
+      }
+      const nome = nomeColuna[1] || nomeColuna[2] || nomeColuna[3] || nomeColuna[4];
+      const marcadorIdentidade = /\/\*TSQLID:(\d+)_(\d+)\*\//i.exec(trecho);
+      resultado.colunas.set(nome.toLowerCase(), {
+        tipoOriginal,
+        identidade: /\bAUTOINCREMENT\b/i.test(trecho),
+        seed: marcadorIdentidade ? Number(marcadorIdentidade[1]) : 1,
+        incremento: marcadorIdentidade ? Number(marcadorIdentidade[2]) : 1
+      });
+      if (/\bPRIMARY\s+KEY\b/i.test(trecho)) {
+        resultado.pk = {
+          nome: '',
+          clusterizado: !/\bNONCLUSTERED\b/i.test(trecho),
+          colunas: [nome]
+        };
+      }
+      continue;
+    }
+
+    const colunasPk = /\bPRIMARY\s+KEY\s*(?:CLUSTERED|NONCLUSTERED)?\s*\(([^)]*)\)/i.exec(trecho);
+    if (!colunasPk) continue;
+    const nomeConstraint = /\bCONSTRAINT\s+(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w]*))/i.exec(trecho);
+    resultado.pk = {
+      nome: nomeConstraint ? (nomeConstraint[1] || nomeConstraint[2] || nomeConstraint[3]) : '',
+      clusterizado: !/\bNONCLUSTERED\b/i.test(trecho),
+      colunas: colunasPk[1]
+        .split(',')
+        .map((valor) => valor.trim()
+          .replace(/\s+(?:ASC|DESC)\s*$/i, '')
+          .trim()
+          .replace(/^\[(.*)\]$/, '$1')
+          .replace(/^"(.*)"$/, '$1')
+          .trim())
+    };
+  }
+  return resultado;
+}
 
 /**
  * Colunas compartilhadas pelas views de catalogo do schema sys. O SSMS usa
@@ -1557,6 +1790,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['allow_row_locks', 'BIT NOT NULL DEFAULT 1'],
     ['allow_page_locks', 'BIT NOT NULL DEFAULT 1'],
     ['filter_definition', 'TEXT'],
+    ['has_filter', 'BIT NOT NULL DEFAULT 0'],
     ['compression_delay', 'INTEGER NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'main', 'all_columns', [
@@ -1648,7 +1882,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
   for (const tabela of [
     'objects', 'tables', 'all_views', 'synonyms', 'indexes', 'all_columns',
     'sql_modules', 'system_sql_modules', 'extended_properties',
-    'default_constraints', 'check_constraints', 'index_columns', 'computed_columns', 'identity_columns',
+    'default_constraints', 'check_constraints', 'edge_constraints', 'index_resumable_operations', 'index_columns', 'computed_columns', 'identity_columns',
     'foreign_keys', 'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
     'sensitivity_classifications', 'change_tracking_tables', 'filetables',
     'periods', 'remote_data_archive_tables',
@@ -1726,13 +1960,19 @@ function sincronizarCatalogoDatabase(db, dbName) {
   const inserirIndice = db.prepare(`
     INSERT INTO main.indexes
       (name, object_id, index_id, type, type_desc, is_primary_key,
-       is_unique_constraint, is_hypothetical, is_disabled, data_space_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1)
+       is_unique_constraint, is_unique, is_hypothetical, is_disabled, data_space_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1)
   `);
   const inserirColunaIndice = db.prepare(`
     INSERT OR REPLACE INTO main.index_columns
-      (object_id, index_id, index_column_id, column_id, is_included_column)
-    VALUES (?, ?, ?, ?, 0)
+      (object_id, index_id, index_column_id, column_id, is_included_column,
+       key_ordinal, partition_ordinal)
+    VALUES (?, ?, ?, ?, 0, ?, 0)
+  `);
+  const inserirKeyConstraint = db.prepare(`
+    INSERT INTO main.key_constraints
+      (name, object_id, parent_object_id, unique_index_id, type, type_desc, is_system_named)
+    VALUES (?, ?, ?, ?, 'PK', 'PRIMARY_KEY_CONSTRAINT', ?)
   `);
 
   for (const objeto of objetos) {
@@ -1754,12 +1994,30 @@ function sincronizarCatalogoDatabase(db, dbName) {
     }
 
     inserirTabela.run(objeto.name, objeto.object_id, data, data);
-    inserirIndice.run(null, objeto.object_id, 0, 0, 'HEAP', 0, 0);
+
+    const metadadosDdl = extrairMetadadosDdl(objeto.sql);
+    // No SQL Server uma tabela tem HEAP (index_id = 0) ou um indice
+    // clusterizado (index_id = 1), nunca os dois. Manter as duas linhas faz o
+    // SMO escolher a linha do HEAP e gerar o CREATE sem a PRIMARY KEY.
+    const pkDdlInicial = metadadosDdl.pk;
+    if (!pkDdlInicial || !pkDdlInicial.clusterizado) {
+      inserirIndice.run(null, objeto.object_id, 0, 0, 'HEAP', 0, 0, 0);
+    }
+
+    const inserirIdentidade = db.prepare(`
+      INSERT OR REPLACE INTO main.identity_columns
+        (object_id, column_id, seed_value, increment_value)
+      VALUES (?, ?, ?, ?)
+    `);
 
     const colunas = db.prepare(`PRAGMA main.table_info("${nomeSeguro}")`).all();
     for (const coluna of colunas) {
+      const metadado = metadadosDdl.colunas.get(String(coluna.name).toLowerCase());
       const declarado = String(coluna.type || '').split('(')[0].trim().toUpperCase();
-      const definicao = TIPOS_SQL[declarado] || TIPOS_SQL.NVARCHAR;
+      const definicao = metadado && metadado.tipoOriginal
+        ? definicaoTsql(metadado.tipoOriginal)
+        : (TIPOS_SQL[declarado] || TIPOS_SQL.NVARCHAR);
+      const ehIdentidade = Boolean(metadado && metadado.identidade);
       const possuiDefault = coluna.dflt_value != null;
       const defaultId = possuiDefault ? 900000000 + objeto.object_id * 1000 + coluna.cid : 0;
       inserirColuna.run(
@@ -1772,9 +2030,17 @@ function sincronizarCatalogoDatabase(db, dbName) {
         definicao[4],
         definicao[5],
         coluna.notnull || coluna.pk ? 0 : 1,
-        coluna.pk ? 1 : 0,
+        ehIdentidade ? 1 : 0,
         defaultId
       );
+      if (ehIdentidade) {
+        inserirIdentidade.run(
+          objeto.object_id,
+          coluna.cid + 1,
+          metadado.seed,
+          metadado.incremento
+        );
+      }
       if (possuiDefault) {
         const nomeDefault = `DF__${objeto.name}__${coluna.name}`;
         inserirDefault.run(
@@ -1790,19 +2056,49 @@ function sincronizarCatalogoDatabase(db, dbName) {
       }
     }
 
+    const pkDdl = metadadosDdl.pk;
     const indices = db.prepare(`PRAGMA main.index_list("${nomeSeguro}")`).all();
+    let proximoIndexId = 2;
+    let pkRegistrada = false;
     for (const indice of indices) {
       const chavePrimaria = String(indice.origin || '').toLowerCase() === 'pk';
-      const indexId = indice.seq + 2;
+      if (chavePrimaria) pkRegistrada = true;
+      const nomeIndice = chavePrimaria
+        ? (pkDdl && pkDdl.nome ? pkDdl.nome : `PK_${objeto.name}`)
+        : indice.name;
+      const tipoIndice = chavePrimaria && pkDdl && !pkDdl.clusterizado
+        ? 'NONCLUSTERED'
+        : (chavePrimaria ? 'CLUSTERED' : 'NONCLUSTERED');
+      // No SQL Server o indice clusterizado tem sempre index_id = 1. O SMO
+      // usa esse fato para montar PrimaryKey/IsClustered e gerar o script.
+      const indexId = chavePrimaria && tipoIndice === 'CLUSTERED'
+        ? 1
+        : proximoIndexId++;
+      // sys.indexes.type: 0 = HEAP, 1 = CLUSTERED, 2 = NONCLUSTERED.
+      // O SMO deriva IndexType/IsClustered desse campo ao gerar o script.
+      const tipoIndiceTsql = tipoIndice === 'CLUSTERED' ? 1 : 2;
       inserirIndice.run(
-        indice.name,
+        nomeIndice,
         objeto.object_id,
         indexId,
-        2,
-        'NONCLUSTERED',
+        tipoIndiceTsql,
+        tipoIndice,
         chavePrimaria ? 1 : 0,
-        indice.unique && !chavePrimaria ? 1 : 0
+        !chavePrimaria && indice.unique ? 1 : 0,
+        chavePrimaria || indice.unique ? 1 : 0
       );
+      if (chavePrimaria) {
+        inserirKeyConstraint.run(
+          nomeIndice,
+          900000000 + objeto.object_id,
+          objeto.object_id,
+          indexId,
+          // O nome sempre existe no catalogo (derivado da DDL ou sintetizado
+          // como PK_<tabela>). Marca-lo como nao system-named faz o SMO emitir
+          // CONSTRAINT [nome] no script CREATE.
+          0
+        );
+      }
 
       const nomeIndiceSeguro = String(indice.name || '').replace(/"/g, '""');
       const colunasIndice = nomeIndiceSeguro
@@ -1813,8 +2109,43 @@ function sincronizarCatalogoDatabase(db, dbName) {
           objeto.object_id,
           indexId,
           posicao + 1,
-          (colunaIndice.seqno || 0) + 1
+          (colunaIndice.seqno || 0) + 1,
+          posicao + 1
         );
+      });
+    }
+
+    // PRIMARY KEY de INTEGER vira alias de rowid no SQLite e nao gera indice
+    // fisico. Mesmo assim o catalogo SQL Server precisa do indice/cluster e da
+    // constraint para o SMO listar Keys e gerar o script CREATE.
+    if (pkDdl && !pkRegistrada) {
+      const nomeIndice = pkDdl.nome || `PK_${objeto.name}`;
+      const tipoIndice = pkDdl.clusterizado ? 'CLUSTERED' : 'NONCLUSTERED';
+      const indexId = pkDdl.clusterizado ? 1 : proximoIndexId++;
+      inserirIndice.run(
+        nomeIndice,
+        objeto.object_id,
+        indexId,
+        pkDdl.clusterizado ? 1 : 2,
+        tipoIndice,
+        1,
+        0,
+        1
+      );
+      inserirKeyConstraint.run(
+        nomeIndice,
+        900000000 + objeto.object_id,
+        objeto.object_id,
+        indexId,
+        0
+      );
+      pkDdl.colunas.forEach((nomeColuna, posicao) => {
+        const coluna = db.prepare(
+          'SELECT column_id FROM main.all_columns WHERE object_id = ? AND name = ?'
+        ).get(objeto.object_id, nomeColuna);
+        if (coluna) {
+          inserirColunaIndice.run(objeto.object_id, indexId, posicao + 1, coluna.column_id, posicao + 1);
+        }
       });
     }
   }

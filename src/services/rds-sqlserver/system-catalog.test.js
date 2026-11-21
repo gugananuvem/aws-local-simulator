@@ -310,6 +310,55 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(resultado.rows).toEqual([{ current_value: '1' }]);
   });
 
+  test('preserva tipos T-SQL, IDENTITY e nome da PK ao reconstruir o catalogo', () => {
+    engine.execute('principal', [
+      'CREATE TABLE [dbo].[TB001](',
+      '[Id] [nvarchar](21) NOT NULL,',
+      '[Cep] [varchar](11) NULL,',
+      '[Valor] [decimal](18, 2) NULL,',
+      '[Criado] [bigint] NULL,',
+      'CONSTRAINT [PK_TB001] PRIMARY KEY CLUSTERED ([Id] ASC)',
+      ')'
+    ].join(' '));
+
+    const tipos = engine.execute('principal',
+      'SELECT c.name AS nome, t.name AS tipo, c.max_length AS tamanho, ' +
+      'c.precision AS precisao, c.scale AS escala, c.is_identity AS identidade ' +
+      'FROM sys.all_columns AS c INNER JOIN sys.types AS t ON t.user_type_id = c.user_type_id ' +
+      "WHERE c.object_id = (SELECT object_id FROM sys.objects WHERE name = 'TB001') ORDER BY c.column_id"
+    );
+    expect(tipos.rows).toEqual([
+      { nome: 'Id', tipo: 'nvarchar', tamanho: 42, precisao: 0, escala: 0, identidade: 0 },
+      { nome: 'Cep', tipo: 'varchar', tamanho: 11, precisao: 0, escala: 0, identidade: 0 },
+      { nome: 'Valor', tipo: 'decimal', tamanho: 17, precisao: 18, escala: 2, identidade: 0 },
+      { nome: 'Criado', tipo: 'bigint', tamanho: 8, precisao: 19, escala: 0, identidade: 0 }
+    ]);
+
+    const pk = engine.execute('principal',
+      'SELECT i.name AS nome, i.type_desc AS tipo, i.type AS codigo, i.index_id AS indice ' +
+      "FROM sys.indexes AS i WHERE i.object_id = (SELECT object_id FROM sys.objects WHERE name = 'TB001') AND i.is_primary_key = 1"
+    );
+    expect(pk.rows).toEqual([{ nome: 'PK_TB001', tipo: 'CLUSTERED', codigo: 1, indice: 1 }]);
+
+    const chaves = engine.execute('principal',
+      "SELECT name FROM sys.key_constraints WHERE parent_object_id = (SELECT object_id FROM sys.objects WHERE name = 'TB001')"
+    );
+    expect(chaves.rows).toEqual([{ name: 'PK_TB001' }]);
+  });
+
+  test('registra seed/increment apenas nas colunas IDENTITY reais', () => {
+    engine.execute('principal',
+      'CREATE TABLE [dbo].[TB002] ([Id] [int] IDENTITY(1,1) NOT NULL PRIMARY KEY, [Nome] [nvarchar](50) NULL)');
+
+    const identidades = engine.execute('principal',
+      'SELECT c.name AS nome, i.seed_value AS seed, i.increment_value AS incremento ' +
+      'FROM sys.identity_columns AS i INNER JOIN sys.all_columns AS c ' +
+      'ON c.object_id = i.object_id AND c.column_id = i.column_id ' +
+      "WHERE i.object_id = (SELECT object_id FROM sys.objects WHERE name = 'TB002')"
+    );
+    expect(identidades.rows).toEqual([{ nome: 'Id', seed: 1, incremento: 1 }]);
+  });
+
   test('publica tabelas e colunas do database em sys.tables e sys.all_columns', () => {
     engine.execute('principal', 'CREATE TABLE clientes (id INT NOT NULL, nome NVARCHAR(50))');
 
@@ -324,7 +373,16 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     );
     expect(colunas.rows).toEqual([
       { nome: 'id', tipo: 'int' },
-      { nome: 'nome', tipo: 'varchar' }
+      { nome: 'nome', tipo: 'nvarchar' }
+    ]);
+
+    const tamanhos = engine.execute('principal',
+      'SELECT name, max_length FROM sys.all_columns WHERE object_id = ? ORDER BY column_id',
+      [tabelas.rows[0].object_id]
+    );
+    expect(tamanhos.rows).toEqual([
+      { name: 'id', max_length: 4 },
+      { name: 'nome', max_length: 100 }
     ]);
 
     const indices = engine.execute('principal',

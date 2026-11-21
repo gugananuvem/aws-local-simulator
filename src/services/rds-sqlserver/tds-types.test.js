@@ -96,10 +96,18 @@ describe('tipos TDS', () => {
       maxLength: 17
     });
 
+    // [MS-TDS]: 0 = negativo, 1 = nao negativo. Inverter esses bits faz o
+    // cliente ler -1 onde o valor e 0/1 (seed/increment de IDENTITY do SMO).
     const codificado = encodeValue(-1234, decimal);
     expect(codificado[0]).toBe(17);
-    expect(codificado[1]).toBe(1);
+    expect(codificado[1]).toBe(0);
     expect(codificado.readBigUInt64LE(2)).toBe(1234n);
+    const positivo = encodeValue(1234, decimal);
+    expect(positivo[1]).toBe(1);
+    expect(positivo.readBigUInt64LE(2)).toBe(1234n);
+    const zero = encodeValue(0, decimal);
+    expect(zero[1]).toBe(1);
+    expect(zero.readBigUInt64LE(2)).toBe(0n);
     expect(encodeValue(null, decimal)).toEqual(Buffer.from([0x00]));
 
     const [curta] = columnMetadata([{ name: 'total', type: 'NUMERIC(10,2)' }], [{ total: 1 }]);

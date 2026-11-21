@@ -2,6 +2,14 @@
 
 const SqlTranslator = require('./sql-translator');
 
+// O tradutor grava o tipo T-SQL original em /*TSQL:HEX*/ dentro do DDL para o
+// catalogo reconstruir nvarchar(21), bigint etc. ao gerar scripts no SSMS.
+const semMetadadosTsql = (sql) =>
+  String(sql)
+    .replace(/\s*\/\*TSQL:[0-9A-Fa-f]*\*\/\s*/g, ' ')
+    .replace(/\s+\)/g, ')')
+    .trim();
+
 describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
   const translator = new SqlTranslator();
 
@@ -116,7 +124,7 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         'CREATE TABLE [tabela] (id INTEGER)'
       ]
     ])('%s', (_nome, entrada, esperado) => {
-      expect(translator.translate(entrada)).toBe(esperado);
+      expect(semMetadadosTsql(translator.translate(entrada))).toBe(esperado);
     });
 
     test('não remove GO dentro de literal de texto', () => {
@@ -269,7 +277,7 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         'CREATE TABLE t (id INTEGER IDENTITY(1,1) PRIMARY KEY)'
       ]
     ])('%s', (_nome, entrada) => {
-      const resultado = translator.translate(entrada);
+      const resultado = semMetadadosTsql(translator.translate(entrada));
       expect(resultado).toContain('INTEGER PRIMARY KEY AUTOINCREMENT');
       expect(resultado).not.toMatch(/IDENTITY/i);
       expect(resultado.match(/\bINTEGER\b/g)).toHaveLength(1);
@@ -284,9 +292,9 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
     });
 
     test('cria PRIMARY KEY quando a coluna não a declara', () => {
-      expect(translator.translate('CREATE TABLE t (id INT IDENTITY(1,1) NOT NULL)')).toContain(
-        'INTEGER PRIMARY KEY AUTOINCREMENT'
-      );
+      expect(
+        semMetadadosTsql(translator.translate('CREATE TABLE t (id INT IDENTITY(1,1) NOT NULL)'))
+      ).toContain('INTEGER PRIMARY KEY AUTOINCREMENT');
     });
   });
 
@@ -318,7 +326,7 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
     });
 
     test('converte tipos em ALTER TABLE', () => {
-      expect(translator.translate('ALTER TABLE t ADD COLUMN flag BIT')).toBe(
+      expect(semMetadadosTsql(translator.translate('ALTER TABLE t ADD COLUMN flag BIT'))).toBe(
         'ALTER TABLE t ADD COLUMN flag INTEGER'
       );
     });
@@ -1297,6 +1305,26 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         IsEnabled: 'BIT',
         NotForReplication: 'BIT',
         IsSystemNamed: 'BIT'
+      }));
+    });
+
+    test('mantem os tipos BIT da lista de colunas mesmo com subconsulta de foreign key', () => {
+      const sql =
+        'SELECT clmns.name AS [Name], ' +
+        'CAST(COALESCE(cik.index_column_id, 0) AS bit) AS [InPrimaryKey], ' +
+        'CAST(COALESCE((select TOP 1 1 from sys.foreign_key_columns AS colfk ' +
+        'where colfk.parent_column_id = clmns.column_id), 0) AS bit) AS [IsForeignKey], ' +
+        'usrt.name AS [DataType], clmns.is_nullable AS [Nullable], ' +
+        'clmns.is_computed AS [Computed], clmns.column_id AS [ID], ' +
+        'CAST(clmns.is_dropped_ledger_column AS bit) AS [IsDroppedLedgerColumn] ' +
+        'FROM sys.tables AS tbl INNER JOIN sys.all_columns AS clmns ON clmns.object_id=tbl.object_id';
+      expect(translator.columnTypesFor(sql)).toEqual(expect.objectContaining({
+        ID: 'INT',
+        InPrimaryKey: 'BIT',
+        IsForeignKey: 'BIT',
+        Nullable: 'BIT',
+        Computed: 'BIT',
+        IsDroppedLedgerColumn: 'BIT'
       }));
     });
 
