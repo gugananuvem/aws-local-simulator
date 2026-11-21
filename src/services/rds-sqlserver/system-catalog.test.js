@@ -303,6 +303,9 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(engine.execute('principal', "SELECT QUOTENAME('LOCAL') AS q").rows[0].q)
       .toBe('[LOCAL]');
     expect(engine.execute('principal',
+      "SELECT ISNULL(HAS_PERMS_BY_NAME(QUOTENAME(@DbName, ']'), 'DATABASE', 'VIEW DATABASE STATE'), -1) AS p",
+      ['Ultrapoints2']).rows[0].p).toBe(1);
+    expect(engine.execute('principal',
       "SELECT CAST(SERVERPROPERTY('ServerName') AS sysname) AS nome").rows[0].nome)
       .toBe('LOCAL');
     expect(engine.execute('principal',
