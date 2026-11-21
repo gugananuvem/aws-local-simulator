@@ -510,26 +510,88 @@ class DbEngine {
     while ((correspondência = padrao.exec(restante)) !== null) {
       const acao = correspondência[1].toUpperCase();
       const nome = correspondência[2] || correspondência[3] || correspondência[4];
+      const inicioOpcoes = correspondência.index + correspondência[0].length;
+      const fim = this._fimDeclaracaoDatabase(restante, inicioOpcoes);
       if (acao === 'CREATE') {
+        const opcoes = this._opcoesCreateDatabase(restante.slice(inicioOpcoes, fim));
         this.getOrCreateDatabase(nome);
-        this._sincronizarCatalogoDatabase(nome, true);
+        this._sincronizarCatalogoDatabase(nome, true, opcoes);
       } else {
         this._sincronizarCatalogoDatabase(nome, false);
         this.dropDatabase(nome);
       }
-      restante = restante.slice(0, correspondência.index) + restante.slice(correspondência.index + correspondência[0].length);
+      restante = restante.slice(0, correspondência.index) + restante.slice(fim);
       padrao.lastIndex = correspondência.index;
     }
     return restante;
   }
 
   /**
+   * Encontra o fim do statement CREATE/DROP DATABASE, ignorando ponto e virgula
+   * dentro de literais e das especificacoes de arquivo entre parenteses.
+   * @private
+   */
+  _fimDeclaracaoDatabase(sql, inicio) {
+    let profundidade = 0;
+    let aspas = false;
+    let colchetes = false;
+
+    for (let i = inicio; i < sql.length; i += 1) {
+      const caractere = sql[i];
+      if (aspas) {
+        if (caractere === "'") {
+          if (sql[i + 1] === "'") i += 1;
+          else aspas = false;
+        }
+        continue;
+      }
+      if (colchetes) {
+        if (caractere === ']') colchetes = false;
+        continue;
+      }
+      if (caractere === "'") { aspas = true; continue; }
+      if (caractere === '[') { colchetes = true; continue; }
+      if (caractere === '(') { profundidade += 1; continue; }
+      if (caractere === ')') { profundidade = Math.max(0, profundidade - 1); continue; }
+      if (profundidade === 0 && caractere === ';') return i + 1;
+      if (
+        profundidade === 0 &&
+        (i === inicio || /[\r\n]/.test(sql[i - 1])) &&
+        /^GO(?:\s|--[^\r\n]*)?(?:\r?\n|$)/i.test(sql.slice(i))
+      ) {
+        return i;
+      }
+    }
+    return sql.length;
+  }
+
+  /** Extrai as opcoes de CREATE DATABASE usadas pelo catalogo do SSMS. @private */
+  _opcoesCreateDatabase(opcoes) {
+    const resultado = {};
+    const containment = /\bCONTAINMENT\s*=\s*(NONE|PARTIAL)\b/i.exec(opcoes);
+    if (containment) resultado.containment = /partial/i.test(containment[1]) ? 1 : 0;
+
+    const collation = /\bCOLLATE\s+([A-Za-z0-9_]+)/i.exec(opcoes);
+    if (collation) resultado.collation_name = collation[1];
+
+    const ledger = /\bLEDGER\s*=\s*(ON|OFF)\b/i.exec(opcoes);
+    if (ledger) resultado.is_ledger_on = /on/i.test(ledger[1]) ? 1 : 0;
+
+    return resultado;
+  }
+
+  /**
    * Mantém sys.databases atualizado em todos os databases já abertos.
    * @private
    */
-  _sincronizarCatalogoDatabase(nome, presente) {
+  _sincronizarCatalogoDatabase(nome, presente, opcoes = {}) {
     const alvos = new Set([this.databases.get('master'), ...this.databases.values()].filter(Boolean));
     if (alvos.size === 0) return;
+
+    const colunasPermitidas = new Set(['containment', 'collation_name', 'is_ledger_on']);
+    const ajustes = Object.entries(opcoes)
+      .filter(([coluna]) => colunasPermitidas.has(coluna))
+      .map(([coluna, valor]) => [coluna, valor]);
     // O id precisa ser unico em todos os arquivos: cada database tem sua propria
     // copia de sys.databases e um id diferente para o mesmo nome quebraria joins.
     let proximo = 1;
@@ -551,6 +613,11 @@ class DbEngine {
             VALUES (?, ?, 0, 'ONLINE', ?)
             ON CONFLICT(name) DO UPDATE SET state = 0, state_desc = 'ONLINE'
           `).run(nome, proximo, new Date().toISOString());
+          if (ajustes.length) {
+            const conjuntos = ajustes.map(([coluna]) => `${coluna} = ?`).join(', ');
+            alvo.prepare(`UPDATE sys.databases SET ${conjuntos} WHERE name = ?`)
+              .run(...ajustes.map(([, valor]) => valor), nome);
+          }
         } else {
           alvo.prepare('DELETE FROM sys.databases WHERE name = ?').run(nome);
         }

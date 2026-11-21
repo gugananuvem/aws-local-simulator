@@ -66,7 +66,46 @@ const DDL_SISTEMA = `
     is_cdc_enabled BIT NOT NULL DEFAULT 0,
     is_ledger_on BIT NOT NULL DEFAULT 0,
     is_remote_data_archive_enabled BIT NOT NULL DEFAULT 0,
-    service_broker_guid TEXT
+    service_broker_guid TEXT,
+    default_language_lcid INT NOT NULL DEFAULT 1033,
+    default_language_name TEXT NOT NULL DEFAULT 'us_english',
+    default_fulltext_language_lcid INT NOT NULL DEFAULT 1033,
+    default_fulltext_language_name TEXT NOT NULL DEFAULT 'us_english',
+    is_ansi_null_default_on BIT NOT NULL DEFAULT 1,
+    is_ansi_nulls_on BIT NOT NULL DEFAULT 1,
+    is_ansi_padding_on BIT NOT NULL DEFAULT 1,
+    is_ansi_warnings_on BIT NOT NULL DEFAULT 1,
+    is_arithabort_on BIT NOT NULL DEFAULT 1,
+    is_concat_null_yields_null_on BIT NOT NULL DEFAULT 1,
+    is_cursor_close_on_commit_on BIT NOT NULL DEFAULT 0,
+    is_numeric_roundabort_on BIT NOT NULL DEFAULT 0,
+    is_quoted_identifier_on BIT NOT NULL DEFAULT 1,
+    is_recursive_triggers_on BIT NOT NULL DEFAULT 0,
+    is_nested_triggers_on BIT NOT NULL DEFAULT 0,
+    is_db_chaining_on BIT NOT NULL DEFAULT 0,
+    is_auto_update_stats_async_on BIT NOT NULL DEFAULT 0,
+    is_auto_create_stats_incremental_on BIT NOT NULL DEFAULT 0,
+    is_date_correlation_on BIT NOT NULL DEFAULT 0,
+    is_trustworthy_on BIT NOT NULL DEFAULT 0,
+    is_parameterization_forced BIT NOT NULL DEFAULT 0,
+    is_read_committed_snapshot_on BIT NOT NULL DEFAULT 0,
+    snapshot_isolation_state TINYINT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_subscribed BIT NOT NULL DEFAULT 0,
+    is_merge_published BIT NOT NULL DEFAULT 0,
+    is_local_cursor_default BIT NOT NULL DEFAULT 0,
+    page_verify_option TINYINT NOT NULL DEFAULT 2,
+    is_broker_enabled BIT NOT NULL DEFAULT 0,
+    is_honor_broker_priority_on BIT NOT NULL DEFAULT 0,
+    is_encrypted BIT NOT NULL DEFAULT 0,
+    is_auto_create_stats_on BIT NOT NULL DEFAULT 1,
+    is_auto_update_stats_on BIT NOT NULL DEFAULT 1,
+    is_transform_noise_words_on BIT NOT NULL DEFAULT 1,
+    two_digit_year_cutoff INT NOT NULL DEFAULT 2049,
+    delayed_durability TINYINT NOT NULL DEFAULT 0,
+    is_accelerated_database_recovery_on BIT NOT NULL DEFAULT 0,
+    target_recovery_time_in_seconds INT NOT NULL DEFAULT 60,
+    log_reuse_wait TINYINT NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS database_mirroring (
@@ -75,6 +114,29 @@ const DDL_SISTEMA = `
     mirroring_state TINYINT,
     mirroring_witness_state TINYINT,
     mirroring_guid TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS database_recovery_status (
+    database_id INTEGER NOT NULL PRIMARY KEY,
+    last_log_backup_lsn TEXT,
+    database_guid TEXT,
+    recovery_fork_guid TEXT,
+    fork_generation INTEGER NOT NULL DEFAULT 0,
+    is_recovery_fork_generated BIT NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS change_tracking_databases (
+    database_id INTEGER NOT NULL PRIMARY KEY,
+    is_auto_cleanup_on BIT NOT NULL DEFAULT 0,
+    retention_period INTEGER NOT NULL DEFAULT 0,
+    retention_period_units TINYINT NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS database_filestream_options (
+    database_id INTEGER NOT NULL PRIMARY KEY,
+    directory_name TEXT,
+    is_filestream_enabled BIT NOT NULL DEFAULT 0,
+    non_transacted_access TINYINT NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS server_principal_credentials (
@@ -765,9 +827,26 @@ function popularTabelas(db, schema, nomesDatabases) {
   let id = existentes.size
     ? Math.max(...existentes.values()) + 1
     : 1;
+  const inserirRecuperacao = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.database_recovery_status
+      (database_id, database_guid, recovery_fork_guid) VALUES (?, ?, ?)
+  `);
+  const inserirChangeTracking = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.change_tracking_databases (database_id) VALUES (?)
+  `);
+  const inserirFilestream = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.database_filestream_options (database_id) VALUES (?)
+  `);
   for (const nome of nomes) {
     const atual = existentes.get(nome);
-    inserirDatabase.run(nome, atual === undefined ? id++ : atual, data);
+    const databaseId = atual === undefined ? id++ : atual;
+    inserirDatabase.run(nome, databaseId, data);
+    // GUIDs deterministicos por database_id: o SMO le RecoveryForkGuid e
+    // DatabaseGuid logo apos criar um database e nao tolera coluna ausente.
+    const guid = `00000000-0000-0000-0000-${String(databaseId).padStart(12, '0')}`;
+    inserirRecuperacao.run(databaseId, guid, guid);
+    inserirChangeTracking.run(databaseId);
+    inserirFilestream.run(databaseId);
   }
 
   const inserirConfiguracao = db.prepare(`
@@ -1337,6 +1416,9 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
   `).run();
 
   criarTabelas(db, 'sys');
+  migrarColunas(db, 'sys', 'database_filestream_options', [
+    ['non_transacted_access', 'TINYINT NOT NULL DEFAULT 0']
+  ]);
   migrarColunas(db, 'sys', 'databases', [
     ['catalog_collation_type', 'TINYINT NOT NULL DEFAULT 2'],
     ['catalog_collation_type_desc', "TEXT NOT NULL DEFAULT 'SQL_COLLATION'"],
@@ -1345,7 +1427,46 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
     ['is_fulltext_enabled', 'BIT NOT NULL DEFAULT 0'],
     ['user_access', 'TINYINT NOT NULL DEFAULT 0'],
     ['is_ledger_on', 'BIT NOT NULL DEFAULT 0'],
-    ['is_remote_data_archive_enabled', 'BIT NOT NULL DEFAULT 0']
+    ['is_remote_data_archive_enabled', 'BIT NOT NULL DEFAULT 0'],
+    ['default_language_lcid', 'INT NOT NULL DEFAULT 1033'],
+    ['default_language_name', "TEXT NOT NULL DEFAULT 'us_english'"],
+    ['default_fulltext_language_lcid', 'INT NOT NULL DEFAULT 1033'],
+    ['default_fulltext_language_name', "TEXT NOT NULL DEFAULT 'us_english'"],
+    ['is_ansi_null_default_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_ansi_nulls_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_ansi_padding_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_ansi_warnings_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_arithabort_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_concat_null_yields_null_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_cursor_close_on_commit_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_numeric_roundabort_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_quoted_identifier_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_recursive_triggers_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_nested_triggers_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_db_chaining_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_auto_update_stats_async_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_auto_create_stats_incremental_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_date_correlation_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_trustworthy_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_parameterization_forced', 'BIT NOT NULL DEFAULT 0'],
+    ['is_read_committed_snapshot_on', 'BIT NOT NULL DEFAULT 0'],
+    ['snapshot_isolation_state', 'TINYINT NOT NULL DEFAULT 0'],
+    ['is_published', 'BIT NOT NULL DEFAULT 0'],
+    ['is_subscribed', 'BIT NOT NULL DEFAULT 0'],
+    ['is_merge_published', 'BIT NOT NULL DEFAULT 0'],
+    ['is_local_cursor_default', 'BIT NOT NULL DEFAULT 0'],
+    ['page_verify_option', 'TINYINT NOT NULL DEFAULT 2'],
+    ['is_broker_enabled', 'BIT NOT NULL DEFAULT 0'],
+    ['is_honor_broker_priority_on', 'BIT NOT NULL DEFAULT 0'],
+    ['is_encrypted', 'BIT NOT NULL DEFAULT 0'],
+    ['is_auto_create_stats_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_auto_update_stats_on', 'BIT NOT NULL DEFAULT 1'],
+    ['is_transform_noise_words_on', 'BIT NOT NULL DEFAULT 1'],
+    ['two_digit_year_cutoff', 'INT NOT NULL DEFAULT 2049'],
+    ['delayed_durability', 'TINYINT NOT NULL DEFAULT 0'],
+    ['is_accelerated_database_recovery_on', 'BIT NOT NULL DEFAULT 0'],
+    ['target_recovery_time_in_seconds', 'INT NOT NULL DEFAULT 60'],
+    ['log_reuse_wait', 'TINYINT NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'sys', 'syslanguages', [
     ['lcid', 'INT NOT NULL DEFAULT 1033']

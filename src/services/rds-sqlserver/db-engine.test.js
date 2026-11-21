@@ -141,6 +141,41 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('CREATE DATABASE do SMO com opcoes de arquivo e LEDGER', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      const sql = [
+        'CREATE DATABASE [BancoSmO]',
+        ' CONTAINMENT = NONE',
+        " ON  PRIMARY ( NAME = N'BancoSmO', FILENAME = N'BancoSmO.mdf' , SIZE = 5120KB , FILEGROWTH = 10%)",
+        " LOG ON ( NAME = N'BancoSmO_log', FILENAME = N'BancoSmO_log.ldf' , SIZE = 1024KB , FILEGROWTH = 10%)",
+        ' WITH LEDGER = OFF',
+        "; SELECT name, collation_name, containment, is_ledger_on FROM sys.databases WHERE name = 'BancoSmO'"
+      ].join('\r\n');
+
+      const resultado = comTradutor.execute('master', sql);
+      expect(resultado.rows).toEqual([{
+        name: 'BancoSmO',
+        collation_name: 'SQL_Latin1_General_CP1_CI_AS',
+        containment: 0,
+        is_ledger_on: 0
+      }]);
+      expect(comTradutor.listDatabases()).toContain('BancoSmO');
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('CREATE DATABASE nao consome o lote seguinte separado por GO', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('master', "CREATE DATABASE [BancoGo]\r\nGO\r\nSELECT name FROM sys.databases WHERE name = 'BancoGo'");
+      expect(comTradutor.listDatabases()).toContain('BancoGo');
+    } finally {
+      comTradutor.close();
+    }
+  });
+
   test('usa splitBatches do tradutor e retorna o primeiro SELECT do lote', () => {
     const chamadas = [];
     const tradutor = {

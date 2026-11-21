@@ -32,6 +32,50 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(resultado.columns.find((coluna) => coluna.name === 'state').type).toBe('TINYINT');
   });
 
+  test('expõe tabelas de recuperacao-uso consultadas pelo SMO apos CREATE DATABASE', () => {
+    engine.execute('master', 'CREATE DATABASE BancoRecuperacao');
+
+    const resultado = engine.execute('master', `
+      SELECT d.name, drs.database_guid, drs.recovery_fork_guid,
+             ctb.is_auto_cleanup_on, fsopt.is_filestream_enabled
+      FROM master.sys.databases AS d
+      LEFT JOIN sys.database_recovery_status AS drs ON drs.database_id = d.database_id
+      LEFT JOIN sys.change_tracking_databases AS ctb ON ctb.database_id = d.database_id
+      LEFT JOIN sys.database_filestream_options AS fsopt ON fsopt.database_id = d.database_id
+      WHERE d.name = 'BancoRecuperacao'
+    `);
+    expect(resultado.rows).toHaveLength(1);
+    expect(resultado.rows[0].database_guid).toMatch(/^[0-9a-f-]{36}$/);
+    expect(resultado.rows[0].recovery_fork_guid).toBe(resultado.rows[0].database_guid);
+    expect(resultado.rows[0].is_auto_cleanup_on).toBe(0);
+    expect(resultado.rows[0].is_filestream_enabled).toBe(0);
+  });
+
+  test('sys.databases tem todas as opcoes lidas pelo SMO ao criar database', () => {
+    const colunas = [
+      'is_ansi_null_default_on', 'is_ansi_nulls_on', 'is_ansi_padding_on',
+      'is_ansi_warnings_on', 'is_arithabort_on', 'is_cursor_close_on_commit_on',
+      'is_concat_null_yields_null_on', 'is_numeric_roundabort_on',
+      'is_quoted_identifier_on', 'is_recursive_triggers_on', 'is_nested_triggers_on',
+      'is_db_chaining_on', 'is_auto_update_stats_async_on', 'is_date_correlation_on',
+      'is_trustworthy_on', 'is_auto_create_stats_on', 'is_auto_update_stats_on',
+      'is_parameterization_forced', 'is_read_committed_snapshot_on',
+      'is_published', 'is_subscribed', 'is_merge_published',
+      'is_local_cursor_default', 'page_verify_option', 'is_broker_enabled',
+      'is_honor_broker_priority_on', 'is_encrypted', 'is_transform_noise_words_on',
+      'default_language_lcid', 'default_language_name',
+      'default_fulltext_language_lcid', 'default_fulltext_language_name',
+      'delayed_durability', 'is_accelerated_database_recovery_on',
+      'target_recovery_time_in_seconds', 'log_reuse_wait'
+    ];
+
+    const resultado = engine.execute('master',
+      `SELECT ${colunas.join(', ')} FROM sys.databases WHERE name = 'master'`);
+    expect(resultado.rows).toHaveLength(1);
+    expect(resultado.rows[0].is_ansi_null_default_on).toBe(1);
+    expect(resultado.rows[0].default_language_lcid).toBe(1033);
+  });
+
   test('aceita a forma master.sys.databases', () => {
     const resultado = engine.execute('principal', 'SELECT name FROM master.sys.databases');
     expect(resultado.rows.map((linha) => linha.name)).toContain('master');
