@@ -141,6 +141,64 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('ignora a limpeza de backuphistory do script de DROP DATABASE', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('master', 'CREATE DATABASE Historico');
+      const limpeza = comTradutor.execute(
+        'master',
+        "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'Historico'"
+      );
+      expect(limpeza.type).toBe('ddl');
+      comTradutor.execute('master', 'DROP DATABASE Historico');
+      expect(comTradutor.listDatabases()).not.toContain('Historico');
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('CREATE/EXEC/DROP PROCEDURE registra a rotina e executa o corpo', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('principal', 'CREATE PROCEDURE TESTE AS SELECT GETDATE() AS agora');
+      expect(comTradutor.execute('principal', 'SELECT name FROM sys.procedures').rows)
+        .toEqual([{ name: 'TESTE' }]);
+
+      const definicao = comTradutor.execute('principal', `
+        SELECT m.definition FROM sys.sql_modules AS m
+        JOIN sys.procedures AS p ON p.object_id = m.object_id
+        WHERE p.name = 'TESTE'
+      `).rows;
+      expect(definicao[0].definition).toContain('GETDATE()');
+
+      const executado = comTradutor.execute('principal', 'EXEC TESTE');
+      expect(executado.type).toBe('select');
+      expect(executado.rows[0].agora).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+
+      comTradutor.execute('principal', 'DROP PROCEDURE TESTE');
+      expect(comTradutor.execute('principal', 'SELECT name FROM sys.procedures').rows)
+        .toEqual([]);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('EXEC de procedure com parametros nomeados e valorPadrao', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute(
+        'principal',
+        'CREATE PROCEDURE SOMA @a INT, @b INT = 4 AS SELECT @a + @b AS total'
+      );
+      expect(comTradutor.execute('principal', 'EXEC SOMA @b = 2, @a = 3').rows)
+        .toEqual([{ total: 5 }]);
+      expect(comTradutor.execute('principal', 'EXEC SOMA 10').rows)
+        .toEqual([{ total: 14 }]);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
   test('CREATE TABLE duplicado retorna o erro 2714 do SQL Server', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {

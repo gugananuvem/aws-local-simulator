@@ -465,9 +465,11 @@ class DbEngine {
    * @private
    */
   _executar(db, sqlBruto, params = []) {
+    this._resultadoRotina = null;
     let parametros = Array.isArray(params) ? params : params == null ? [] : [params];
     const restante = this._executarDdlDatabase(sqlBruto);
-    let sqlTraduzido = this._traduzir(restante);
+    const semRotinas = this._executarDdlProcedures(restante, db);
+    let sqlTraduzido = this._traduzir(semRotinas);
     if (parametros.length && this.translator && typeof this.translator.substituirParametros === 'function') {
       const substituidos = this.translator.substituirParametros(sqlTraduzido, parametros);
       if (substituidos && typeof substituidos === 'object' && !Array.isArray(substituidos)) {
@@ -479,6 +481,11 @@ class DbEngine {
     }
     const instrucoes = this._dividirEmInstrucoes(sqlTraduzido);
     if (instrucoes.length === 0) {
+      if (this._resultadoRotina) {
+        const resultado = this._resultadoRotina;
+        this._resultadoRotina = null;
+        return resultado;
+      }
       return this._resultadoVazio('ddl');
     }
     const resultados = [];
@@ -547,6 +554,154 @@ class DbEngine {
       padrao.lastIndex = correspondência.index;
     }
     return restante;
+  }
+
+  /**
+   * Procedures e a limpeza de historico de backup do script de DROP DATABASE
+   * do SSMS não existem no SQLite. Executamos o efeito no catalogo e removemos
+   * a instrução do lote antes da tradução.
+   * @private
+   */
+  _executarDdlProcedures(sqlBruto, db) {
+    let restante = String(sqlBruto || '');
+
+    restante = restante.replace(
+      /\bEXEC(?:UTE)?\s+(?:msdb\s*\.\s*(?:dbo\s*\.\s*)?)?sp_delete_database_backuphistory\b[^;]*/gi,
+      ''
+    );
+
+    const nome = '(?:\\[[^\\]]+\\]|[A-Za-z_]\\w*)(?:\\s*\\.\\s*(?:\\[[^\\]]+\\]|[A-Za-z_]\\w*))?';
+    const criacao = new RegExp(
+      `\\b(CREATE|ALTER)\\s+(?:OR\\s+ALTER\\s+)?PROC(?:EDURE)?\\s+(${nome})([\\s\\S]*?)\\bAS\\b([\\s\\S]*)$`,
+      'i'
+    ).exec(restante);
+    if (criacao) {
+      catalogoSistema.criarProcedimento(db, {
+        nome: criacao[2],
+        definicao: criacao[4].trim().replace(/;+\s*$/, ''),
+        parametros: this._parametrosProcedimento(criacao[3]),
+        alterar: /^alter/i.test(criacao[1])
+      });
+      return restante.slice(0, criacao.index) + restante.slice(criacao.index + criacao[0].length);
+    }
+
+    const remocao = new RegExp(
+      `\\bDROP\\s+PROC(?:EDURE)?\\s+(?:IF\\s+EXISTS\\s+)?(${nome})`,
+      'i'
+    ).exec(restante);
+    if (remocao) {
+      const trechoAteFim = restante.slice(remocao.index + remocao[0].length);
+      const seExistir = /\bIF\s+EXISTS\b/i.test(remocao[0]);
+      catalogoSistema.removerProcedimento(db, remocao[1], seExistir);
+      return restante.slice(0, remocao.index) + trechoAteFim.replace(/^\s*;?/, '');
+    }
+
+    if ((this._nivelProcedimento || 0) >= 8) return restante;
+    const execucao = /\bEXEC(?:UTE)?\s+(?:\[?dbo\]?\s*\.\s*)?(\[?[A-Za-z_][\w]*\]?)([\s\S]*)$/i.exec(restante);
+    if (execucao && !/^(?:sp_|xp_)/i.test(execucao[1].replace(/\[|\]/g, ''))) {
+      const procedimento = catalogoSistema.obterProcedimento(db, execucao[1]);
+      if (procedimento) {
+        const argumentos = this._argumentosExecProcedimento(execucao[2], procedimento.parametros);
+        const declaracoes = procedimento.parametros.map((parametro, indice) => {
+          const valor = argumentos[indice] || parametro.valorPadrao || 'NULL';
+          return `DECLARE ${parametro.nome} ${parametro.tipo} = ${valor}`;
+        });
+        const corpo = [declaracoes.join('; '), procedimento.definicao]
+          .filter(Boolean)
+          .join('; ');
+        this._nivelProcedimento = (this._nivelProcedimento || 0) + 1;
+        try {
+          this._resultadoRotina = this._executar(db, corpo);
+        } finally {
+          this._nivelProcedimento -= 1;
+        }
+        return restante.slice(0, execucao.index) + restante.slice(execucao.index + execucao[0].length);
+      }
+    }
+
+    return restante;
+  }
+
+  /** Extrai `@p INT = 1, @q VARCHAR(10) OUTPUT` da declaracao de procedure. @private */
+  _parametrosProcedimento(cabecalho) {
+    const texto = String(cabecalho || '').trim()
+      .replace(/^\(/, '')
+      .replace(/\)\s*$/, '')
+      .trim();
+    if (!texto) return [];
+    return this._dividirPorVirgula(texto).map((trecho) => {
+      const parametro = /^(@[A-Za-z_]\w*)\s+([A-Za-z_][\w]*(?:\s*\([^)]*\))?)([^=]*?)(?:\s*=\s*([\s\S]*?))?$/i.exec(trecho.trim());
+      if (!parametro) return null;
+      return {
+        nome: parametro[1],
+        tipo: parametro[2].replace(/\s+/g, ' '),
+        isOutput: /\b(?:OUT|OUTPUT)\b/i.test(parametro[3] || ''),
+        valorPadrao: parametro[4] == null ? null : parametro[4].trim()
+      };
+    }).filter(Boolean);
+  }
+
+  /** Separa argumentos de EXEC respeitando strings e parenteses. @private */
+  _dividirPorVirgula(texto) {
+    const partes = [];
+    let atual = '';
+    let profundidade = 0;
+    let aspas = false;
+    let colchetes = false;
+    let crase = false;
+
+    for (let i = 0; i < texto.length; i += 1) {
+      const caractere = texto[i];
+      if (aspas) {
+        atual += caractere;
+        if (caractere === "'") {
+          if (texto[i + 1] === "'") { atual += texto[++i]; } else { aspas = false; }
+        }
+        continue;
+      }
+      if (colchetes || crase) {
+        atual += caractere;
+        if ((colchetes && caractere === ']') || (crase && caractere === '`')) {
+          colchetes = false;
+          crase = false;
+        }
+        continue;
+      }
+      if (caractere === "'") { aspas = true; atual += caractere; continue; }
+      if (caractere === '[') { colchetes = true; atual += caractere; continue; }
+      if (caractere === '`') { crase = true; atual += caractere; continue; }
+      if (caractere === '(') profundidade += 1;
+      if (caractere === ')') profundidade = Math.max(0, profundidade - 1);
+      if (caractere === ',' && profundidade === 0) {
+        partes.push(atual.trim());
+        atual = '';
+        continue;
+      }
+      atual += caractere;
+    }
+    if (atual.trim()) partes.push(atual.trim());
+    return partes;
+  }
+
+  /** Converte `EXEC @p = 1, 2` em valores na ordem dos parametros. @private */
+  _argumentosExecProcedimento(texto, parametros = []) {
+    const valores = new Array(parametros.length).fill(null);
+    let proximo = 0;
+    this._dividirPorVirgula(String(texto || '').replace(/^\s*\(?/, '').replace(/\)\s*;?\s*$/, ''))
+      .forEach((parte) => {
+        let valor = parte.trim().replace(/\s+(?:OUT|OUTPUT)$/i, '');
+        const nomeado = /^(@[A-Za-z_]\w*)\s*=\s*([\s\S]+)$/.exec(valor);
+        if (nomeado) {
+          const indice = parametros.findIndex(
+            (parametro) => parametro.nome.toLowerCase() === nomeado[1].toLowerCase()
+          );
+          if (indice >= 0) valores[indice] = nomeado[2].trim();
+          return;
+        }
+        if (proximo < parametros.length) valores[proximo] = valor;
+        proximo += 1;
+      });
+    return valores;
   }
 
   /** Verifica se o database existe em disco ou ja esta aberto neste engine. @private */
@@ -675,6 +830,12 @@ class DbEngine {
           }
         } else {
           alvo.prepare('DELETE FROM sys.databases WHERE name = ?').run(nome);
+          try {
+            alvo.prepare('DELETE FROM sys.master_files WHERE name IN (?, ?)')
+              .run(nome, `${nome}_log`);
+          } catch (erro) {
+            logger.debug(`[RDS SQL Server DbEngine] Falha ao limpar master_files de '${nome}': ${erro.message}`);
+          }
         }
       } catch (erro) {
         logger.debug(`[RDS SQL Server DbEngine] Falha ao sincronizar catalogo de '${nome}': ${erro.message}`);

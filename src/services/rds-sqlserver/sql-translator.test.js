@@ -450,6 +450,60 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       );
     });
 
+    test('traz filegroups e database_files do catalogo local do database', () => {
+      const resultado = translator.translate(
+        'SELECT g.name FROM sys.filegroups g ' +
+        'JOIN sys.database_files f ON f.data_space_id = g.data_space_id'
+      );
+      expect(resultado).toBe(
+        'SELECT g.name FROM main.filegroups g ' +
+        'JOIN main.database_files f ON f.data_space_id = g.data_space_id'
+      );
+    });
+
+    test('preserva bytes em CAST AS varbinary usado pelo SMO', () => {
+      const resultado = translator.translate(
+        'SELECT CAST(cast(g.name as varbinary(256)) AS sysname) AS [Name] FROM sys.filegroups g'
+      );
+      expect(resultado).toContain('CAST(cast(g.name AS BLOB) AS TEXT) AS [Name]');
+    });
+
+    test('remove COLLATE database_default usado pelo catalogo de arquivos', () => {
+      const resultado = translator.translate(
+        'SELECT df.name collate database_default AS [Name], ' +
+          'df.physical_name collate database_default AS [FileName] ' +
+          'FROM sys.database_files AS df'
+      );
+      expect(resultado).toBe(
+        'SELECT df.name AS [Name], df.physical_name AS [FileName] ' +
+          'FROM main.database_files AS df'
+      );
+    });
+
+    test('remove o EXEC de limpeza de backuphistory do script de DROP DATABASE', () => {
+      expect(translator.translate(
+        "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'Ultrapoints2'"
+      )).toBe('');
+    });
+
+    test('aceita DDL de CREATE/ALTER/DROP PROCEDURE sem erro de sintaxe', () => {
+      expect(translator.translate('CREATE PROCEDURE TESTE AS SELECT GETDATE()')).toBe(
+        'SELECT 1 AS [ProcedureCreated]'
+      );
+      expect(translator.translate('ALTER PROCEDURE dbo.TESTE AS SELECT 1')).toBe(
+        'SELECT 1 AS [ProcedureAltered]'
+      );
+      expect(translator.translate('DROP PROCEDURE IF EXISTS TESTE')).toBe(
+        'SELECT 1 AS [ProcedureDropped]'
+      );
+    });
+
+    test('informa os tipos TDS do catalogo de procedures', () => {
+      expect(translator.columnTypesFor(
+        'SELECT p.name, p.is_ms_shipped FROM sys.procedures p'
+      )).toMatchObject({ IsMSShipped: 'BIT', IsSystemObject: 'BIT' });
+    });
+
     test('desembrulha BEGIN TRY/CATCH mantendo apenas o TRY', () => {
       const resultado = translator.translate(
         'BEGIN TRY SELECT 1 AS ok END TRY BEGIN CATCH SELECT 2 AS erro END CATCH'
@@ -609,6 +663,22 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       });
     });
 
+    test('informa os tipos TDS da aba Filegroups do New Database', () => {
+      const sql = [
+        'SELECT CAST(g.is_default AS bit) AS [IsDefault],',
+        'CAST(ISNULL(sum(gs.size), 0) AS float) AS [Size],',
+        'CAST(g.is_autogrow_all_files AS bit) AS [AutogrowAllFiles],',
+        'case when 1=1 then 1 else 0 end AS [PolicyHealthState]',
+        'FROM master.sys.databases AS dtb, sys.filegroups AS g'
+      ].join(' ');
+      expect(translator.columnTypesFor(sql)).toMatchObject({
+        IsDefault: 'BIT',
+        Size: 'FLOAT',
+        AutogrowAllFiles: 'BIT',
+        PolicyHealthState: 'INT'
+      });
+    });
+
     test('expande o batch de versao do SSMS em tres resultsets', () => {
       const lotes = translator.expandirResultSets(
         'DECLARE @edition sysname; ' +
@@ -654,6 +724,31 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         IsClustered: 'BIT',
         IsSingleUser: 'BIT'
       });
+    });
+
+    test('substitui o batch enxuto de caminhos da aba Filegroups', () => {
+      const sql = [
+        'declare @MasterPath nvarchar(512)',
+        'declare @LogPath nvarchar(512)',
+        "declare @Slash varchar = convert(varchar, serverproperty('PathSeparator'))",
+        "if (SERVERPROPERTY('EngineEdition') = 8)",
+        'begin',
+        'select @MasterPath=substring(physical_name, 1, 1) from master.sys.database_files where file_id = 1',
+        'end',
+        'else',
+        'begin',
+        "select @MasterPath=substring(physical_name, 1, 1) from master.sys.database_files where name=N'master'",
+        "select @LogPath=substring(physical_name, 1, 1) from master.sys.database_files where name=N'mastlog'",
+        'end',
+        'SELECT @MasterPath AS [MasterDBPath], @LogPath AS [MasterDBLogPath]'
+      ].join('\n');
+
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toBe(
+        "SELECT 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA' " +
+          "AS [MasterDBPath], 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA' " +
+          'AS [MasterDBLogPath]'
+      );
     });
 
     test('substitui a leitura de BrowserServiceAccount via xp_regread', () => {

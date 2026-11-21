@@ -175,6 +175,11 @@ Suporte atual:
 - `CREATE TABLE` de objeto existente retorna erro 2714 (`There is already an object named ... in
   the database.`), state 1, class 16 — o SQLite devolve apenas `table X already exists`, sem
   número, e o cliente TDS transformaria isso em 50000;
+- `CREATE/ALTER/DROP PROCEDURE` registra a rotina em `sys.procedures`, `sys.objects` e
+  `sys.sql_modules` (com parâmetros em `sys.all_parameters`); `EXEC nome` executa o corpo com os
+  argumentos posicionais/nomeados e usa `DECLARE` para cada parâmetro;
+- `EXEC msdb.dbo.sp_delete_database_backuphistory`, enviado pelo script de **Delete/Drop** do SSMS,
+  é ignorado — não há histórico de backup no simulador;
 - `DROP TABLE IF EXISTS` é aceito (sintaxe válida no SQL Server e no SQLite);
 - lotes de refresh do SSMS contendo `CREATE TABLE #tmp...; SELECT ...` são divididos também por
   `;`, mesmo quando o tradutor fornece `splitBatches()` — sem isso o `CREATE` engolia o `SELECT`
@@ -188,6 +193,11 @@ Suporte atual:
 - `sys.fn_helpcollations()` é reescrito para a tabela `sys.fn_helpcollations` do master: sem isso,
   clicar em **Options** no diálogo **New Database** falha com
   `no such table: sys.fn_helpcollations` (`Enumerate collations failed`);
+- a aba **Filegroups** do **New Database** consulta `sys.filegroups`, `sys.database_files` e
+  `sys.master_files`. O SQLite não reconhece `COLLATE database_default`, então a cláusula é removida;
+  o batch curto que lê `@MasterPath`/`@MasterDBLogPath` é substituído pelos paths sintéticos da
+  instância, e os tipos TDS de `BIT`/`FLOAT`/`INT` são informados explicitamente para o SMO;
+- `CAST(... AS varbinary(n))` preserva os bytes como `BLOB` quando o SMO compara nomes de filegroup;
 - subconjunto procedural de inicialização de clientes (ver abaixo).
 
 Limitações do listener: sem TLS, sem Windows/Integrated Auth, sem MARS. A compatibilidade com
@@ -215,6 +225,10 @@ Probes executados contra uma instância isolada do listener TDS (`127.0.0.1:1433
   visual após reconectar);
 - a aba **Options** do **New Database** lista as collations via `sys.fn_helpcollations()` sem erro;
 - `CREATE TABLE` repetido devolve erro 2714 com o nome do objeto duplicado;
+- o script de DROP gerado pelo SSMS (`sp_delete_database_backuphistory` + `USE [master]` +
+  `DROP DATABASE`) conclui sem erro de procedural;
+- `CREATE PROCEDURE TESTE AS SELECT GETDATE()` conclui, aparece em `sys.procedures` e pode ser
+  executado com `EXEC TESTE`;
 - duplo-clique em login no SSMS abre sem diálogo de erro.
 
 > O SSMS foi aberto com `-S 127.0.0.1,1433 -U admin -nosplash`; a senha é digitada no diálogo.
@@ -233,8 +247,9 @@ local de cada database vive nas tabelas `main.*` (`schemas`, `objects`, `tables`
 `computed_columns`, `identity_columns`, `foreign_key_columns`, `column_encryption_keys`,
 `xml_schema_collections`, `sensitivity_classifications`, `change_tracking_tables`, `filetables`,
 `periods`, `remote_data_archive_tables`, `all_parameters`, view `parameters`, `triggers`,
-`database_permissions`, `assemblies`, `table_types`, `assembly_types`), com `sys.system_views`
-e `sys.all_objects` derivados dele.
+`filegroups`, `database_files`, `procedures`, `database_permissions`, `assemblies`,
+`table_types`, `assembly_types`), com `sys.system_views` e `sys.all_objects` derivados dele.
+`sys.master_files` vive no master anexado e é preenchido para todos os databases ao abrir a conexão.
 
 O `msdb` contém `sysdac_instances`, `syspolicy_configuration` e
 `syspolicy_system_health_state`; `OBJECT_ID('dbo.sysdac_instances')` devolve `1001`, usado pelo
@@ -283,6 +298,9 @@ A instância se apresenta como `Standard Edition (64-bit)` / `EngineEdition = 2`
 | CTE (`WITH ...`) | Suportado nativamente |
 | `MERGE`, `UPDATE ... JOIN` simples | Reescrita para UPSERT/subquery |
 | `CREATE VIEW`, `CREATE TRIGGER` | Repassados quando o SQLite suporta |
+| `CREATE/ALTER/DROP PROCEDURE`, `EXEC nome` | Registrados no catálogo; `EXEC` executa o corpo com parâmetros posicionais/nomeados |
+| `EXEC msdb.dbo.sp_delete_database_backuphistory` | Ignorado (script de DROP do SSMS) |
+| `COLLATE database_default`, batch de caminhos da aba Filegroups | Removido / substituído por paths sintéticos |
 | `CREATE DATABASE` / `DROP DATABASE` | Aplicados no `DbEngine` e removidos do lote (inclusive `CONTAINMENT`, `ON PRIMARY`, `LOG ON`, `WITH LEDGER`); `sys.databases` e tabelas de recuperação sincronizadas, `database_id` único; duplicado/inexistente/database de sistema geram erros TDS 1801/911/1805 |
 | `DECLARE`/`SET` literais e batches com `GO` | Subconjunto straight-line |
 | `sysname` em DDL | Mapeado para `TEXT` |

@@ -268,6 +268,27 @@ const DDL_SISTEMA = `
     physical_name TEXT
   );
 
+  -- sys.master_files e de instancia: uma linha por arquivo de cada database.
+  -- O SMO a consulta na aba Filegroups do New Database.
+  CREATE TABLE IF NOT EXISTS master_files (
+    database_id INT NOT NULL,
+    file_id INT NOT NULL,
+    type TINYINT NOT NULL,
+    name TEXT NOT NULL,
+    physical_name TEXT,
+    size INT NOT NULL DEFAULT 8192,
+    max_size INT NOT NULL DEFAULT -1,
+    growth INT NOT NULL DEFAULT 64,
+    is_percent_growth BIT NOT NULL DEFAULT 0,
+    is_media_read_only BIT NOT NULL DEFAULT 0,
+    is_read_only BIT NOT NULL DEFAULT 0,
+    state TINYINT NOT NULL DEFAULT 0,
+    is_sparse BIT NOT NULL DEFAULT 0,
+    data_space_id INT NOT NULL DEFAULT 1,
+    drop_lsn BLOB,
+    UNIQUE (database_id, file_id)
+  );
+
   CREATE TABLE IF NOT EXISTS cryptographic_providers (
     name TEXT NOT NULL PRIMARY KEY,
     provider_id INT NOT NULL UNIQUE,
@@ -319,6 +340,33 @@ const DDL_DATABASE = `
     name TEXT NOT NULL PRIMARY KEY,
     schema_id INTEGER NOT NULL UNIQUE,
     principal_id INTEGER
+  );
+
+  -- Arquivos e grupos de arquivo sao locais ao database (aba Filegroups do SMO).
+  CREATE TABLE IF NOT EXISTS filegroups (
+    name TEXT NOT NULL PRIMARY KEY,
+    data_space_id INT NOT NULL UNIQUE,
+    is_default BIT NOT NULL DEFAULT 0,
+    is_read_only BIT NOT NULL DEFAULT 0,
+    type TEXT NOT NULL DEFAULT 'FG',
+    is_autogrow_all_files BIT NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS database_files (
+    file_id INT NOT NULL PRIMARY KEY,
+    type TINYINT NOT NULL,
+    name TEXT NOT NULL,
+    physical_name TEXT,
+    size INT NOT NULL DEFAULT 8192,
+    max_size INT NOT NULL DEFAULT -1,
+    growth INT NOT NULL DEFAULT 64,
+    is_percent_growth BIT NOT NULL DEFAULT 0,
+    is_media_read_only BIT NOT NULL DEFAULT 0,
+    is_read_only BIT NOT NULL DEFAULT 0,
+    state TINYINT NOT NULL DEFAULT 0,
+    is_sparse BIT NOT NULL DEFAULT 0,
+    data_space_id INT NOT NULL DEFAULT 1,
+    drop_lsn BLOB
   );
 
   CREATE TABLE IF NOT EXISTS database_principals (
@@ -402,6 +450,9 @@ const DDL_DATABASE = `
     name TEXT,
     user_type_id INTEGER NOT NULL DEFAULT 56,
     is_output BIT NOT NULL DEFAULT 0,
+    has_default_value BIT NOT NULL DEFAULT 0,
+    default_value TEXT,
+    is_readonly BIT NOT NULL DEFAULT 0,
     PRIMARY KEY (object_id, parameter_id)
   );
 
@@ -415,6 +466,18 @@ const DDL_DATABASE = `
     type TEXT NOT NULL DEFAULT 'TR',
     is_ms_shipped BIT NOT NULL DEFAULT 0,
     is_disabled BIT NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS procedures (
+    name TEXT NOT NULL,
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    schema_id INTEGER NOT NULL DEFAULT 1,
+    principal_id INTEGER DEFAULT 1,
+    create_date DATETIME,
+    modify_date DATETIME,
+    is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_schema_published BIT NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS database_permissions (
@@ -627,13 +690,13 @@ const DDL_DATABASE = `
 const OBJETOS_DO_CATALOGO = new Set([
   'schemas', 'database_principals', 'objects', 'all_objects', 'tables', 'all_views',
   'views', 'system_views', 'synonyms', 'indexes', 'data_spaces', 'types',
-  'all_columns', 'columns',
+  'filegroups', 'database_files', 'all_columns', 'columns',
   'sql_modules', 'system_sql_modules', 'extended_properties',
   'default_constraints', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
-  'all_parameters', 'parameters', 'triggers', 'database_permissions',
+  'all_parameters', 'parameters', 'procedures', 'triggers', 'database_permissions',
   'assemblies', 'table_types', 'assembly_types',
   'sysdac_instances', 'syspolicy_configuration'
 ]);
@@ -990,13 +1053,63 @@ function popularTabelas(db, schema, nomesDatabases) {
   `).run();
 }
 
+/** Nome logico do database do arquivo SQLite atual. @private */
+function nomeDatabaseLocal(db, dbName) {
+  if (dbName) return String(dbName);
+  try {
+    const linha = db.prepare(
+      "SELECT file AS arquivo FROM pragma_database_list WHERE name = 'main'"
+    ).get();
+    if (linha && linha.arquivo) return path.basename(linha.arquivo, '.db');
+  } catch (_erro) {
+    // Catalogos em memoria nao tem nome de arquivo.
+  }
+  return MASTER;
+}
+
 /**
  * Reconstrói as views de catalogo locais (sys.tables, sys.indexes, ...) a partir
  * do schema SQLite real do database atual.
  * @private
  */
-function sincronizarCatalogoDatabase(db) {
+function sincronizarCatalogoDatabase(db, dbName) {
   db.exec(DDL_DATABASE);
+
+  const nomeDb = nomeDatabaseLocal(db, dbName);
+  const diretorioDados = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
+  const arquivoDados = path.join(diretorioDados, `${nomeDb}.mdf`);
+  const arquivoLog = path.join(diretorioDados, `${nomeDb}_log.ldf`);
+
+  db.prepare(`
+    INSERT OR IGNORE INTO main.filegroups
+      (name, data_space_id, is_default, is_read_only, type, is_autogrow_all_files)
+    VALUES ('PRIMARY', 1, 1, 0, 'FG', 1)
+  `).run();
+  const inserirArquivo = db.prepare(`
+    INSERT OR IGNORE INTO main.database_files
+      (file_id, type, name, physical_name, size, max_size, growth,
+       is_percent_growth, is_media_read_only, is_read_only, state, is_sparse, data_space_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  inserirArquivo.run(1, 0, nomeDb, arquivoDados, 8192, -1, 64, 0, 0, 0, 0, 0, 1);
+  inserirArquivo.run(2, 1, `${nomeDb}_log`, arquivoLog, 8192, -1, 64, 0, 0, 0, 0, 0, 0);
+
+  const linhaBanco = db.prepare('SELECT database_id FROM sys.databases WHERE name = ?').get(nomeDb);
+  if (linhaBanco) {
+    const inserirArquivoMestre = db.prepare(`
+      INSERT OR IGNORE INTO sys.master_files
+        (database_id, file_id, type, name, physical_name, size, max_size, growth,
+         is_percent_growth, is_media_read_only, is_read_only, state, is_sparse, data_space_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    inserirArquivoMestre.run(
+      linhaBanco.database_id, 1, 0, nomeDb, arquivoDados, 8192, -1, 64, 0, 0, 0, 0, 0, 1
+    );
+    inserirArquivoMestre.run(
+      linhaBanco.database_id, 2, 1, `${nomeDb}_log`, arquivoLog, 8192, -1, 64, 0, 0, 0, 0, 0, 0
+    );
+  }
+
   migrarColunas(db, 'main', 'objects', [
     ['parent_object_id', 'INTEGER']
   ]);
@@ -1036,6 +1149,11 @@ function sincronizarCatalogoDatabase(db) {
     ['schema_id', 'INTEGER NOT NULL DEFAULT 4'],
     ['is_assembly_type', 'BIT NOT NULL DEFAULT 0'],
     ['is_table_type', 'BIT NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'main', 'all_parameters', [
+    ['has_default_value', 'BIT NOT NULL DEFAULT 0'],
+    ['default_value', 'TEXT'],
+    ['is_readonly', 'BIT NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'main', 'synonyms', [
     ['base_object_name', "TEXT DEFAULT ''"]
@@ -1394,6 +1512,11 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
   db.function('DATABASEPROPERTYEX', { varargs: true }, databasePropertyEx);
   db.function('DATABASEPROPERTY', { varargs: true }, databasePropertyEx);
 
+  // FILEPROPERTY e usado pelo SMO na aba Filegroups para calcular UsedSpace.
+  db.function('FILEPROPERTY', { varargs: true }, (_nome, propriedade) => {
+    return String(propriedade || '').toLowerCase() === 'spaceused' ? 1024 : null;
+  });
+
   // COLLATIONPROPERTY e usado pelo SMO para preencher LCID/CodePage/ComparisonStyle.
   db.function('COLLATIONPROPERTY', { varargs: true }, (_colacao, propriedade) => {
     const chave = String(propriedade || '').toUpperCase();
@@ -1588,8 +1711,151 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
         ('LogOnSuccess', '0', 'Registra ocorrencias bem-sucedidas')
     `).run();
   }
-  sincronizarCatalogoDatabase(db);
+  sincronizarCatalogoDatabase(db, dbName);
   registrarFuncoes(db, { dbName, engine, listarDatabases, usuario });
 }
 
-module.exports = { instalar, sincronizarCatalogoDatabase, MASTER, SISTEMA, EDICOES, VERSAO };
+/** @private */
+function erroTsqlProcedimento(numero, state, mensagem) {
+  const erro = new Error(mensagem);
+  erro.number = numero;
+  erro.state = state;
+  erro.class = 16;
+  return erro;
+}
+
+/** Remove a qualificação `dbo.` e os colchetes do nome da rotina. @private */
+function nomeSimplesProcedimento(nome) {
+  return String(nome || '')
+    .split('.')
+    .pop()
+    .trim()
+    .replace(/^\[|\]$/g, '')
+    .replace(/^"|"$/g, '');
+}
+
+/**
+ * Registra uma stored procedure no catalogo do database, tornando-a visivel
+ * em sys.procedures/sys.objects e guardando o corpo em sys.sql_modules.
+ */
+function criarProcedimento(db, { nome, definicao, parametros = [], alterar = false }) {
+  db.exec(DDL_DATABASE);
+  const nomeProc = nomeSimplesProcedimento(nome);
+  if (!nomeProc) throw erroTsqlProcedimento(102, 1, 'Incorrect syntax near PROCEDURE.');
+
+  const existente = db.prepare(
+    'SELECT object_id FROM main.procedures WHERE name = ? COLLATE NOCASE'
+  ).get(nomeProc);
+  if (alterar && !existente) {
+    throw erroTsqlProcedimento(2812, 62, `Could not find stored procedure '${nomeProc}'.`);
+  }
+  if (!alterar && existente) {
+    throw erroTsqlProcedimento(2714, 1, `There is already an object named '${nomeProc}' in the database.`);
+  }
+
+  const data = '2023-01-01 00:00:00';
+  const objectId = existente
+    ? existente.object_id
+    : Number(db.prepare('SELECT COALESCE(MAX(object_id), 0) + 1 AS id FROM main.objects').get().id);
+
+  db.prepare('DELETE FROM main.all_parameters WHERE object_id = ?').run(objectId);
+  db.prepare('DELETE FROM main.sql_modules WHERE object_id = ?').run(objectId);
+  db.prepare('DELETE FROM main.procedures WHERE object_id = ?').run(objectId);
+  db.prepare('DELETE FROM main.objects WHERE object_id = ?').run(objectId);
+
+  db.prepare(`
+    INSERT INTO main.objects
+      (name, object_id, schema_id, principal_id, type, type_desc, create_date)
+    VALUES (?, ?, 1, 1, 'P', 'SQL_STORED_PROCEDURE', ?)
+  `).run(nomeProc, objectId, data);
+  db.prepare(`
+    INSERT INTO main.procedures
+      (name, object_id, schema_id, principal_id, create_date, modify_date)
+    VALUES (?, ?, 1, 1, ?, ?)
+  `).run(nomeProc, objectId, data, data);
+  db.prepare(`
+    INSERT INTO main.sql_modules (object_id, definition) VALUES (?, ?)
+  `).run(objectId, String(definicao || ''));
+
+  const inserirParametro = db.prepare(`
+    INSERT INTO main.all_parameters
+      (object_id, parameter_id, name, user_type_id, is_output, has_default_value, default_value)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  parametros.forEach((parametro, indice) => {
+    const nomeTipo = String(parametro.tipo || 'int').split('(')[0].trim();
+    const tipo = db.prepare(
+      'SELECT user_type_id FROM main.types WHERE name = ? COLLATE NOCASE'
+    ).get(nomeTipo);
+    inserirParametro.run(
+      objectId,
+      indice + 1,
+      parametro.nome,
+      tipo ? tipo.user_type_id : 56,
+      parametro.isOutput ? 1 : 0,
+      parametro.valorPadrao == null ? 0 : 1,
+      parametro.valorPadrao == null ? null : String(parametro.valorPadrao)
+    );
+  });
+
+  return { nome: nomeProc, objectId };
+}
+
+/** Devolve o corpo e os parametros de uma procedure registrada. */
+function obterProcedimento(db, nome) {
+  db.exec(DDL_DATABASE);
+  const linha = db.prepare(`
+    SELECT p.object_id, p.name, m.definition
+    FROM main.procedures AS p
+    LEFT JOIN main.sql_modules AS m ON m.object_id = p.object_id
+    WHERE p.name = ? COLLATE NOCASE
+  `).get(nomeSimplesProcedimento(nome));
+  if (!linha) return null;
+
+  const nomesTipos = new Map(
+    db.prepare('SELECT user_type_id, name FROM main.types').all()
+      .map((tipo) => [tipo.user_type_id, tipo.name])
+  );
+  const parametros = db.prepare(`
+    SELECT name, user_type_id, is_output, has_default_value, default_value
+    FROM main.all_parameters WHERE object_id = ? ORDER BY parameter_id
+  `).all(linha.object_id).map((parametro) => ({
+    nome: parametro.name,
+    tipo: nomesTipos.get(parametro.user_type_id) || 'int',
+    isOutput: Boolean(parametro.is_output),
+    valorPadrao: parametro.has_default_value ? parametro.default_value : null
+  }));
+
+  return { nome: linha.name, definicao: linha.definition || '', parametros };
+}
+
+/** Remove uma procedure do catalogo. */
+function removerProcedimento(db, nome, seExistir = false) {
+  db.exec(DDL_DATABASE);
+  const nomeProc = nomeSimplesProcedimento(nome);
+  const linha = db.prepare(
+    'SELECT object_id FROM main.procedures WHERE name = ? COLLATE NOCASE'
+  ).get(nomeProc);
+  if (!linha) {
+    if (seExistir) return false;
+    throw erroTsqlProcedimento(2812, 62, `Could not find stored procedure '${nomeProc}'.`);
+  }
+
+  db.prepare('DELETE FROM main.all_parameters WHERE object_id = ?').run(linha.object_id);
+  db.prepare('DELETE FROM main.sql_modules WHERE object_id = ?').run(linha.object_id);
+  db.prepare('DELETE FROM main.procedures WHERE object_id = ?').run(linha.object_id);
+  db.prepare('DELETE FROM main.objects WHERE object_id = ?').run(linha.object_id);
+  return true;
+}
+
+module.exports = {
+  instalar,
+  sincronizarCatalogoDatabase,
+  criarProcedimento,
+  obterProcedimento,
+  removerProcedimento,
+  MASTER,
+  SISTEMA,
+  EDICOES,
+  VERSAO
+};

@@ -113,6 +113,37 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     ]);
   });
 
+  test('expõe filegroups, database_files e master_files usados pela aba Filegroups', () => {
+    const filegroups = engine.execute('principal', `
+      SELECT g.name AS [Name], g.data_space_id AS [ID], g.is_default AS [IsDefault],
+             g.type AS [FileGroupType]
+      FROM sys.filegroups AS g
+      WHERE CAST(cast(g.name as varbinary(256)) AS sysname) = 'PRIMARY'
+    `).rows;
+    expect(filegroups).toEqual([
+      { Name: 'PRIMARY', ID: 1, IsDefault: 1, FileGroupType: 'FG' }
+    ]);
+
+    const arquivos = engine.execute('principal', `
+      SELECT file_id, type, name, size, physical_name
+      FROM sys.database_files ORDER BY file_id
+    `).rows;
+    expect(arquivos.map((arquivo) => arquivo.type)).toEqual([0, 1]);
+    expect(arquivos[0].name).toBe('principal');
+    expect(arquivos[1].name).toBe('principal_log');
+    expect(arquivos[0].physical_name).toMatch(/principal\.mdf$/);
+
+    const expandidos = engine.execute('principal', `
+      SELECT s.size * CONVERT(float,8) AS [Size]
+      FROM sys.database_files AS s WHERE (s.type = 1)
+    `).rows;
+    expect(expandidos[0].Size).toBe(65536);
+
+    const mestres = engine.execute('principal',
+      'SELECT database_id, name FROM sys.master_files ORDER BY database_id, file_id').rows;
+    expect(mestres.map((arquivo) => arquivo.name)).toContain('principal');
+  });
+
   test('expõe fn_helpcollations usada pela aba Options do New Database', () => {
     const resultado = engine.execute('master', `
       SELECT cl.name AS [Name], cl.description AS [Description],

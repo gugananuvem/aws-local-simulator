@@ -132,7 +132,9 @@ class SqlTranslator {
         .join('; ');
     }
 
-    let resultado = this._removerShimAvailabilityGroups(sql);
+    let resultado = this._removerExecBackupHistory(sql);
+    resultado = this._traduzirRotinas(resultado);
+    resultado = this._removerShimAvailabilityGroups(resultado);
     resultado = this._removerShimRemoteDataArchive(resultado);
     resultado = this._removerShimDataRetention(resultado);
     resultado = resultado.replace(
@@ -151,6 +153,9 @@ class SqlTranslator {
     resultado = this._traduzirMetadadosCliente(resultado);
     resultado = this._traduzirTabelasTemporarias(resultado);
     resultado = this._removerPrefixoN(resultado);
+    // COLLATE database_default e usado pelo SMO ao montar o catalogo de
+    // arquivos. O SQLite nao conhece essa collation e rejeita a consulta toda.
+    resultado = resultado.replace(/\s+COLLATE\s+(?:\[?database_default\]?)/gi, '');
     resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
     resultado = this._removerColchetesSimples(resultado);
@@ -585,6 +590,39 @@ class SqlTranslator {
   }
 
   /**
+   * O script de DROP DATABASE gerado pelo SSMS começa limpando o historico de
+   * backup no msdb. A procedure é irrelevante para o simulador (nao ha backup
+   * real), mas o EXEC genérico é rejeitado pelo validador procedural.
+   * @private
+   */
+  _removerExecBackupHistory(sql) {
+    return sql.replace(
+      /\bEXEC(?:UTE)?\s+(?:msdb\s*\.\s*(?:dbo\s*\.\s*)?)?sp_delete_database_backuphistory\b[^;]*/gi,
+      ''
+    );
+  }
+
+  /**
+   * CREATE/ALTER/DROP PROCEDURE são DDL de rotina: o DbEngine executa o efeito
+   * no catalogo antes da tradução. Aqui apenas evitamos que o SQLite receba a
+   * sintaxe T-SQL bruta caso a instrução chegue até o tradutor diretamente.
+   * @private
+   */
+  _traduzirRotinas(sql) {
+    const nome = '(?:\\[[^\\]]+\\]|[A-Za-z_]\\w*)(?:\\s*\\.\\s*(?:\\[[^\\]]+\\]|[A-Za-z_]\\w*))?';
+    const criacao = new RegExp(`^\\s*(CREATE|ALTER)\\s+(?:OR\\s+ALTER\\s+)?PROC(?:EDURE)?\\s+${nome}`, 'i').exec(sql);
+    if (criacao) {
+      const rotulo = /^alter/i.test(criacao[1]) ? 'ProcedureAltered' : 'ProcedureCreated';
+      return `SELECT 1 AS [${rotulo}]`;
+    }
+
+    const remocao = new RegExp(`^\\s*DROP\\s+PROC(?:EDURE)?\\s+(?:IF\\s+EXISTS\\s+)?${nome}`, 'i').exec(sql);
+    if (remocao) return 'SELECT 1 AS [ProcedureDropped]';
+
+    return sql;
+  }
+
+  /**
    * O SMO cria uma tabela temporaria e preenche via IF/EXECUTE dinamico para
    * consultar arquivamento remoto. Como nao ha suporte a EXEC, removemos esse
    * bloco e deixamos a tabela vazia: os joins seguintes continuam validos.
@@ -641,7 +679,8 @@ class SqlTranslator {
     const objetos = [
       'tables', 'all_views', 'views', 'system_views', 'synonyms', 'objects',
       'all_objects', 'indexes',
-      'data_spaces', 'all_columns', 'columns', 'types', 'database_principals',
+      'data_spaces', 'filegroups', 'database_files', 'all_columns', 'columns',
+      'types', 'database_principals',
       'sql_modules', 'system_sql_modules', 'extended_properties',
       'default_constraints', 'index_columns', 'computed_columns',
       'identity_columns', 'foreign_key_columns', 'column_encryption_keys',
@@ -649,7 +688,7 @@ class SqlTranslator {
       'change_tracking_tables', 'filetables', 'periods',
       'remote_data_archive_tables', 'schemas',
       'all_parameters', 'parameters', 'triggers', 'database_permissions',
-      'assemblies', 'table_types', 'assembly_types'
+      'procedures', 'assemblies', 'table_types', 'assembly_types'
     ].join('|');
     return semFuncao.replace(
       new RegExp(`\\bsys\\s*\\.\\s*(${objetos})\\b`, 'gi'),
@@ -899,6 +938,18 @@ class SqlTranslator {
       };
     }
 
+    if (/\b(?:sys|main)\.procedures\b/i.test(sql)) {
+      return {
+        IsMSShipped: 'BIT',
+        IsMsShipped: 'BIT',
+        IsSystemObject: 'BIT',
+        IsPublished: 'BIT',
+        IsSchemaPublished: 'BIT',
+        CreateDate: 'DATETIME',
+        ModifyDate: 'DATETIME'
+      };
+    }
+
     if (/\b(?:sys|main)\.(?:tables|all_views|views)\b/i.test(sql)) {
       return {
         ID: 'INT',
@@ -959,6 +1010,37 @@ class SqlTranslator {
       /\bSmoEnabled\b/i.test(sql)
     ) {
       return { AdminConnection: 'BIT', SmoEnabled: 'BIT' };
+    }
+
+    // Aba Filegroups do New Database: o SMO le IsDefault/IsOffline/IsSparse
+    // com GetBoolean() e Size/Growth com GetDouble(). Sem os tipos TDS
+    // explicitos o SQLite devolve INT e o SMO estoura "Specified cast is
+    // not valid".
+    const ehFilegroups = /\b(?:sys|main)\.filegroups\b/i.test(sql);
+    const ehArquivos = /\b(?:sys|main)\.database_files\b/i.test(sql) &&
+      /\[(?:IsPrimaryFile|UsedSpace|GrowthType|MaxSize|Growth|IsReadOnlyMedia|IsOffline|IsSparse)\]/i.test(sql);
+    if (ehFilegroups || ehArquivos) {
+      return {
+        Name: 'TEXT',
+        ID: 'INT',
+        IsDefault: 'BIT',
+        ReadOnly: 'BIT',
+        Size: 'FLOAT',
+        FileGroupType: 'INT',
+        IsFileStream: 'BIT',
+        PolicyHealthState: 'INT',
+        AutogrowAllFiles: 'BIT',
+        FileName: 'TEXT',
+        UsedSpace: 'FLOAT',
+        GrowthType: 'INT',
+        MaxSize: 'FLOAT',
+        Growth: 'FLOAT',
+        IsReadOnlyMedia: 'BIT',
+        IsReadOnly: 'BIT',
+        IsOffline: 'BIT',
+        IsSparse: 'BIT',
+        IsPrimaryFile: 'BIT'
+      };
     }
 
     if (/\b(?:master\.)?sys\.databases\b/i.test(código)) {
@@ -1142,6 +1224,17 @@ class SqlTranslator {
         "'LOCAL' AS [ComputerNamePhysicalNetBIOS], " +
         'CAST(0 AS BIT) AS [IsPolyBaseInstalled]'
       );
+    }
+
+    // Batch enxuto de caminhos enviado pela aba Filegroups do New Database.
+    // Nao contem xp_instance_regread, entao o batch completo acima nao o captura.
+    if (
+      /\bDECLARE\s+@MasterPath\b/i.test(código) &&
+      /@MasterPath\s+AS\s+\[MasterDBPath\]/i.test(sql) &&
+      /@LogPath\s+AS\s+\[MasterDBLogPath\]/i.test(sql)
+    ) {
+      const caminho = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
+      return `SELECT '${caminho}' AS [MasterDBPath], '${caminho}' AS [MasterDBLogPath]`;
     }
 
     // Propriedades caras do Server, lidas uma a uma via xp_regread/xp_instance_
@@ -1513,6 +1606,13 @@ class SqlTranslator {
         resultado,
         '\\bAS\\s+(?:SYSNAME|UNIQUEIDENTIFIER|XML|DATETIME2|DATETIME|SMALLDATETIME|DATE|TIME)\\b',
         () => 'AS TEXT'
+      );
+      // CAST(nome AS varbinary(n)) precisa preservar os bytes no SQLite: com
+      // afinidade numerica o nome viraria 0 e o SMO nao encontrava o filegroup.
+      resultado = this._substituirTodos(
+        resultado,
+        '\\bAS\\s+(?:VARBINARY|BINARY)\\s*\\(\\s*(?:\\d+|MAX)\\s*\\)',
+        () => 'AS BLOB'
       );
       resultado = this._traduzirDateAdd(resultado);
     }
