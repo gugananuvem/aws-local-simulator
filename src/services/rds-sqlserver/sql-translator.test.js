@@ -766,6 +766,13 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(traduzido.match(/CAST\(\? AS INTEGER\)/g)).toHaveLength(2);
     });
 
+    test('traduz literais de data ODBC e remove o qualificador dbo. de funcoes', () => {
+      const sql = "SELECT dbo.TOUNIX_TIMESTAMP({d '1970-01-01'}) AS ts";
+      expect(translator.translate(sql)).toBe(
+        "SELECT TOUNIX_TIMESTAMP('1970-01-01') AS ts"
+      );
+    });
+
     test('remove USE no meio do batch sem afetar o comando isolado', () => {
       expect(translator.translate('use [master];select 1 AS [ok]')).toBe(
         'select 1 AS [ok]'

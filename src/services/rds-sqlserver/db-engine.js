@@ -30,6 +30,13 @@ class DbEngine {
     this.translator = translator;
     this.databases = new Map(); // dbName → instância better-sqlite3
     this.transactions = new Map(); // transactionId → { db, dbName, startedAt }
+    // Corpo das funcoes escalares do usuario: db → Map<nomeMinusculo, avaliador>.
+    this._funcoesUsuario = new Map();
+    // Nomes ja registrados como UDF em cada conexao SQLite (nao ha API para remover).
+    this._udfsRegistradas = new Map();
+    // Conexao separada para avaliar o corpo das funcoes (usar a conexao de
+    // consulta dentro de uma UDF causaria "database connection is busy").
+    this._dbAvaliacao = null;
     this.isClosed = false;
 
     fs.mkdirSync(this.dataDir, { recursive: true });
@@ -72,6 +79,12 @@ class DbEngine {
     });
 
     this.databases.set(dbName, db);
+    // Funcoes criadas em execucoes anteriores precisam voltar a existir como
+    // UDF SQLite ao reabrir o arquivo .db.
+    for (const nome of catalogoSistema.listarFuncoes(db)) {
+      const funcao = catalogoSistema.obterFuncao(db, nome);
+      if (funcao) this._registrarFuncaoUsuario(db, funcao);
+    }
     logger.debug(`[RDS SQL Server DbEngine] Database '${dbName}' aberto/criado em ${dbPath}`);
     return db;
   }
@@ -211,8 +224,14 @@ class DbEngine {
       }
     }
 
+    if (this._dbAvaliacao) {
+      try { this._dbAvaliacao.close(); } catch (_erro) { /* conexao em memoria */ }
+      this._dbAvaliacao = null;
+    }
     this.databases.clear();
     this.transactions.clear();
+    this._funcoesUsuario.clear();
+    this._udfsRegistradas.clear();
     logger.debug('[RDS SQL Server DbEngine] Todas as conexões foram fechadas');
   }
 
@@ -469,7 +488,8 @@ class DbEngine {
     let parametros = Array.isArray(params) ? params : params == null ? [] : [params];
     const restante = this._executarDdlDatabase(sqlBruto);
     const semRotinas = this._executarDdlProcedures(restante, db);
-    let sqlTraduzido = this._traduzir(semRotinas);
+    const semFuncoes = this._executarDdlFunctions(semRotinas, db);
+    let sqlTraduzido = this._traduzir(semFuncoes);
     if (parametros.length && this.translator && typeof this.translator.substituirParametros === 'function') {
       const substituidos = this.translator.substituirParametros(sqlTraduzido, parametros);
       if (substituidos && typeof substituidos === 'object' && !Array.isArray(substituidos)) {
@@ -620,6 +640,246 @@ class DbEngine {
     }
 
     return restante;
+  }
+
+  /**
+   * Funcoes escalares tambem nao existem no SQLite. Registramos o corpo no
+   * catalogo (para aparecer em sys.objects/sys.sql_modules) e uma UDF que
+   * avalia o RETURN da funcao em uma conexao separada.
+   * @private
+   */
+  _executarDdlFunctions(sqlBruto, db) {
+    let restante = String(sqlBruto || '');
+    const nome = '(?:\\[[^\\]]+\\]|[A-Za-z_]\\w*)(?:\\s*\\.\\s*(?:\\[[^\\]]+\\]|[A-Za-z_]\\w*))?';
+
+    const criacao = new RegExp(
+      `\\b(CREATE|ALTER)\\s+(?:OR\\s+ALTER\\s+)?FUNCTION\\s+(${nome})\\s*\\(([\\s\\S]*?)\\)\\s*RETURNS\\s+` +
+      `([A-Za-z_][\\w]*(?:\\s*\\([^)]*\\))?)\\s+AS\\s+([\\s\\S]*)$`,
+      'i'
+    ).exec(restante);
+    if (criacao) {
+      const funcao = catalogoSistema.criarFuncao(db, {
+        nome: criacao[2],
+        definicao: this._limparCorpoRotina(criacao[5]),
+        parametros: this._parametrosProcedimento(criacao[3]),
+        tipoRetorno: criacao[4],
+        alterar: /^alter/i.test(criacao[1])
+      });
+      this._registrarFuncaoUsuario(db, catalogoSistema.obterFuncao(db, funcao.nome));
+      const rotulo = /^alter/i.test(criacao[1]) ? 'FunctionAltered' : 'FunctionCreated';
+      return `${restante.slice(0, criacao.index)}SELECT 1 AS [${rotulo}]`;
+    }
+
+    const remocao = new RegExp(
+      `\\bDROP\\s+FUNCTION\\s+(?:IF\\s+EXISTS\\s+)?(${nome})`,
+      'i'
+    ).exec(restante);
+    if (remocao) {
+      const seExistir = /\bIF\s+EXISTS\b/i.test(remocao[0]);
+      const removida = catalogoSistema.removerFuncao(db, remocao[1], seExistir);
+      const mapa = this._funcoesUsuario.get(db);
+      if (mapa && removida) {
+        const nomeSimples = String(remocao[1]).split('.').pop().trim().replace(/^\[|\]$/g, '');
+        mapa.delete(nomeSimples.toLowerCase());
+      }
+      return `${restante.slice(0, remocao.index)}SELECT 1 AS [FunctionDropped]` +
+        restante.slice(remocao.index + remocao[0].length);
+    }
+
+    return restante;
+  }
+
+  /** Remove BEGIN/END externo e ponto e virgula final do corpo da rotina. @private */
+  _limparCorpoRotina(corpo) {
+    return String(corpo || '')
+      .trim()
+      .replace(/^BEGIN\b/i, '')
+      .replace(/\bEND\s*;?\s*$/i, '')
+      .replace(/;+\s*$/, '')
+      .trim();
+  }
+
+  /** Registra (ou atualiza) a UDF de uma funcao escalar do usuario. @private */
+  _registrarFuncaoUsuario(db, funcao) {
+    if (!funcao) return;
+    const chave = funcao.nome.toLowerCase();
+    let mapa = this._funcoesUsuario.get(db);
+    if (!mapa) {
+      mapa = new Map();
+      this._funcoesUsuario.set(db, mapa);
+    }
+    let registradas = this._udfsRegistradas.get(db);
+    if (!registradas) {
+      registradas = new Set();
+      this._udfsRegistradas.set(db, registradas);
+    }
+
+    mapa.set(chave, (argumentos) => this._avaliarFuncaoUsuario(funcao, argumentos));
+    if (registradas.has(chave)) return;
+    registradas.add(chave);
+    db.function(chave, { deterministic: true, varargs: true }, (...argumentos) => {
+      const avaliador = mapa.get(chave);
+      if (!avaliador) throw new Error(`Invalid object name '${funcao.nome}'.`);
+      return avaliador(argumentos);
+    });
+  }
+
+  /** Devolve a conexao usada para avaliar corpos de funcoes do usuario. @private */
+  _obterDatabaseAvaliacao() {
+    if (!this._dbAvaliacao) {
+      this._dbAvaliacao = new Database(':memory:');
+      catalogoSistema.registrarFuncoesData(this._dbAvaliacao);
+      const agora = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+      this._dbAvaliacao.function('GETDATE', agora);
+      this._dbAvaliacao.function('SYSDATETIME', agora);
+      this._dbAvaliacao.function('GETUTCDATE', agora);
+      this._dbAvaliacao.function('NEWID', () => crypto.randomUUID());
+    }
+    return this._dbAvaliacao;
+  }
+
+  /**
+   * Avalia uma funcao escalar simples: DECLARE/SET/SELECT de variaveis seguidos
+   * de RETURN. Expressoes complexas (IF, WHILE, CURSOR) continuam fora do
+   * subconjunto suportado.
+   * @private
+   */
+  _avaliarFuncaoUsuario(funcao, argumentos) {
+    const db = this._obterDatabaseAvaliacao();
+    const variaveis = new Map();
+    funcao.parametros.forEach((parametro, indice) => {
+      const valor = argumentos[indice] == null ? parametro.valorPadrao : argumentos[indice];
+      variaveis.set(String(parametro.nome).toLowerCase(), this._literalSql(valor));
+    });
+
+    let retorno = null;
+    for (const instrucao of this._dividirInstrucoesFuncao(funcao.definicao)) {
+      const texto = instrucao.trim();
+      if (!texto) continue;
+      let correspondencia = /^DECLARE\s+(@[A-Za-z_]\w*)(?:\s+[\w\s(),]+?)?(?:\s*=\s*([\s\S]*))?$/i.exec(texto);
+      if (correspondencia) {
+        const chave = correspondencia[1].toLowerCase();
+        variaveis.set(
+          chave,
+          correspondencia[2] == null ? 'NULL' : this._substituirVariaveisFuncao(correspondencia[2], variaveis)
+        );
+        continue;
+      }
+      correspondencia = /^(?:SET|SELECT)\s+(@[A-Za-z_]\w*)\s*=\s*([\s\S]*)$/i.exec(texto);
+      if (correspondencia) {
+        variaveis.set(
+          correspondencia[1].toLowerCase(),
+          this._substituirVariaveisFuncao(correspondencia[2], variaveis)
+        );
+        continue;
+      }
+      correspondencia = /^RETURN\s+([\s\S]*)$/i.exec(texto);
+      if (correspondencia) {
+        retorno = this._substituirVariaveisFuncao(correspondencia[1], variaveis);
+      }
+    }
+    if (retorno == null) return null;
+
+    let expressao = retorno
+      .replace(/\{\s*d\s*(['"])([\s\S]*?)\1\s*\}/gi, '$1$2$1')
+      .replace(/\bN'/g, "'")
+      .replace(/\b(DATEDIFF|DATEADD)\s*\(\s*([A-Za-z_]\w*)\s*,/gi, "$1('$2',");
+    const linha = db.prepare(`SELECT ${expressao} AS [resultado]`).get();
+    return linha ? linha.resultado : null;
+  }
+
+  /**
+   * Divide o corpo da funcao em instrucoes. O T-SQL permite separar comandos
+   * apenas por quebra de linha (sem ponto e virgula), entao cada linha que
+   * comeca com um verbo T-SQL inicia uma instrucao.
+   * @private
+   */
+  _dividirInstrucoesFuncao(corpo) {
+    const limpo = String(corpo || '')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/--[^\n]*/g, ' ');
+    const instrucoes = [];
+    let atual = '';
+    for (const linha of limpo.split(/\r?\n/)) {
+      const conteudo = linha.trim();
+      if (!conteudo) continue;
+      if (/^(?:DECLARE|SET|SELECT|RETURN|BEGIN|END|IF|WHILE)\b/i.test(conteudo) && atual.trim()) {
+        instrucoes.push(atual.trim());
+        atual = '';
+      }
+      atual += `${atual ? '\n' : ''}${conteudo}`;
+    }
+    if (atual.trim()) instrucoes.push(atual.trim());
+
+    // Ainda pode haver mais de um comando na mesma linha, separado por ';'.
+    return instrucoes.flatMap((instrucao) => {
+      const partes = [];
+      let parte = '';
+      let aspas = null;
+      let profundidade = 0;
+      for (let i = 0; i < instrucao.length; i += 1) {
+        const caractere = instrucao[i];
+        if (aspas) {
+          parte += caractere;
+          if (caractere === aspas) {
+            if (instrucao[i + 1] === aspas) { parte += instrucao[i + 1]; i += 1; } else { aspas = null; }
+          }
+          continue;
+        }
+        if (caractere === "'" || caractere === '"') { aspas = caractere; parte += caractere; continue; }
+        if (caractere === '(') profundidade += 1;
+        if (caractere === ')') profundidade -= 1;
+        if (caractere === ';' && profundidade <= 0) {
+          if (parte.trim()) partes.push(parte.trim());
+          parte = '';
+          continue;
+        }
+        parte += caractere;
+      }
+      if (parte.trim()) partes.push(parte.trim());
+      return partes;
+    });
+  }
+
+  /** Substitui @variaveis por expressoes SQLite, ignorando texto entre aspas. @private */
+  _substituirVariaveisFuncao(texto, variaveis) {
+    const mascara = ' '.repeat(texto.length).split('');
+    let emString = false;
+    for (let i = 0; i < texto.length; i += 1) {
+      if (texto[i] === "'") { emString = !emString; continue; }
+      if (!emString && texto[i] === '@') {
+        const correspondencia = /^@[A-Za-z_]\w*/.exec(texto.slice(i));
+        if (correspondencia) {
+          const chave = correspondencia[0].toLowerCase();
+          if (variaveis.has(chave)) {
+            for (let j = 0; j < correspondencia[0].length; j += 1) mascara[i + j] = '*';
+          }
+          i += correspondencia[0].length - 1;
+        }
+      }
+    }
+    let resultado = '';
+    let deslocamento = 0;
+    for (;;) {
+      const inicio = mascara.indexOf('*', deslocamento);
+      if (inicio < 0) { resultado += texto.slice(deslocamento); break; }
+      resultado += texto.slice(deslocamento, inicio);
+      let fim = inicio;
+      while (mascara[fim] === '*') fim += 1;
+      const chave = texto.slice(inicio, fim).toLowerCase();
+      resultado += variaveis.has(chave) ? `(${variaveis.get(chave)})` : texto.slice(inicio, fim);
+      deslocamento = fim;
+    }
+    return resultado;
+  }
+
+  /** Converte um valor JS em literal SQL para avaliacao da funcao. @private */
+  _literalSql(valor) {
+    if (valor == null) return 'NULL';
+    if (typeof valor === 'number' || typeof valor === 'bigint') return String(valor);
+    if (typeof valor === 'boolean') return valor ? '1' : '0';
+    if (valor instanceof Date) return `'${valor.toISOString().slice(0, 19).replace('T', ' ')}'`;
+    return `'${String(valor).replace(/'/g, "''")}'`;
   }
 
   /** Extrai `@p INT = 1, @q VARCHAR(10) OUTPUT` da declaracao de procedure. @private */

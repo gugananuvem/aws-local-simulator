@@ -204,6 +204,69 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('CREATE FUNCTION escalar registra o corpo e permite chamar a funcao', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    const criacao = [
+      'CREATE FUNCTION [dbo].[TOUNIX_TIMESTAMP] (',
+      '  @ctimestamp datetime',
+      ')',
+      'RETURNS integer',
+      'AS',
+      'BEGIN',
+      '  declare @return integer',
+      "  SELECT @return = DATEDIFF(SECOND,{d '1970-01-01'}, @ctimestamp)",
+      '  return @return',
+      'END'
+    ].join('\r\n');
+    try {
+      expect(comTradutor.execute('principal', criacao).rows[0].FunctionCreated).toBe(1);
+      expect(comTradutor.execute('principal',
+        "SELECT name, type FROM sys.objects WHERE name = 'TOUNIX_TIMESTAMP'"
+      ).rows).toEqual([{ name: 'TOUNIX_TIMESTAMP', type: 'FN' }]);
+
+      const chamada = comTradutor.execute('principal',
+        "SELECT dbo.TOUNIX_TIMESTAMP({d '1970-01-01 00:00:10'}) AS ts"
+      );
+      expect(chamada.rows).toEqual([{ ts: 10 }]);
+
+      comTradutor.execute('principal', 'DROP FUNCTION [dbo].[TOUNIX_TIMESTAMP]');
+      expect(comTradutor.execute('principal',
+        "SELECT name FROM sys.objects WHERE name = 'TOUNIX_TIMESTAMP'"
+      ).rows).toEqual([]);
+      expect(() => comTradutor.execute('principal',
+        "SELECT dbo.TOUNIX_TIMESTAMP({d '1970-01-01 00:00:10'}) AS ts"
+      )).toThrow(/Invalid object name/);
+    } finally {
+      comTradutor.close();
+    }
+  });
+
+  test('funcao escalar continua disponivel depois de reabrir o database', () => {
+    const criacao = [
+      'CREATE FUNCTION SEGUNDOS (@valor datetime) RETURNS integer AS',
+      'BEGIN',
+      '  DECLARE @ret integer',
+      "  SELECT @ret = DATEDIFF(SECOND,{d '1970-01-01'}, @valor)",
+      '  RETURN @ret',
+      'END'
+    ].join('\n');
+    const primeiro = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      primeiro.execute('principal', criacao);
+    } finally {
+      primeiro.close();
+    }
+
+    const segundo = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      expect(segundo.execute('principal',
+        "SELECT dbo.SEGUNDOS({d '1970-01-01 00:01:00'}) AS ts"
+      ).rows).toEqual([{ ts: 60 }]);
+    } finally {
+      segundo.close();
+    }
+  });
+
   test('CREATE TABLE duplicado retorna o erro 2714 do SQL Server', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {

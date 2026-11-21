@@ -600,7 +600,8 @@ const DDL_DATABASE = `
     object_id INTEGER NOT NULL PRIMARY KEY,
     definition TEXT,
     is_recompiled BIT NOT NULL DEFAULT 0,
-    execute_as_principal_id INTEGER
+    execute_as_principal_id INTEGER,
+    returns_type TEXT DEFAULT 'int'
   );
 
   CREATE TABLE IF NOT EXISTS system_sql_modules (
@@ -1138,6 +1139,9 @@ function nomeDatabaseLocal(db, dbName) {
  */
 function sincronizarCatalogoDatabase(db, dbName) {
   db.exec(DDL_DATABASE);
+  // databases antigos nao tem returns_type; a migracao precisa acontecer antes
+  // de ler as funcoes salvas logo abaixo.
+  migrarColunas(db, 'main', 'sql_modules', [['returns_type', "TEXT DEFAULT 'int'"]]);
 
   // As tabelas objects/sql_modules/all_parameters sao reconstruidas abaixo.
   // Guarda as rotinas registradas para reinstalla-las depois da reconstrucao.
@@ -1150,6 +1154,21 @@ function sincronizarCatalogoDatabase(db, dbName) {
   const parametrosSalvos = db.prepare(`
     SELECT a.* FROM main.all_parameters AS a
     INNER JOIN main.procedures AS p ON p.object_id = a.object_id
+    ORDER BY a.object_id, a.parameter_id
+  `).all();
+  // Funcoes escalares tambem vivem em objects/sql_modules/all_parameters e
+  // serao apagadas pela reconstrucao abaixo. Preservamos o corpo e os
+  // parametros para reinstala-las no final.
+  const funcoesSalvas = db.prepare(`
+    SELECT o.object_id, o.name, o.schema_id, o.principal_id, o.create_date,
+           o.modify_date, o.is_ms_shipped, m.definition, m.returns_type
+    FROM main.objects AS o
+    LEFT JOIN main.sql_modules AS m ON m.object_id = o.object_id
+    WHERE o.type = 'FN'
+  `).all();
+  const parametrosFuncoesSalvos = db.prepare(`
+    SELECT a.* FROM main.all_parameters AS a
+    INNER JOIN main.objects AS o ON o.object_id = a.object_id AND o.type = 'FN'
     ORDER BY a.object_id, a.parameter_id
   `).all();
 
@@ -1473,6 +1492,57 @@ function sincronizarCatalogoDatabase(db, dbName) {
   }
 
   restaurarProcedimentos(db, rotinasSalvas, parametrosSalvos);
+  restaurarFuncoes(db, funcoesSalvas, parametrosFuncoesSalvos);
+}
+
+/**
+ * Registra funcoes T-SQL de data que nao existem no SQLite. Tambem e usado no
+ * banco em memoria que avalia o corpo das funcoes escalares do usuario.
+ * @private
+ */
+function registrarFuncoesData(db) {
+  const paraData = (valor) => {
+    if (valor instanceof Date) return valor;
+    if (typeof valor === 'number') return new Date(valor);
+    const texto = String(valor == null ? '' : valor).trim().replace(' ', 'T');
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(texto) && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(texto)) {
+      return new Date(`${texto}Z`);
+    }
+    return new Date(texto);
+  };
+  const diaUtil = (data) => Date.UTC(data.getUTCFullYear(), data.getUTCMonth(), data.getUTCDate());
+  const ms = (unidade) => ({
+    week: 7 * 86400000, hour: 3600000, minute: 60000, second: 1000, millisecond: 1
+  }[unidade]);
+
+  db.function('DATEDIFF', { deterministic: true }, (unidade, inicio, fim) => {
+    const a = paraData(inicio);
+    const b = paraData(fim);
+    if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+    let u = String(unidade || '').toLowerCase();
+    if (u === 'yy' || u === 'yyyy') u = 'year';
+    if (u === 'qq' || u === 'q') u = 'quarter';
+    if (u === 'mm' || u === 'm') u = 'month';
+    if (u === 'wk' || u === 'ww') u = 'week';
+    if (u === 'dd' || u === 'd') u = 'day';
+    if (u === 'hh') u = 'hour';
+    if (u === 'mi' || u === 'n') u = 'minute';
+    if (u === 'ss' || u === 's') u = 'second';
+    if (u === 'ms') u = 'millisecond';
+
+    if (u === 'year') return b.getUTCFullYear() - a.getUTCFullYear();
+    if (u === 'quarter') {
+      return (b.getUTCFullYear() - a.getUTCFullYear()) * 4 +
+        Math.floor(b.getUTCMonth() / 3) - Math.floor(a.getUTCMonth() / 3);
+    }
+    if (u === 'month') {
+      return (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth();
+    }
+    if (u === 'day') return Math.trunc((diaUtil(b) - diaUtil(a)) / 86400000);
+    if (u === 'week') return Math.trunc((diaUtil(b) - diaUtil(a)) / (7 * 86400000));
+    const fator = ms(u);
+    return fator ? Math.trunc((b.getTime() - a.getTime()) / fator) : null;
+  });
 }
 
 /**
@@ -1480,6 +1550,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
  * @private
  */
 function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admin' }) {
+  registrarFuncoesData(db);
   const edicao = editionDoMotor(engine);
   const ehMsdb = String(dbName || '').toLowerCase() === 'msdb';
   const databases = () => {
@@ -1905,6 +1976,47 @@ function restaurarProcedimentos(db, rotinas, parametros) {
   }
 }
 
+/** Reinstala no catalogo as funcoes escalares preservadas na reconstrucao. @private */
+function restaurarFuncoes(db, funcoes, parametros) {
+  if (!funcoes.length) return;
+  const inserirObjeto = db.prepare(`
+    INSERT INTO main.objects
+      (name, object_id, schema_id, principal_id, type, type_desc, create_date, is_ms_shipped)
+    VALUES (?, ?, ?, ?, 'FN', 'SQL_SCALAR_FUNCTION', ?, ?)
+  `);
+  const inserirModulo = db.prepare(`
+    INSERT INTO main.sql_modules (object_id, definition, returns_type) VALUES (?, ?, ?)
+  `);
+  const inserirParametro = db.prepare(`
+    INSERT INTO main.all_parameters
+      (object_id, parameter_id, name, user_type_id, is_output, has_default_value, default_value)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const funcao of funcoes) {
+    const objectId = funcao.object_id > 0 ? funcao.object_id : proximoObjectIdUsuario(db);
+    db.prepare('DELETE FROM main.objects WHERE object_id = ?').run(objectId);
+    db.prepare('DELETE FROM main.sql_modules WHERE object_id = ?').run(objectId);
+    db.prepare('DELETE FROM main.all_parameters WHERE object_id = ?').run(objectId);
+    inserirObjeto.run(
+      funcao.name, objectId, funcao.schema_id || 1, funcao.principal_id || 1,
+      funcao.create_date || dataHoraAtualSql(), funcao.is_ms_shipped || 0
+    );
+    inserirModulo.run(objectId, funcao.definition || '', funcao.returns_type || 'int');
+    parametros
+      .filter((parametro) => parametro.object_id === funcao.object_id)
+      .forEach((parametro) => inserirParametro.run(
+        objectId,
+        parametro.parameter_id,
+        parametro.name,
+        parametro.user_type_id,
+        parametro.is_output,
+        parametro.has_default_value,
+        parametro.default_value
+      ));
+  }
+}
+
 function dataHoraAtualSql() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
@@ -2021,12 +2133,129 @@ function removerProcedimento(db, nome, seExistir = false) {
   return true;
 }
 
+/**
+ * Registra uma funcao escalar do usuario em sys.objects/sys.sql_modules. O
+ * corpo tambem e registrado como funcao SQLite pelo DbEngine.
+ */
+function criarFuncao(db, { nome, definicao, parametros = [], tipoRetorno = 'int', alterar = false }) {
+  db.exec(DDL_DATABASE);
+  const nomeFuncao = nomeSimplesProcedimento(nome);
+  if (!nomeFuncao) throw erroTsqlProcedimento(102, 1, 'Incorrect syntax near FUNCTION.');
+
+  const existente = db.prepare(`
+    SELECT object_id FROM main.objects
+    WHERE name = ? COLLATE NOCASE AND type = 'FN'
+  `).get(nomeFuncao);
+  if (alterar && !existente) {
+    throw erroTsqlProcedimento(2812, 62, `Could not find function '${nomeFuncao}'.`);
+  }
+  if (!alterar && existente) {
+    throw erroTsqlProcedimento(2714, 1, `There is already an object named '${nomeFuncao}' in the database.`);
+  }
+
+  const data = dataHoraAtualSql();
+  const objectId = existente ? existente.object_id : proximoObjectIdUsuario(db);
+
+  db.prepare('DELETE FROM main.all_parameters WHERE object_id = ?').run(objectId);
+  db.prepare('DELETE FROM main.sql_modules WHERE object_id = ?').run(objectId);
+  db.prepare('DELETE FROM main.objects WHERE object_id = ?').run(objectId);
+  db.prepare(`
+    INSERT INTO main.objects
+      (name, object_id, schema_id, principal_id, type, type_desc, create_date)
+    VALUES (?, ?, 1, 1, 'FN', 'SQL_SCALAR_FUNCTION', ?)
+  `).run(nomeFuncao, objectId, data);
+  db.prepare(`
+    INSERT INTO main.sql_modules (object_id, definition, returns_type)
+    VALUES (?, ?, ?)
+  `).run(objectId, String(definicao || ''), String(tipoRetorno || 'int'));
+
+  const inserirParametro = db.prepare(`
+    INSERT INTO main.all_parameters
+      (object_id, parameter_id, name, user_type_id, is_output, has_default_value, default_value)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  parametros.forEach((parametro, indice) => {
+    const nomeTipo = String(parametro.tipo || 'int').split('(')[0].trim();
+    const tipo = db.prepare(
+      'SELECT user_type_id FROM main.types WHERE name = ? COLLATE NOCASE'
+    ).get(nomeTipo);
+    inserirParametro.run(
+      objectId,
+      indice + 1,
+      parametro.nome,
+      tipo ? tipo.user_type_id : 56,
+      0,
+      parametro.valorPadrao == null ? 0 : 1,
+      parametro.valorPadrao == null ? null : String(parametro.valorPadrao)
+    );
+  });
+
+  return { nome: nomeFuncao, objectId };
+}
+
+/** Devolve o corpo e os parametros de uma funcao escalar registrada. */
+function obterFuncao(db, nome) {
+  db.exec(DDL_DATABASE);
+  const linha = db.prepare(`
+    SELECT o.object_id, o.name, m.definition
+    FROM main.objects AS o
+    LEFT JOIN main.sql_modules AS m ON m.object_id = o.object_id
+    WHERE o.type = 'FN' AND o.name = ? COLLATE NOCASE
+  `).get(nomeSimplesProcedimento(nome));
+  if (!linha) return null;
+
+  const nomesTipos = new Map(
+    db.prepare('SELECT user_type_id, name FROM main.types').all()
+      .map((tipo) => [tipo.user_type_id, tipo.name])
+  );
+  const parametros = db.prepare(`
+    SELECT name, user_type_id, has_default_value, default_value
+    FROM main.all_parameters WHERE object_id = ? ORDER BY parameter_id
+  `).all(linha.object_id).map((parametro) => ({
+    nome: parametro.name,
+    tipo: nomesTipos.get(parametro.user_type_id) || 'int',
+    valorPadrao: parametro.has_default_value ? parametro.default_value : null
+  }));
+
+  return { nome: linha.name, definicao: linha.definition || '', parametros };
+}
+
+/** Lista as funcoes escalares registradas no database (para restaurar as UDFs ao abrir). */
+function listarFuncoes(db) {
+  return db.prepare(`
+    SELECT o.name FROM main.objects AS o
+    WHERE o.type = 'FN' ORDER BY o.object_id
+  `).all().map((linha) => linha.name);
+}
+
+/** Remove uma funcao escalar do catalogo. */
+function removerFuncao(db, nome, seExistir = false) {
+  db.exec(DDL_DATABASE);
+  const linha = db.prepare(`
+    SELECT object_id FROM main.objects
+    WHERE type = 'FN' AND name = ? COLLATE NOCASE
+  `).get(nomeSimplesProcedimento(nome));
+  if (!linha) {
+    if (seExistir) return false;
+    throw erroTsqlProcedimento(2812, 62, `Could not find function '${nomeSimplesProcedimento(nome)}'.`);
+  }
+  db.prepare('DELETE FROM main.all_parameters WHERE object_id = ?').run(linha.object_id);
+  db.prepare('DELETE FROM main.sql_modules WHERE object_id = ?').run(linha.object_id);
+  db.prepare('DELETE FROM main.objects WHERE object_id = ?').run(linha.object_id);
+  return true;
+}
+
 module.exports = {
   instalar,
   sincronizarCatalogoDatabase,
+  registrarFuncoesData,
   criarProcedimento,
   obterProcedimento,
   removerProcedimento,
+  criarFuncao,
+  obterFuncao,
+  listarFuncoes,
+  removerFuncao,
   MASTER,
   SISTEMA,
   EDICOES,

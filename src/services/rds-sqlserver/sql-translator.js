@@ -211,6 +211,7 @@ class SqlTranslator {
       '-1 AS [VolumeFreeSpace]'
     );
     resultado = this._traduzirLiteraisHex(resultado);
+    resultado = this._traduzirLiteraisData(resultado);
     resultado = this._traduzirProcedural(resultado);
     resultado = this._traduzirVariaveisSistema(resultado);
     resultado = this._traduzirConcatenacao(resultado);
@@ -557,6 +558,15 @@ class SqlTranslator {
     return resultado + sql.slice(último);
   }
 
+  /**
+   * Converte o literal de data ODBC `{d '1970-01-01'}` (usado pelo SSMS ao
+   * gerar funcoes) em um literal que o SQLite entenda.
+   * @private
+   */
+  _traduzirLiteraisData(sql) {
+    return sql.replace(/\{\s*d\s*(['"])([\s\S]*?)\1\s*\}/gi, (_todo, _aspas, valor) => `'${valor}'`);
+  }
+
   /** Traduz as variáveis globais do T-SQL para literais SQLite. @private */
   _traduzirVariaveisSistema(sql) {
     return sql
@@ -667,7 +677,22 @@ class SqlTranslator {
     const remocao = new RegExp(`^\\s*DROP\\s+PROC(?:EDURE)?\\s+(?:IF\\s+EXISTS\\s+)?${nome}`, 'i').exec(sql);
     if (remocao) return 'SELECT 1 AS [ProcedureDropped]';
 
-    return sql;
+    // CREATE FUNCTION tambem e DDL de rotina: o DbEngine registra o corpo e a
+    // funcao SQLite antes da traducao. Sem esta regra o validador procedural
+    // rejeitaria o BEGIN...END/RETURN do corpo da funcao.
+    const funcao = new RegExp(`^\\s*(CREATE|ALTER)\\s+(?:OR\\s+ALTER\\s+)?FUNCTION\\s+${nome}`, 'i').exec(sql);
+    if (funcao) {
+      const rotulo = /^alter/i.test(funcao[1]) ? 'FunctionAltered' : 'FunctionCreated';
+      return `SELECT 1 AS [${rotulo}]`;
+    }
+
+    const remocaoFuncao = new RegExp(`^\\s*DROP\\s+FUNCTION\\s+(?:IF\\s+EXISTS\\s+)?${nome}`, 'i').exec(sql);
+    if (remocaoFuncao) return 'SELECT 1 AS [FunctionDropped]';
+
+    // Chamadas a funcoes escalares do usuario chegam como dbo.Nome(...). O
+    // SQLite nao aceita ponto no nome de uma funcao, e a UDF e registrada com
+    // o nome simples.
+    return sql.replace(/\bdbo\s*\.\s*([A-Za-z_]\w*)\s*(?=\()/gi, '$1');
   }
 
   /**
