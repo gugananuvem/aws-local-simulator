@@ -505,25 +505,56 @@ class DbEngine {
    */
   _executarDdlDatabase(sqlBruto) {
     let restante = String(sqlBruto || '');
-    const padrao = /\b(CREATE|DROP)\s+DATABASE\s+(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w]*))/gi;
+    const padrao = /\b(CREATE|DROP)\s+DATABASE\s+(IF\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w]*))/gi;
     let correspondência;
     while ((correspondência = padrao.exec(restante)) !== null) {
       const acao = correspondência[1].toUpperCase();
-      const nome = correspondência[2] || correspondência[3] || correspondência[4];
+      const seExistir = Boolean(correspondência[2]);
+      const nome = correspondência[3] || correspondência[4] || correspondência[5];
       const inicioOpcoes = correspondência.index + correspondência[0].length;
       const fim = this._fimDeclaracaoDatabase(restante, inicioOpcoes);
       if (acao === 'CREATE') {
+        if (this._databaseExiste(nome)) {
+          throw this._erroTsql(1801, 3,
+            `Database '${nome}' already exists. Choose a different database name.`);
+        }
         const opcoes = this._opcoesCreateDatabase(restante.slice(inicioOpcoes, fim));
         this.getOrCreateDatabase(nome);
         this._sincronizarCatalogoDatabase(nome, true, opcoes);
       } else {
-        this._sincronizarCatalogoDatabase(nome, false);
-        this.dropDatabase(nome);
+        if (catalogoSistema.SISTEMA.some((sistema) => sistema.toLowerCase() === nome.toLowerCase())) {
+          throw this._erroTsql(1805, 1,
+            `Cannot drop database "${nome}" because it is a system database.`);
+        }
+        if (!this._databaseExiste(nome)) {
+          if (!seExistir) {
+            throw this._erroTsql(911, 1,
+              `Database '${nome}' does not exist. Make sure that the name is entered correctly.`);
+          }
+        } else {
+          this._sincronizarCatalogoDatabase(nome, false);
+          this.dropDatabase(nome);
+        }
       }
       restante = restante.slice(0, correspondência.index) + restante.slice(fim);
       padrao.lastIndex = correspondência.index;
     }
     return restante;
+  }
+
+  /** Verifica se o database existe em disco ou ja esta aberto neste engine. @private */
+  _databaseExiste(nome) {
+    if (this.databases.has(nome)) return true;
+    return fs.existsSync(path.join(this.dataDir, `${nome}.db`));
+  }
+
+  /** Cria um erro com numero/estado/classe do SQL Server para o token TDS. @private */
+  _erroTsql(numero, state, mensagem) {
+    const erro = new Error(mensagem);
+    erro.number = numero;
+    erro.state = state;
+    erro.class = 16;
+    return erro;
   }
 
   /**

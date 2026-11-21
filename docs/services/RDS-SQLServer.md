@@ -168,7 +168,9 @@ Suporte atual:
   SQL bruto contém `Server_Status`;
 - `CREATE DATABASE` / `DROP DATABASE` são aplicados como efeito no `DbEngine` e removidos do
   lote antes da tradução, com `sys.databases` sincronizado em todos os arquivos abertos e
-  `database_id` único globalmente;
+  `database_id` único globalmente. `CREATE` de database existente retorna erro 1801, `DROP` de
+  database inexistente retorna erro 911 e `DROP` de database de sistema retorna erro 1805;
+  `DROP DATABASE IF EXISTS` é aceito sem erro;
 - subconjunto procedural de inicialização de clientes (ver abaixo).
 
 Limitações do listener: sem TLS, sem Windows/Integrated Auth, sem MARS. A compatibilidade com
@@ -216,9 +218,11 @@ incluem `server_role_members`, `asymmetric_keys`, `certificates`, `credentials`,
 `server_triggers`, `server_assembly_modules`, `server_sql_modules`, `backup_devices`,
 `cryptographic_providers`, `dm_cryptographic_provider_properties`, `syslanguages`,
 `server_permissions`, `sql_logins`, `database_mirroring`, `server_principal_credentials` e
-`dm_os_process_memory`. `sys.databases` expõe collation/containment/acesso/usuário,
-`is_ledger_on` e `is_remote_data_archive_enabled`, com migração automática para databases
-antigos; `sys.server_principals` inclui `create_date`, `modify_date`,
+`dm_os_process_memory`, `database_recovery_status`, `change_tracking_databases` e
+`database_filestream_options`. `sys.databases` expõe collation/containment/acesso/usuário,
+`is_ledger_on`, `is_remote_data_archive_enabled`, as opções ANSI/ANSI-WARNINGS/QUOTED-IDENTIFIER
+e os campos de idioma padrão lidos pelo SMO ao criar um database, com migração automática para
+databases antigos; `sys.server_principals` inclui `create_date`, `modify_date`,
 `default_language_name`, `default_database_name`, `is_fixed_role`, `sa`, `admin` e as roles
 fixas. `database_principals` tem `modify_date`, `authentication_type`, `default_schema_name`,
 `default_language_lcid`, `default_language_name`, `state` e `is_disabled`.
@@ -233,7 +237,8 @@ Funções T-SQL registradas no SQLite (não são interceptadas por regex): `SERV
 `IS_MEMBER`, `DB_ID`, `DB_NAME`, `CONVERT`, `QUOTENAME`, `FULLTEXTSERVICEPROPERTY`,
 `OBJECT_ID`, `HAS_DBACCESS`, `SCHEMA_NAME` (inclusive sem argumentos), `OBJECTPROPERTY`,
 `OBJECTPROPERTYEX`, `COLUMNPROPERTY`, `LOGINPROPERTY`, `COLLATIONPROPERTY`,
-`fn_varbintohexsubstring` e `fn_syspolicy_is_automation_enabled`. `HAS_DBACCESS` devolve `1`
+`DATABASEPROPERTY`/`DATABASEPROPERTYEX`, `fn_varbintohexsubstring` e
+`fn_syspolicy_is_automation_enabled`. `HAS_DBACCESS` devolve `1`
 para os databases de sistema, inclusive `msdb`.
 
 A instância se apresenta como `Standard Edition (64-bit)` / `EngineEdition = 2`.
@@ -249,7 +254,7 @@ A instância se apresenta como `Standard Edition (64-bit)` / `EngineEdition = 2`
 | CTE (`WITH ...`) | Suportado nativamente |
 | `MERGE`, `UPDATE ... JOIN` simples | Reescrita para UPSERT/subquery |
 | `CREATE VIEW`, `CREATE TRIGGER` | Repassados quando o SQLite suporta |
-| `CREATE DATABASE` / `DROP DATABASE` | Aplicados no `DbEngine` e removidos do lote; `sys.databases` sincronizado e `database_id` único |
+| `CREATE DATABASE` / `DROP DATABASE` | Aplicados no `DbEngine` e removidos do lote (inclusive `CONTAINMENT`, `ON PRIMARY`, `LOG ON`, `WITH LEDGER`); `sys.databases` e tabelas de recuperação sincronizadas, `database_id` único |
 | `DECLARE`/`SET` literais e batches com `GO` | Subconjunto straight-line |
 | `sysname` em DDL | Mapeado para `TEXT` |
 | `IF EXISTS (...)` / `IF (...)` com comando simples ou bloco `BEGIN...END` | Condição descartada; corpo executado |

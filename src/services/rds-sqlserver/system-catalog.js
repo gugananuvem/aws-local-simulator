@@ -1298,6 +1298,22 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     String(nome || '').toUpperCase() === 'ISFULLTEXTINSTALLED' ? 0 : null
   );
 
+  // DATABASEPROPERTYEX e usado pelo SMO durante a criacao de database para
+  // determinar Updateability e a data do ultimo DBCC CHECKDB.
+  const databasePropertyEx = (_nome, propriedade) => {
+    const chave = String(propriedade || '').toLowerCase();
+    if (chave === 'updateability') return 'READ_WRITE';
+    if (chave === 'status') return 'ONLINE';
+    if (chave === 'recovery') return 'FULL';
+    if (chave === 'useraccess') return 'MULTI_USER';
+    if (chave === 'collation') return 'SQL_Latin1_General_CP1_CI_AS';
+    if (chave === 'lastgoodcheckdbtime') return '2023-01-01 00:00:00';
+    if (chave === 'isfulltextenabled') return 0;
+    return null;
+  };
+  db.function('DATABASEPROPERTYEX', { varargs: true }, databasePropertyEx);
+  db.function('DATABASEPROPERTY', { varargs: true }, databasePropertyEx);
+
   // COLLATIONPROPERTY e usado pelo SMO para preencher LCID/CodePage/ComparisonStyle.
   db.function('COLLATIONPROPERTY', { varargs: true }, (_colacao, propriedade) => {
     const chave = String(propriedade || '').toUpperCase();

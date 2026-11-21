@@ -141,6 +141,42 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('DROP de database inexistente e CREATE duplicado retornam erro do SQL Server', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      try {
+        comTradutor.execute('master', 'DROP DATABASE Inexistente');
+        throw new Error('DROP DATABASE deveria falhar');
+      } catch (erro) {
+        expect(erro.number).toBe(911);
+        expect(erro.message).toContain("Database 'Inexistente' does not exist");
+      }
+
+      comTradutor.execute('master', 'CREATE DATABASE Duplicado');
+      try {
+        comTradutor.execute('master', 'CREATE DATABASE Duplicado');
+        throw new Error('CREATE DATABASE deveria falhar');
+      } catch (erro) {
+        expect(erro.number).toBe(1801);
+        expect(erro.message).toContain("Database 'Duplicado' already exists");
+      }
+
+      try {
+        comTradutor.execute('master', 'DROP DATABASE master');
+        throw new Error('DROP DATABASE de sistema deveria falhar');
+      } catch (erro) {
+        expect(erro.number).toBe(1805);
+        expect(erro.message).toContain('system database');
+      }
+      comTradutor.execute('master', 'DROP DATABASE IF EXISTS Inexistente');
+      comTradutor.execute('master', 'DROP DATABASE IF EXISTS Duplicado');
+
+      expect(comTradutor.listDatabases()).not.toContain('Duplicado');
+    } finally {
+      comTradutor.close();
+    }
+  });
+
   test('CREATE DATABASE do SMO com opcoes de arquivo e LEDGER', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {

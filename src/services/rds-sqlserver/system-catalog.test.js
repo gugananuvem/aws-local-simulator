@@ -74,6 +74,13 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(resultado.rows).toHaveLength(1);
     expect(resultado.rows[0].is_ansi_null_default_on).toBe(1);
     expect(resultado.rows[0].default_language_lcid).toBe(1033);
+
+    const propriedades = engine.execute('master',
+      "SELECT DATABASEPROPERTYEX('master', 'Updateability') AS u, " +
+      "DATABASEPROPERTYEX('master', 'LastGoodCheckDbTime') AS d"
+    ).rows[0];
+    expect(propriedades.u).toBe('READ_WRITE');
+    expect(propriedades.d).toBe('2023-01-01 00:00:00');
   });
 
   test('aceita a forma master.sys.databases', () => {
