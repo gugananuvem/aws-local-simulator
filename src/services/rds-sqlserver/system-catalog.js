@@ -2385,7 +2385,10 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
   db.function('SUSER_SNAME', { varargs: true }, () => usuario);
   db.function('SUSER_ID', { varargs: true }, () => 1);
   db.function('ORIGINAL_LOGIN', { varargs: true }, () => usuario);
-  db.function('IS_MEMBER', () => 0);
+  db.function('IS_MEMBER', { varargs: true }, () => 0);
+  // PERMISSIONS() e usada pelo Table Designer para decidir se a tabela pode
+  // ser alterada. O usuario do simulador tem permissao total.
+  db.function('PERMISSIONS', { varargs: true }, () => 2147483647);
 
   // SCHEMA_NAME() sem argumentos devolve o schema padrao da sessao (dbo).
   db.function('SCHEMA_NAME', { varargs: true }, (...argumentos) => {

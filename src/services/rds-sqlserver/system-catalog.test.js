@@ -95,6 +95,24 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(propriedades.d).toBe('2023-01-01 00:00:00');
   });
 
+  test('responde a consulta de permissoes do Table Designer', () => {
+    const linha = engine.execute('principal',
+      "SELECT user_name() AS usuario, @@MAX_PRECISION AS precisao, " +
+      "is_member('db_owner') AS membro, permissions() AS permissoes, " +
+      "DatabasePropertyEx(db_name(), N'collation') AS colacao, " +
+      "SERVERPROPERTY('IsFullTextInstalled') AS fulltext, schema_name() AS schema_padrao"
+    ).rows[0];
+    expect(linha).toEqual({
+      usuario: 'dbo',
+      precisao: 38,
+      membro: 0,
+      permissoes: 2147483647,
+      colacao: 'SQL_Latin1_General_CP1_CI_AS',
+      fulltext: 0,
+      schema_padrao: 'dbo'
+    });
+  });
+
   test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {
     const configuracoes = engine.execute('master', `
       SELECT configuration_id, name, value_in_use FROM sys.configurations

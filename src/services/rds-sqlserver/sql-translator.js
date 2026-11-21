@@ -246,6 +246,13 @@ class SqlTranslator {
     resultado = this._normalizarWhitespace(resultado);
     resultado = this._traduzirMetadadosCliente(resultado);
     resultado = this._traduzirTabelasTemporarias(resultado);
+    // #temp nao e descartada automaticamente entre conexoes do simulador.
+    // Recriar garante que umaDependencyWalker executada duas vezes nao ache
+    // "_tmp_tempdep" (erro 2714) nem reaproveite linhas da chamada anterior.
+    resultado = resultado.replace(
+      /\bCREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\b)(_tmp_[A-Za-z_]\w*)/gi,
+      (_, nome) => `DROP TABLE IF EXISTS ${nome}; CREATE TABLE ${nome}`
+    );
     resultado = this._removerPrefixoN(resultado);
     // COLLATE database_default e usado pelo SMO ao montar o catalogo de
     // arquivos. O SQLite nao conhece essa collation e rejeita a consulta toda.
@@ -691,6 +698,9 @@ class SqlTranslator {
   _traduzirVariaveisSistema(sql) {
     return sql
       .replace(/@@MICROSOFTVERSION\b/gi, '268439491')
+      // O Table Designer do SSMS consulta @@MAX_PRECISION para dimensionar
+      // colunas decimais; o SQLite nao reconhece variaveis com @.
+      .replace(/@@MAX_PRECISION\b/gi, '38')
       .replace(/@@SPID\b/gi, '1')
       .replace(/@@TRANCOUNT\b/gi, '0')
       .replace(/@@VERSION\b/gi, "'16.00.4035.2'");
@@ -1129,6 +1139,33 @@ class SqlTranslator {
         tipos[nome] = 'BIT';
       }
       return tipos;
+    }
+
+    // sp_MSdependencies: o Dependency Walker le object_type/relative_type como
+    // Int16 e schema_bound como bool. O SQLite devolve INTN para todos e o SMO
+    // estoura "Specified cast is not valid" ao montar a arvore.
+    if (
+      /\bdeclare\s+@find_referencing_objects\b/i.test(sql) &&
+      /#tempdep/i.test(sql)
+    ) {
+      return {
+        object_id: 'INT',
+        object_name: 'TEXT',
+        object_schema: 'TEXT',
+        object_db: 'TEXT',
+        object_svr: 'TEXT',
+        object_type: 'SMALLINT',
+        relative_id: 'INT',
+        relative_name: 'TEXT',
+        relative_schema: 'TEXT',
+        relative_db: 'TEXT',
+        relative_svr: 'TEXT',
+        relative_type: 'SMALLINT',
+        schema_bound: 'BIT',
+        ptype: 'SMALLINT',
+        pname: 'TEXT',
+        pschema: 'TEXT'
+      };
     }
 
     // O SMO le as opcoes de Query Store com GetByte/GetInt16/GetInt64; sem os
@@ -1847,6 +1884,25 @@ class SqlTranslator {
       return SHIM_PROPRIEDADES_DATABASE;
     }
 
+    // sp_MSdependencies: o Dependency Walker do SMO cria #tempdep com os
+    // objetos de origem e executa esse procedimento de 60 KB cheio de IF/EXEC.
+    // O simulador nao registra dependencias entre objetos, entao manter a
+    // tabela com os objetos de origem e devolver um resultset vazio basta para
+    // montar a arvore sem repetir o batch e sem estourar o erro 2714.
+    if (
+      /\bdeclare\s+@find_referencing_objects\b/i.test(código) &&
+      /#tempdep\b/i.test(código)
+    ) {
+      return (
+        'SELECT objid AS [object_id], objname AS [object_name], ' +
+        "ISNULL(objschema, '') AS [object_schema], objdb AS [object_db], " +
+        "'' AS [object_svr], objtype AS [object_type], 0 AS [relative_id], " +
+        "'' AS [relative_name], '' AS [relative_schema], '' AS [relative_db], " +
+        "'' AS [relative_svr], 0 AS [relative_type], 0 AS [schema_bound], " +
+        "0 AS [ptype], '' AS [pname], '' AS [pschema] FROM #tempdep"
+      );
+    }
+
     // Batch de espaco livre em disco enviado pelo SMO ao montar Filegroups.
     // Ele usa IF/ELSE, CROSS APPLY e um EXEC de procedimento ausente; como a
     // edicao simulada e Standard (2), o valor -1 e o retorno correto.
@@ -2182,7 +2238,7 @@ class SqlTranslator {
     const restanteProcedural =
       /\b(?:WHILE|GOTO|RETURN|THROW|RAISERROR|EXEC|EXECUTE)\b/i.test(código) ||
       /\bIF\b(?!\s+NOT\s+EXISTS\b)/i.test(código) ||
-      /\bBEGIN\b(?!\s+TRAN(?:ACTION)?\b)/i.test(código);
+      /\bBEGIN\b(?!\s+TRAN(?:SACTION)?\b)/i.test(código);
 
     if (restanteProcedural) {
       throw this._badRequest(

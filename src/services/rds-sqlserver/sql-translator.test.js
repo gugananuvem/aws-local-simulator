@@ -480,6 +480,18 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       );
     });
 
+    test('recria temporarias do Dependency Walker entre chamadas', () => {
+      const resultado = translator.translate(
+        'CREATE TABLE #tempdep (objid int NOT NULL, objname sysname NOT NULL)'
+      );
+      expect(resultado).toContain(
+        'DROP TABLE IF EXISTS _tmp_tempdep; CREATE TABLE _tmp_tempdep'
+      );
+      expect(translator.translate(
+        'CREATE TABLE IF NOT EXISTS #tempdep (objid int NOT NULL)'
+      )).toContain('CREATE TABLE IF NOT EXISTS _tmp_tempdep');
+    });
+
     test('reescreve fn_helpcollations() para a tabela do catalogo sys', () => {
       const resultado = translator.translate(
         'SELECT cl.name FROM sys.fn_helpcollations() cl ORDER BY cl.name'
@@ -751,6 +763,28 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(traduzido).toContain("'00000000-0000-0000-0000-000000000000'");
       expect(traduzido).not.toMatch(/#tempbackup/i);
       expect(traduzido).not.toMatch(/\bIF\b|\bBEGIN\b/i);
+    });
+
+    test('substitui o sp_MSdependencies do Dependency Walker', () => {
+      const sql = [
+        'declare @find_referencing_objects int',
+        'set @find_referencing_objects = 1',
+        'create table #t1 (object_id int NULL)',
+        'IF @@OPTIONS & 512 = 0 set nocount on',
+        'insert into #tempdep select objid, objtype from sys.objects'
+      ].join('\n');
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain('FROM _tmp_tempdep');
+      expect(traduzido).toContain('AS [object_id]');
+      expect(traduzido).toContain('AS [relative_id]');
+      expect(traduzido).not.toMatch(/\bIF\b|\bWHILE\b|\bBEGIN\b|\bEXEC\b/i);
+      expect(translator.columnTypesFor(sql)).toMatchObject({
+        object_id: 'INT',
+        object_type: 'SMALLINT',
+        relative_type: 'SMALLINT',
+        schema_bound: 'BIT',
+        ptype: 'SMALLINT'
+      });
     });
 
     test('declara os tipos TDS das colunas que o SMO lê com cast específico', () => {
@@ -1108,6 +1142,9 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       );
       expect(translator.translate('select @@SPID, @@MICROSOFTVERSION, @@TRANCOUNT')).toBe(
         'select 1, 268439491, 0'
+      );
+      expect(translator.translate('SELECT @@MAX_PRECISION AS [MaxPrecision]')).toBe(
+        'SELECT 38 AS [MaxPrecision]'
       );
       expect(translator.translate('SELECT 0x1000000, CAST(0x0001 AS int)')).toBe(
         'SELECT 16777216, CAST(1 AS int)'
@@ -1563,6 +1600,13 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
         expect(erro.code).toBe('BadRequestException');
         expect(erro.message).toMatch(mensagem);
       }
+    });
+
+    test('aceita transacoes usadas pelo Dependency Walker', () => {
+      expect(translator.translate('BEGIN TRANSACTION')).toBe('BEGIN TRANSACTION');
+      expect(translator.translate('BEGIN TRAN')).toBe('BEGIN TRAN');
+      expect(translator.translate('COMMIT TRANSACTION')).toBe('COMMIT TRANSACTION');
+      expect(translator.translate('ROLLBACK TRANSACTION')).toBe('ROLLBACK TRANSACTION');
     });
   });
 });
