@@ -488,7 +488,8 @@ class DbEngine {
     let parametros = Array.isArray(params) ? params : params == null ? [] : [params];
     const restante = this._executarDdlDatabase(sqlBruto);
     const { restante: semDefaults, defaults } = this._executarDefaultsTabela(restante);
-    const semRotinas = this._executarDdlProcedures(semDefaults, db);
+    const { restante: semForeignKeys, foreignKeys } = this._executarForeignKeysTabela(semDefaults);
+    const semRotinas = this._executarDdlProcedures(semForeignKeys, db);
     const semFuncoes = this._executarDdlFunctions(semRotinas, db);
     let sqlTraduzido = this._traduzir(semFuncoes);
     if (parametros.length && this.translator && typeof this.translator.substituirParametros === 'function') {
@@ -503,6 +504,7 @@ class DbEngine {
     const instrucoes = this._dividirEmInstrucoes(sqlTraduzido);
     if (instrucoes.length === 0) {
       this._criarTriggersDefaults(defaults, db);
+      this._persistirForeignKeys(foreignKeys, db);
       if (this._resultadoRotina) {
         const resultado = this._resultadoRotina;
         this._resultadoRotina = null;
@@ -522,6 +524,7 @@ class DbEngine {
     }
 
     this._criarTriggersDefaults(defaults, db);
+    this._persistirForeignKeys(foreignKeys, db);
 
     const primeiroSelect = resultados.find(resultado => resultado.type === 'select');
     if (primeiroSelect) {
@@ -605,6 +608,80 @@ class DbEngine {
     }
 
     return { restante, defaults };
+  }
+
+  /**
+   * ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY nao existe no SQLite. Remove
+   * o comando do lote e guarda a definicao para o catalogo sys.foreign_keys.
+   * @private
+   */
+  _executarForeignKeysTabela(sqlBruto) {
+    let restante = String(sqlBruto || '');
+    const foreignKeys = [];
+    const identificador = '(?:\\[[^\\]]+\\]|"[^"]+"|[A-Za-z_]\\w*)';
+    const padrao = new RegExp(
+      '\\bALTER\\s+TABLE\\s+(?:' + identificador + '\\s*\\.\\s*)*' +
+      '(?<tabela>' + identificador + ')\\s+' +
+      '(?:WITH\\s+(?:CHECK|NOCHECK)\\s+)?ADD\\s+' +
+      '(?:CONSTRAINT\\s+(?<nome>' + identificador + ')\\s+)?' +
+      'FOREIGN\\s+KEY\\s*\\(\\s*(?<coluna>' + identificador + ')\\s*\\)\\s+' +
+      'REFERENCES\\s+(?:' + identificador + '\\s*\\.\\s*)*' +
+      '(?<referenciada>' + identificador + ')\\s*\\(\\s*' +
+      '(?<colunaRef>' + identificador + ')\\s*\\)',
+      'gi'
+    );
+    const limpar = (valor) => String(valor || '')
+      .replace(/^\[(.*)\]$/, '$1')
+      .replace(/^"(.*)"$/, '$1');
+    let correspondência;
+
+    while ((correspondência = padrao.exec(restante)) !== null) {
+      const grupos = correspondência.groups || {};
+      const nomeTabela = limpar(grupos.tabela);
+      const nomeColuna = limpar(grupos.coluna);
+      const nome = limpar(grupos.nome) || `FK_${nomeTabela}_${nomeColuna}`;
+      const chave = {
+        nome,
+        nomeTabela,
+        nomeColuna,
+        nomeReferenciada: limpar(grupos.referenciada),
+        nomeColunaReferenciada: limpar(grupos.colunaRef)
+      };
+      foreignKeys.push(chave);
+
+      restante = restante.slice(0, correspondência.index)
+        + restante.slice(correspondência.index + correspondência[0].length);
+      padrao.lastIndex = correspondência.index;
+    }
+
+    return { restante, foreignKeys };
+  }
+
+  /**
+   * Persiste as FKs extraidas do lote e reconstrói o catálogo sys.foreign_keys.
+   * Chamado depois que o CREATE TABLE das tabelas envolvidas foi executado, para
+   * que a limpeza de FK órfãs da sincronização não remova a definição ainda.
+   * @private
+   */
+  _persistirForeignKeys(foreignKeys, db) {
+    if (!Array.isArray(foreignKeys) || foreignKeys.length === 0) return;
+    const data = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    for (const chave of foreignKeys) {
+      try {
+        db.prepare(`
+          INSERT OR REPLACE INTO main.foreign_key_definitions
+            (name, table_name, column_name, referenced_table, referenced_column,
+             create_date)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          chave.nome, chave.nomeTabela, chave.nomeColuna,
+          chave.nomeReferenciada, chave.nomeColunaReferenciada, data
+        );
+      } catch (erro) {
+        logger.debug(`[RDS SQL Server] Definicao de FK ignorada (${chave.nomeTabela}.${chave.nomeColuna}): ${erro.message}`);
+      }
+    }
+    catalogoSistema.sincronizarCatalogoDatabase(db);
   }
 
   /**

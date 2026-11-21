@@ -722,6 +722,18 @@ const DDL_DATABASE = `
     PRIMARY KEY (table_name, column_name)
   );
 
+  -- ADD CONSTRAINT ... FOREIGN KEY nao altera o DDL do SQLite. Guardamos a
+  -- definicao para reconstruir sys.foreign_keys a cada sincronizacao.
+  CREATE TABLE IF NOT EXISTS foreign_key_definitions (
+    name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    referenced_table TEXT NOT NULL,
+    referenced_column TEXT NOT NULL,
+    create_date DATETIME,
+    PRIMARY KEY (name, table_name, column_name)
+  );
+
   CREATE TABLE IF NOT EXISTS check_constraints (
     name TEXT NOT NULL DEFAULT '',
     object_id INTEGER NOT NULL PRIMARY KEY,
@@ -1052,7 +1064,7 @@ const OBJETOS_DO_CATALOGO = new Set([
   'views', 'system_views', 'synonyms', 'indexes', 'data_spaces', 'types',
   'filegroups', 'database_files', 'all_columns', 'columns',
   'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
-  'default_constraints', 'default_definitions', 'check_constraints', 'edge_constraints', 'index_resumable_operations', 'index_columns', 'computed_columns', 'identity_columns',
+  'default_constraints', 'default_definitions', 'foreign_key_definitions', 'check_constraints', 'edge_constraints', 'index_resumable_operations', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_keys', 'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
@@ -1927,6 +1939,10 @@ function sincronizarCatalogoDatabase(db, dbName) {
       .all()
       .map((linha) => [`${linha.table_name}\u0000${linha.column_name}`, linha])
   );
+  const foreignKeysPersistentes = db.prepare(`
+    SELECT name, table_name, column_name, referenced_table, referenced_column
+    FROM main.foreign_key_definitions
+  `).all();
 
   for (const tabela of [
     'objects', 'tables', 'all_views', 'synonyms', 'indexes', 'all_columns',
@@ -2005,6 +2021,24 @@ function sincronizarCatalogoDatabase(db, dbName) {
       (name, object_id, schema_id, principal_id, type, type_desc, create_date,
        parent_object_id)
     VALUES (?, ?, 1, 1, 'D', 'DEFAULT_CONSTRAINT', ?, ?)
+  `);
+  const inserirForeignKey = db.prepare(`
+    INSERT INTO main.foreign_keys
+      (name, object_id, parent_object_id, referenced_object_id, is_not_trusted,
+       is_system_named)
+    VALUES (?, ?, ?, ?, 0, 0)
+  `);
+  const inserirObjetoForeignKey = db.prepare(`
+    INSERT INTO main.objects
+      (name, object_id, schema_id, principal_id, type, type_desc, create_date,
+       parent_object_id)
+    VALUES (?, ?, 1, 1, 'F', 'FOREIGN_KEY_CONSTRAINT', ?, ?)
+  `);
+  const inserirColunaForeignKey = db.prepare(`
+    INSERT INTO main.foreign_key_columns
+      (constraint_object_id, constraint_column_id, parent_object_id,
+       parent_column_id, referenced_object_id, referenced_column_id)
+    VALUES (?, 1, ?, ?, ?, ?)
   `);
   const inserirIndice = db.prepare(`
     INSERT INTO main.indexes
@@ -2203,6 +2237,35 @@ function sincronizarCatalogoDatabase(db, dbName) {
     }
   }
 
+  // ADD CONSTRAINT ... FOREIGN KEY nao muda o DDL do SQLite. Reinserimos as
+  // definicoes persistidas no catalogo para que o SMO veja a dependencia.
+  foreignKeysPersistentes.forEach((chave, indice) => {
+    const tabela = db.prepare(
+      'SELECT object_id FROM main.tables WHERE name = ?'
+    ).get(chave.table_name);
+    const referenciada = db.prepare(
+      'SELECT object_id FROM main.tables WHERE name = ?'
+    ).get(chave.referenced_table);
+    if (!tabela || !referenciada) return;
+    const coluna = db.prepare(
+      'SELECT column_id FROM main.all_columns WHERE object_id = ? AND name = ?'
+    ).get(tabela.object_id, chave.column_name);
+    const colunaReferenciada = db.prepare(
+      'SELECT column_id FROM main.all_columns WHERE object_id = ? AND name = ?'
+    ).get(referenciada.object_id, chave.referenced_column);
+    if (!coluna || !colunaReferenciada) return;
+
+    const objectId = 910000000 + tabela.object_id * 1000 + indice;
+    inserirForeignKey.run(
+      chave.name, objectId, tabela.object_id, referenciada.object_id
+    );
+    inserirObjetoForeignKey.run(chave.name, objectId, data, tabela.object_id);
+    inserirColunaForeignKey.run(
+      objectId, tabela.object_id, coluna.column_id,
+      referenciada.object_id, colunaReferenciada.column_id
+    );
+  });
+
   // Views de sistema no schema sys: aparecem na pasta "System Views" do SSMS
   // e permitem inspecionar as colunas de cada catalogo com SELECT.
   db.prepare(`INSERT OR IGNORE INTO main.schemas (name, schema_id, principal_id) VALUES ('sys', 4, 4)`).run();
@@ -2253,6 +2316,11 @@ function sincronizarCatalogoDatabase(db, dbName) {
   db.prepare(`
     DELETE FROM main.default_definitions
     WHERE table_name NOT IN (SELECT name FROM main.tables)
+  `).run();
+  db.prepare(`
+    DELETE FROM main.foreign_key_definitions
+    WHERE table_name NOT IN (SELECT name FROM main.tables)
+       OR referenced_table NOT IN (SELECT name FROM main.tables)
   `).run();
 
   restaurarProcedimentos(db, rotinasSalvas, parametrosSalvos);

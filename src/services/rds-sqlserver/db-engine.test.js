@@ -446,6 +446,49 @@ describe('DbEngine (RDS SQL Server)', () => {
     }
   });
 
+  test('registra ADD CONSTRAINT FOREIGN KEY do script do SSMS', () => {
+    const comTradutor = new DbEngine(dataDir, new SqlTranslator());
+    try {
+      comTradutor.execute('principal', `
+        CREATE TABLE [dbo].[TB001] ([Id] [nvarchar](21) NOT NULL PRIMARY KEY);
+        CREATE TABLE [dbo].[TB051] ([Id] [nvarchar](21) NOT NULL, [IdUsuario] [nvarchar](21) NULL);
+        ALTER TABLE [dbo].[TB051] WITH CHECK ADD CONSTRAINT [FK051_001_1]
+          FOREIGN KEY([IdUsuario]) REFERENCES [dbo].[TB001] ([Id]);
+      `);
+
+      const chaves = comTradutor.execute('principal', `
+        SELECT fk.name, tp.name AS tabela, rt.name AS referenciada,
+               cp.name AS coluna, cr.name AS coluna_referenciada
+        FROM sys.foreign_keys AS fk
+        JOIN sys.tables AS tp ON tp.object_id = fk.parent_object_id
+        JOIN sys.tables AS rt ON rt.object_id = fk.referenced_object_id
+        JOIN sys.foreign_key_columns AS col
+          ON col.constraint_object_id = fk.object_id
+        JOIN sys.all_columns AS cp
+          ON cp.object_id = col.parent_object_id AND cp.column_id = col.parent_column_id
+        JOIN sys.all_columns AS cr
+          ON cr.object_id = col.referenced_object_id AND cr.column_id = col.referenced_column_id
+      `).rows;
+      expect(chaves).toEqual([{
+        name: 'FK051_001_1',
+        tabela: 'TB051',
+        referenciada: 'TB001',
+        coluna: 'IdUsuario',
+        coluna_referenciada: 'Id'
+      }]);
+
+      catalogoSistema.sincronizarCatalogoDatabase(comTradutor.getOrCreateDatabase('principal'));
+      const reaparecidas = comTradutor.execute('principal',
+        'SELECT name FROM sys.foreign_keys'
+      ).rows;
+      expect(reaparecidas).toEqual([{ name: 'FK051_001_1' }]);
+    } finally {
+      comTradutor.execute('principal', 'DROP TABLE IF EXISTS [TB051]');
+      comTradutor.execute('principal', 'DROP TABLE IF EXISTS [TB001]');
+      comTradutor.close();
+    }
+  });
+
   test('lote de refresh do SSMS retorna os databases de usuario apos CREATE', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     try {
