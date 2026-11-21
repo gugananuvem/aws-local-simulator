@@ -21,6 +21,12 @@
 const EXPRESSAO_NEWID =
   "lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(6)))";
 
+// SELECT simplificado usado no batch de propriedades de database do SMO.
+// O batch original cria tabelas temporarias e usa tabelas de DMV ausentes no
+// simulador; esta versao preserva as 144 colunas e le os valores reais de
+// sys.databases, substituindo apenas as dependencias indisponiveis.
+const SHIM_PROPRIEDADES_DATABASE = "SELECT dtb.name AS [Name], 0 AS [ActiveConnections], dtb.is_auto_close_on AS [AutoClose], dtb.is_auto_shrink_on AS [AutoShrink], dtb.compatibility_level AS [CompatibilityLevel], dtb.create_date AS [CreateDate], CAST(0 AS float) AS [DataSpaceUsage], CAST(0 AS bit) AS [DboLogin], N'' AS [DefaultFileGroup], '' AS [DefaultSchema], dtb.database_id AS [ID], CAST(0 AS float) AS [IndexSpaceUsage], CAST(has_dbaccess(dtb.name) AS bit) AS [IsAccessible], CAST(0 AS bit) AS [IsDbAccessAdmin], CAST(0 AS bit) AS [IsDbBackupOperator], CAST(0 AS bit) AS [IsDbDatareader], CAST(0 AS bit) AS [IsDbDatawriter], CAST(0 AS bit) AS [IsDbDdlAdmin], CAST(0 AS bit) AS [IsDbDenyDatareader], CAST(0 AS bit) AS [IsDbDenyDatawriter], CAST(0 AS bit) AS [IsDbOwner], CAST(0 AS bit) AS [IsDbSecurityAdmin], dtb.is_fulltext_enabled AS [IsFullTextEnabled], CAST(case when NULL is null then 0 else 1 end AS bit) AS [IsMirroringEnabled], CAST( case when SERVERPROPERTY('EngineEdition') = 6 then cast(1 as bit) else cast(0 as bit) end AS bit) AS [IsSqlDw], CAST(case when dtb.name in ('master','model','msdb','tempdb') then 1 else dtb.is_distributor end AS bit) AS [IsSystemObject], ISNULL(suser_sname(dtb.owner_sid),'') AS [Owner], ISNULL(df.physical_name, N'') AS [PrimaryFilePath], (dtb.is_published*1+dtb.is_subscribed*2+dtb.is_merge_published*4) AS [ReplicationOptions], CAST(0 AS float) AS [Size], CAST(0 AS float) AS [SpaceAvailable], case when dtb.collation_name is null then 0x200 else 0 end | case when 1 = dtb.is_in_standby then 0x40 else 0 end | case dtb.state when 1 then 0x2 when 2 then 0x8 when 3 then 0x4 when 4 then 0x10 when 5 then 0x100 when 6 then 0x20 else 1 end AS [Status], '' AS [UserName], dtb.is_ansi_null_default_on AS [AnsiNullDefault], dtb.is_ansi_nulls_on AS [AnsiNullsEnabled], dtb.is_ansi_padding_on AS [AnsiPaddingEnabled], dtb.is_ansi_warnings_on AS [AnsiWarningsEnabled], dtb.is_arithabort_on AS [ArithmeticAbortEnabled], dtb.is_auto_create_stats_on AS [AutoCreateStatisticsEnabled], dtb.is_auto_update_stats_on AS [AutoUpdateStatisticsEnabled], CAST( case when CHARINDEX(N'_CS_', dtb.collation_name) > 0 then 1 when CHARINDEX(N'_BIN', dtb.collation_name) > 0 then 1 else 0 end AS bit) AS [CaseSensitive], dtb.is_cursor_close_on_commit_on AS [CloseCursorsOnCommitEnabled], dtb.collation_name AS [Collation], dtb.is_concat_null_yields_null_on AS [ConcatenateNullYieldsNull], dtb.is_db_chaining_on AS [DatabaseOwnershipChaining], CAST(( case LOWER(convert( nvarchar(128), DATABASEPROPERTYEX(dtb.name, 'Updateability'))) when 'read_write' then 1 else 0 end) AS bit) AS [IsUpdateable], NULL AS [LastBackupDate], NULL AS [LastDifferentialBackupDate], CAST(ISNULL(DATABASEPROPERTYEX(dtb.name, 'lastgoodcheckdbtime'), 0) AS datetime) AS [LastGoodCheckDbTime], NULL AS [LastLogBackupDate], dtb.is_local_cursor_default AS [LocalCursorsDefault], dtb.is_numeric_roundabort_on AS [NumericRoundAbortEnabled], dtb.page_verify_option AS [PageVerify], dtb.is_quoted_identifier_on AS [QuotedIdentifiersEnabled], dtb.is_read_only AS [ReadOnly], dtb.recovery_model AS [RecoveryModel], dtb.is_recursive_triggers_on AS [RecursiveTriggersEnabled], dtb.user_access AS [UserAccess], CAST(DATABASEPROPERTYEX(dtb.name, 'Version') AS int) AS [Version], dtb.is_auto_update_stats_async_on AS [AutoUpdateStatisticsAsync], dtb.is_broker_enabled AS [BrokerEnabled], drs.database_guid AS [DatabaseGuid], ISNULL(DB_NAME(dtb.source_database_id), N'') AS [DatabaseSnapshotBaseName], dtb.is_date_correlation_on AS [DateCorrelationOptimization], ISNULL(N'',N'') AS [DefaultFullTextCatalog], CAST((case when drs.last_log_backup_lsn is not null then 1 else 0 end) AS bit) AS [HasFullBackup], CAST(isnull(dtb.source_database_id, 0) AS bit) AS [IsDatabaseSnapshot], CAST(0 AS bit) AS [IsDatabaseSnapshotBase], 0 AS [IsMailHost], dtb.is_parameterization_forced AS [IsParameterizationForced], dtb.is_read_committed_snapshot_on AS [IsReadCommittedSnapshotOn], CAST(0 AS bit) AS [IsVarDecimalStorageFormatEnabled], ISNULL(dtb.log_reuse_wait,0) AS [LogReuseWaitStatus], ISNULL(0,0) AS [MirroringFailoverLogSequenceNumber], ISNULL(dmi.mirroring_guid,'00000000-0000-0000-0000-000000000000') AS [MirroringID], ISNULL(NULL,'') AS [MirroringPartner], ISNULL(N'','') AS [MirroringPartnerInstance], ISNULL((case N'UNLIMITED' when N'UNLIMITED' then 0 else 0 end),0) AS [MirroringRedoQueueMaxSize], ISNULL(dmi.mirroring_role,0) AS [MirroringRole], ISNULL(0,0) AS [MirroringRoleSequence], ISNULL(0 + 1, 0) AS [MirroringSafetyLevel], ISNULL(0,0) AS [MirroringSafetySequence], ISNULL(dmi.mirroring_state + 1, 0) AS [MirroringStatus], ISNULL(0,0) AS [MirroringTimeout], ISNULL(N'','') AS [MirroringWitness], ISNULL(dmi.mirroring_witness_state + 1, 0) AS [MirroringWitnessStatus], drs.recovery_fork_guid AS [RecoveryForkGuid], dtb.service_broker_guid AS [ServiceBrokerGuid], dtb.snapshot_isolation_state AS [SnapshotIsolationState], dtb.is_trustworthy_on AS [Trustworthy], CAST(ISNULL(ctb.is_auto_cleanup_on,0) AS bit) AS [ChangeTrackingAutoCleanUp], CAST(case when ctb.database_id is null then 0 else 1 end AS bit) AS [ChangeTrackingEnabled], ISNULL(ctb.retention_period,0) AS [ChangeTrackingRetentionPeriod], CAST(ISNULL(ctb.retention_period_units,0) AS tinyint) AS [ChangeTrackingRetentionPeriodUnits], N'' AS [DefaultFileStreamFileGroup], CAST(dtb.is_encrypted AS bit) AS [EncryptionEnabled], CAST(0 AS bit) AS [HasDatabaseEncryptionKey], CAST(dtb.is_honor_broker_priority_on AS bit) AS [HonorBrokerPriority], CAST(0 AS bit) AS [IsManagementDataWarehouse], case when 1=(SELECT CONVERT(bit, current_value) FROM msdb.dbo.syspolicy_configuration WHERE name = 'Enabled') and exists (select * from msdb.dbo.syspolicy_system_health_state where target_query_expression_with_id like 'Server'+ '/Database\\[@ID=' + convert(nvarchar(20),dtb.database_id) + '\\]%' ESCAPE '\\') then 1 else 0 end AS [PolicyHealthState], NULL AS [AvailabilityDatabaseSynchronizationState], dtb.containment AS [ContainmentType], dtb.default_fulltext_language_lcid AS [DefaultFullTextLanguageLcid], ISNULL(dtb.default_fulltext_language_name,N'') AS [DefaultFullTextLanguageName], dtb.default_language_lcid AS [DefaultLanguageLcid], dtb.default_language_name AS [DefaultLanguageName], ISNULL(fsopt.directory_name , N'') AS [FilestreamDirectoryName], ISNULL(fsopt.non_transacted_access , 0) AS [FilestreamNonTransactedAccess], CAST(dtb.is_nested_triggers_on AS bit) AS [NestedTriggersEnabled], dtb.target_recovery_time_in_seconds AS [TargetRecoveryTime], CAST(dtb.is_transform_noise_words_on AS bit) AS [TransformNoiseWords], dtb.two_digit_year_cutoff AS [TwoDigitYearCutoff], dtb.is_auto_create_stats_incremental_on AS [AutoCreateIncrementalStatisticsEnabled], dtb.delayed_durability AS [DelayedDurability], 0 AS [HasFileInCloud], 0 AS [HasMemoryOptimizedObjects], CAST(0 AS float) AS [MemoryAllocatedToMemoryOptimizedObjectsInKB], CAST(0 AS float) AS [MemoryUsedByMemoryOptimizedObjectsInKB], 0 AS [LegacyCardinalityEstimation], 2 AS [LegacyCardinalityEstimationForSecondary], 0 AS [MaxDop], NULL AS [MaxDopForSecondary], 0 AS [ParameterSniffing], 2 AS [ParameterSniffingForSecondary], 0 AS [QueryOptimizerHotfixes], 2 AS [QueryOptimizerHotfixesForSecondary], NULL AS [RemoteDataArchiveCredential], CAST(dtb.is_remote_data_archive_enabled AS bit) AS [RemoteDataArchiveEnabled], NULL AS [RemoteDataArchiveEndpoint], NULL AS [RemoteDataArchiveLinkedServer], 0 AS [RemoteDataArchiveUseFederatedServiceAccount], NULL AS [RemoteDatabaseName], CAST(dtb.is_accelerated_database_recovery_on AS bit) AS [AcceleratedRecoveryEnabled], dtb.catalog_collation_type AS [CatalogCollation], N'' AS [PersistentVersionStoreFileGroup], 0 AS [PersistentVersionStoreSizeKB], CAST(ISNULL(dtb.is_ledger_on, 0) AS bit) AS [IsLedger], dtb.name AS [DatabaseName], dtb.name AS [DatabaseName2], dtb.containment AS [ContainmentType2], dtb.name AS [DatabaseName3], dtb.name AS [DatabaseName4], dtb.name AS [DatabaseName5], dtb.name AS [DatabaseName6] FROM master.sys.databases AS dtb LEFT OUTER JOIN sys.database_mirroring AS dmi ON dmi.database_id = dtb.database_id LEFT OUTER JOIN sys.master_files AS df ON df.database_id = dtb.database_id and 1=df.data_space_id and 1 = df.file_id LEFT OUTER JOIN sys.database_recovery_status AS drs ON drs.database_id = dtb.database_id LEFT OUTER JOIN sys.change_tracking_databases AS ctb ON ctb.database_id = dtb.database_id LEFT OUTER JOIN sys.database_filestream_options AS fsopt ON fsopt.database_id = dtb.database_id WHERE (dtb.name=@_msparam_3)";
+
 // Tipos convertidos somente dentro de CREATE TABLE / ALTER TABLE.
 // A ordem importa: formas mais específicas vêm primeiro.
 const TIPOS_DDL = [
@@ -170,6 +176,25 @@ class SqlTranslator {
     resultado = resultado.replace(
       /\b(?:sys\s*\.\s*)?fn_helpcollations\s*\(\s*\)/gi,
       'sys.fn_helpcollations'
+    );
+    // dm_io_virtual_file_stats e uma table-valued function; o SMO chama com
+    // DEFAULT para "todos os databases/arquivos". No simulador ela e uma
+    // tabela comum do catalogo master anexado como schema sys.
+    resultado = resultado.replace(
+      /\bdm_io_virtual_file_stats\s*\(\s*(?:default|-?\d+)\s*,\s*(?:default|-?\d+)\s*\)/gi,
+      'dm_io_virtual_file_stats'
+    );
+    // O SMO usa um GUID com 32 zeros como default, invalido para o tipo
+    // uniqueidentifier do TDS (o formato correto tem 12 digitos no ultimo grupo).
+    resultado = resultado.replace(
+      /'00000000-0000-0000-0000-0000000000000000'/g,
+      "'00000000-0000-0000-0000-000000000000'"
+    );
+    // VolumeFreeSpace e lido pelo SMO com GetInt64(); NULL estoura
+    // "Data is Null. This method or property cannot be called on Null values".
+    resultado = resultado.replace(
+      /\bnull\s+AS\s+\[VolumeFreeSpace\]/gi,
+      '-1 AS [VolumeFreeSpace]'
     );
     resultado = this._traduzirLiteraisHex(resultado);
     resultado = this._traduzirProcedural(resultado);
@@ -414,6 +439,15 @@ class SqlTranslator {
         '\\bSET\\s+DEADLOCK_PRIORITY\\s+(?:LOW|NORMAL|HIGH|-?\\d+)\\b|' +
         '\\bSET\\s+TRANSACTION\\s+ISOLATION\\s+LEVEL\\s+' +
         '(?:READ\\s+(?:UNCOMMITTED|COMMITTED|REPEATABLE|SNAPSHOT)|SERIALIZABLE)\\b',
+      () => ''
+    );
+
+    // O SMO as vezes prefixa a consulta com `use [master];` no mesmo batch.
+    // O DbEngine ja trocou o database pela conexao, e o SQLite nao entende USE.
+    // So removemos quando ha ponto e virgula: `use [model]` sozinho e tratado
+    // pelo DbEngine como comando de troca de contexto.
+    resultado = resultado.replace(
+      /\buse\s+\[?[A-Za-z_]\w*\]?\s*;/gi,
       () => ''
     );
 
@@ -863,6 +897,205 @@ class SqlTranslator {
 
     const código = this._mascarar(sql).code;
 
+    // Batch de propriedades do database (#tempbackup): o SQLite nao preserva
+    // CAST/DECLARE, então declara-se tipo por tipo para o SMO nao estourar
+    // "Specified cast is not valid" ao ler bools, datas, floats e GUIDs.
+    if (/\bcreate\s+table\s+#tempbackup\b/i.test(sql)) {
+      return {
+        Name: 'TEXT',
+        ID: 'INT',
+        Status: 'INT',
+        Owner: 'TEXT',
+        PrimaryFilePath: 'TEXT',
+        UserName: 'TEXT',
+        DatabaseName: 'TEXT',
+        DatabaseName2: 'TEXT',
+        DatabaseName3: 'TEXT',
+        DatabaseName4: 'TEXT',
+        DatabaseName5: 'TEXT',
+        DatabaseName6: 'TEXT',
+        Collation: 'TEXT',
+        DefaultFileGroup: 'TEXT',
+        DefaultSchema: 'TEXT',
+        DefaultFullTextCatalog: 'TEXT',
+        DatabaseSnapshotBaseName: 'TEXT',
+        MirroringPartner: 'TEXT',
+        MirroringPartnerInstance: 'TEXT',
+        MirroringWitness: 'TEXT',
+        DefaultFileStreamFileGroup: 'TEXT',
+        FilestreamDirectoryName: 'TEXT',
+        RemoteDataArchiveCredential: 'TEXT',
+        RemoteDataArchiveEndpoint: 'TEXT',
+        RemoteDataArchiveLinkedServer: 'TEXT',
+        RemoteDatabaseName: 'TEXT',
+        PersistentVersionStoreFileGroup: 'TEXT',
+        DatabaseGuid: 'UNIQUEIDENTIFIER',
+        MirroringID: 'UNIQUEIDENTIFIER',
+        RecoveryForkGuid: 'UNIQUEIDENTIFIER',
+        ServiceBrokerGuid: 'UNIQUEIDENTIFIER',
+        CreateDate: 'DATETIME',
+        LastBackupDate: 'DATETIME',
+        LastDifferentialBackupDate: 'DATETIME',
+        LastGoodCheckDbTime: 'DATETIME',
+        LastLogBackupDate: 'DATETIME',
+        DataSpaceUsage: 'FLOAT',
+        IndexSpaceUsage: 'FLOAT',
+        Size: 'FLOAT',
+        SpaceAvailable: 'FLOAT',
+        MemoryAllocatedToMemoryOptimizedObjectsInKB: 'FLOAT',
+        MemoryUsedByMemoryOptimizedObjectsInKB: 'FLOAT',
+        PersistentVersionStoreSizeKB: 'FLOAT',
+        MirroringFailoverLogSequenceNumber: 'BIGINT',
+        MirroringRedoQueueMaxSize: 'BIGINT',
+        MirroringRoleSequence: 'BIGINT',
+        MirroringSafetySequence: 'BIGINT',
+        MirroringTimeout: 'INT',
+        CompatibilityLevel: 'INT',
+        ActiveConnections: 'INT',
+        ReplicationOptions: 'INT',
+        Version: 'INT',
+        LogReuseWaitStatus: 'INT',
+        MirroringRole: 'INT',
+        MirroringSafetyLevel: 'INT',
+        MirroringStatus: 'INT',
+        MirroringWitnessStatus: 'INT',
+        SnapshotIsolationState: 'INT',
+        ChangeTrackingRetentionPeriod: 'INT',
+        ChangeTrackingRetentionPeriodUnits: 'TINYINT',
+        FilestreamNonTransactedAccess: 'INT',
+        TargetRecoveryTime: 'INT',
+        TwoDigitYearCutoff: 'INT',
+        DelayedDurability: 'TINYINT',
+        LegacyCardinalityEstimation: 'INT',
+        LegacyCardinalityEstimationForSecondary: 'INT',
+        MaxDop: 'INT',
+        MaxDopForSecondary: 'INT',
+        ParameterSniffing: 'INT',
+        ParameterSniffingForSecondary: 'INT',
+        QueryOptimizerHotfixes: 'INT',
+        QueryOptimizerHotfixesForSecondary: 'INT',
+        CatalogCollation: 'INT',
+        PolicyHealthState: 'INT',
+        AvailabilityDatabaseSynchronizationState: 'INT',
+        ContainmentType: 'INT',
+        ContainmentType2: 'INT',
+        DefaultFullTextLanguageLcid: 'INT',
+        DefaultLanguageLcid: 'INT',
+        RemoteDataArchiveUseFederatedServiceAccount: 'BIT',
+        HasFileInCloud: 'BIT',
+        HasMemoryOptimizedObjects: 'BIT',
+        AutoClose: 'BIT',
+        AutoShrink: 'BIT',
+        DboLogin: 'BIT',
+        IsAccessible: 'BIT',
+        IsDbAccessAdmin: 'BIT',
+        IsDbBackupOperator: 'BIT',
+        IsDbDatareader: 'BIT',
+        IsDbDatawriter: 'BIT',
+        IsDbDdlAdmin: 'BIT',
+        IsDbDenyDatareader: 'BIT',
+        IsDbDenyDatawriter: 'BIT',
+        IsDbOwner: 'BIT',
+        IsDbSecurityAdmin: 'BIT',
+        IsFullTextEnabled: 'BIT',
+        IsMirroringEnabled: 'BIT',
+        IsSqlDw: 'BIT',
+        IsSystemObject: 'BIT',
+        AnsiNullDefault: 'BIT',
+        AnsiNullsEnabled: 'BIT',
+        AnsiPaddingEnabled: 'BIT',
+        AnsiWarningsEnabled: 'BIT',
+        ArithmeticAbortEnabled: 'INT',
+        AutoCreateStatisticsEnabled: 'BIT',
+        AutoUpdateStatisticsEnabled: 'BIT',
+        CaseSensitive: 'BIT',
+        CloseCursorsOnCommitEnabled: 'BIT',
+        ConcatenateNullYieldsNull: 'BIT',
+        DatabaseOwnershipChaining: 'BIT',
+        IsUpdateable: 'BIT',
+        LocalCursorsDefault: 'INT',
+        NumericRoundAbortEnabled: 'BIT',
+        PageVerify: 'INT',
+        QuotedIdentifiersEnabled: 'BIT',
+        ReadOnly: 'BIT',
+        RecoveryModel: 'INT',
+        RecursiveTriggersEnabled: 'BIT',
+        UserAccess: 'INT',
+        AutoUpdateStatisticsAsync: 'BIT',
+        BrokerEnabled: 'INT',
+        DateCorrelationOptimization: 'INT',
+        HasFullBackup: 'BIT',
+        IsDatabaseSnapshot: 'BIT',
+        IsDatabaseSnapshotBase: 'BIT',
+        IsMailHost: 'BIT',
+        IsParameterizationForced: 'BIT',
+        IsReadCommittedSnapshotOn: 'BIT',
+        IsVarDecimalStorageFormatEnabled: 'BIT',
+        Trustworthy: 'BIT',
+        ChangeTrackingAutoCleanUp: 'BIT',
+        ChangeTrackingEnabled: 'BIT',
+        EncryptionEnabled: 'BIT',
+        HasDatabaseEncryptionKey: 'BIT',
+        HonorBrokerPriority: 'BIT',
+        IsManagementDataWarehouse: 'BIT',
+        DefaultFullTextLanguageName: 'INT',
+        DefaultLanguageName: 'INT',
+        NestedTriggersEnabled: 'BIT',
+        TransformNoiseWords: 'BIT',
+        AutoCreateIncrementalStatisticsEnabled: 'BIT',
+        RemoteDataArchiveEnabled: 'BIT',
+        AcceleratedRecoveryEnabled: 'BIT',
+        IsLedger: 'BIT',
+      };
+    }
+
+    // Diversas propriedades sao lidas pelo SMO com tipos especificos. Essas
+    // regras precisam vir ANTES das regras genericas de sys.databases e
+    // sys.filegroups, que casam primeiro e nao incluem essas colunas.
+    if (/\bNumberOfDisk(?:Reads|Writes)\b/i.test(sql)) {
+      const tipos = {};
+      if (/\bNumberOfDiskReads\b/i.test(sql)) tipos.NumberOfDiskReads = 'BIGINT';
+      if (/\bNumberOfDiskWrites\b/i.test(sql)) tipos.NumberOfDiskWrites = 'BIGINT';
+      return tipos;
+    }
+    if (/\bVolumeFreeSpace\b/i.test(sql)) {
+      return { VolumeFreeSpace: 'BIGINT' };
+    }
+    if (/\bfreebytes\b/i.test(sql)) {
+      return { freebytes: 'BIGINT' };
+    }
+    if (/\bIsDatabaseSnapshotBase\b/i.test(sql)) {
+      return { IsDatabaseSnapshotBase: 'BIT' };
+    }
+    if (/\bMirroringID\b/i.test(sql)) {
+      return { MirroringID: 'UNIQUEIDENTIFIER' };
+    }
+
+    // IsXTPSupported vem de SERVERPROPERTY/CASE como INT no SQLite; o SMO le
+    // essa propriedade com GetBoolean() e estoura "Specified cast is not valid".
+    if (/\bIsXTPSupported\b/i.test(sql)) {
+      return { IsXTPSupported: 'BIT' };
+    }
+
+    // PhysicalMemoryUsageInKB e lido pelo SMO como Int64; o SELECT devolve INT
+    // do SQLite, que chega como Int32 e quebra o cast.
+    if (/\bPhysicalMemoryUsageInKB\b/i.test(sql)) {
+      return { PhysicalMemoryUsageInKB: 'BIGINT' };
+    }
+
+    // O getter de Database.Size do SMO faz varias consultas auxiliares. O SUM
+    // no SQLite devolve 0 como Int32, mas o SMO chama GetDouble(); sem o tipo
+    // explicito o cast estoura "Specified cast is not valid".
+    if (/\b(?:DbSize|LogSize|SpaceAvailable|DataSpaceUsage|IndexSpaceUsage)\b/i.test(sql)) {
+      return {
+        DbSize: 'FLOAT',
+        LogSize: 'FLOAT',
+        SpaceAvailable: 'FLOAT',
+        DataSpaceUsage: 'FLOAT',
+        IndexSpaceUsage: 'FLOAT'
+      };
+    }
+
     // No SQL Server, IsSingleUser/IsXTPSupported/IsFullTextInstalled e
     // IsContainedAuthentication vêm de SERVERPROPERTY/CASE como INT — forçar
     // BIT aqui faria o SMO lançar "Specified cast is not valid" ao ler Int32.
@@ -1048,6 +1281,9 @@ class SqlTranslator {
 
     if (/\b(?:master\.)?sys\.databases\b/i.test(código)) {
       return {
+        // O SMO consulta [Size] isoladamente com CAST(0 AS float); sem o tipo
+        // explicito o valor 0 chega como INTN e GetDouble() estoura o cast.
+        Size: 'FLOAT',
         State: 'TINYINT',
         Database_Status: 'INT',
         Database_CompatibilityLevel: 'INT',
@@ -1120,6 +1356,35 @@ class SqlTranslator {
    */
   _traduzirMetadadosCliente(sql) {
     const código = this._mascarar(sql).code;
+
+    // Batch de propriedades do database enviado pelo SMO ao abrir o New
+    // Database. Usa tabelas temporarias (#tempbackup), DMVs de HADR e
+    // procedimentos internos que nao existem no simulador; o shim abaixo
+    // devolve as mesmas colunas lendo os valores reais de sys.databases.
+    if (
+      /\bcreate\s+table\s+#tempbackup\b/i.test(código) &&
+      /\bbackup_finish_date\b/i.test(sql)
+    ) {
+      // O SMO tambem consulta cada data de backup isoladamente, passando o
+      // tipo de backup e o nome do database (2 parametros). O shim completo
+      // espera apenas 1 parametro, por isso essas consultas precisam de um
+      // resultset proprio com a unica coluna pedida.
+      const data = /\bAS\s+\[(Last(?:Backup|DifferentialBackup|Log)Date)\]/i.exec(sql);
+      if (data) {
+        // Consome os 2 parametros (@_msparam_0 = tipo, @_msparam_1 = database)
+        // para o better-sqlite3 nao reclamar "Too many parameter values were
+        // provided". O filtro 1=1 garante uma linha com a coluna pedida.
+        return `SELECT NULL AS [${data[1]}] FROM (SELECT @_msparam_0 AS [t], @_msparam_1 AS [d]) WHERE 1=1`;
+      }
+      return SHIM_PROPRIEDADES_DATABASE;
+    }
+
+    // Batch de espaco livre em disco enviado pelo SMO ao montar Filegroups.
+    // Ele usa IF/ELSE, CROSS APPLY e um EXEC de procedimento ausente; como a
+    // edicao simulada e Standard (2), o valor -1 e o retorno correto.
+    if (/\bcreate\s+table\s+#tempspace\b/i.test(código)) {
+      return 'SELECT -1 AS [freebytes]';
+    }
 
     // Batch completo de propriedades do Server enviado pelo SMO. Ele tambem
     // usa xp_instance_regread e sys.database_files, mas espera colunas como
@@ -1613,6 +1878,7 @@ class SqlTranslator {
       );
       resultado = this._substituirTodos(resultado, '\\bISNULL\\s*\\(', () => 'COALESCE(');
       resultado = this._substituirTodos(resultado, '\\bLEN\\s*\\(', () => 'LENGTH(');
+      resultado = this._traduzirCharindex(resultado);
       // CONVERT(tipo(n), valor) → CONVERT('TIPO', valor). A função CONVERT é
       // registrada pelo catálogo de sistema; o tipo T-SQL não é expressão SQL.
       resultado = this._substituirTodos(
@@ -1638,6 +1904,50 @@ class SqlTranslator {
         () => 'AS BLOB'
       );
       resultado = this._traduzirDateAdd(resultado);
+    }
+
+    return resultado;
+  }
+
+  /**
+   * Converte CHARINDEX(agulha, palheiro) do T-SQL em instr(palheiro, agulha) do
+   * SQLite. As mascaras de string escondem as aspas no codigo, entao os
+   * argumentos precisam ser lidos do SQL original usando os indices da mascara.
+   * @private
+   */
+  _traduzirCharindex(sql) {
+    let resultado = sql;
+
+    for (let tentativa = 0; tentativa < 30; tentativa += 1) {
+      const código = this._mascarar(resultado).code;
+      const chamada = /\bCHARINDEX\s*\(/i.exec(código);
+      if (!chamada) break;
+
+      const abertura = chamada.index + chamada[0].length - 1;
+      const fechamento = this._parenCorespondente(código, abertura);
+      if (fechamento < 0) break;
+
+      const argumentos = resultado.slice(abertura + 1, fechamento);
+      const máscara = this._mascarar(argumentos);
+      let virgula = -1;
+      let profundidade = 0;
+      for (let i = 0; i < máscara.code.length; i += 1) {
+        const caractere = máscara.code[i];
+        if (caractere === '(') profundidade += 1;
+        else if (caractere === ')' && profundidade > 0) profundidade -= 1;
+        else if (caractere === ',' && profundidade === 0) {
+          virgula = i;
+          break;
+        }
+      }
+      if (virgula < 0) break;
+
+      const agulha = argumentos.slice(0, virgula).trim().replace(/^N(?=')/i, '');
+      const palheiro = argumentos.slice(virgula + 1).trim();
+      resultado =
+        resultado.slice(0, chamada.index) +
+        `instr(${palheiro}, ${agulha})` +
+        resultado.slice(fechamento + 1);
     }
 
     return resultado;

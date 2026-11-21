@@ -330,6 +330,22 @@ const DDL_SISTEMA = `
     process_physical_memory_low BIT NOT NULL DEFAULT 0,
     process_virtual_memory_low BIT NOT NULL DEFAULT 0
   );
+
+  -- O SMO consulta estas DMVs ao montar a pagina Filegroups do New Database.
+  CREATE TABLE IF NOT EXISTS dm_io_virtual_file_stats (
+    database_id INTEGER NOT NULL,
+    file_id INTEGER NOT NULL,
+    num_of_reads BIGINT NOT NULL DEFAULT 0,
+    num_of_writes BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (database_id, file_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS dm_db_file_space_usage (
+    database_id INTEGER NOT NULL,
+    file_id INTEGER NOT NULL,
+    allocated_extent_page_count BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (database_id, file_id)
+  );
 `;
 
 /**
@@ -987,6 +1003,14 @@ function popularTabelas(db, schema, nomesDatabases) {
   const inserirFilestream = db.prepare(`
     INSERT OR IGNORE INTO ${schema}.database_filestream_options (database_id) VALUES (?)
   `);
+  const inserirEstatisticaArquivo = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.dm_io_virtual_file_stats
+      (database_id, file_id) VALUES (?, ?)
+  `);
+  const inserirUsoEspacoArquivo = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.dm_db_file_space_usage
+      (database_id, file_id) VALUES (?, ?)
+  `);
   for (const nome of nomes) {
     const atual = existentes.get(nome);
     const databaseId = atual === undefined ? id++ : atual;
@@ -997,6 +1021,10 @@ function popularTabelas(db, schema, nomesDatabases) {
     inserirRecuperacao.run(databaseId, guid, guid);
     inserirChangeTracking.run(databaseId);
     inserirFilestream.run(databaseId);
+    for (const fileId of [1, 2]) {
+      inserirEstatisticaArquivo.run(databaseId, fileId);
+      inserirUsoEspacoArquivo.run(databaseId, fileId);
+    }
   }
 
   const inserirConfiguracao = db.prepare(`

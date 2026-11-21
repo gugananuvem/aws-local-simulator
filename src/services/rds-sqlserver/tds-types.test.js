@@ -21,6 +21,7 @@ describe('tipos TDS', () => {
     expect(mapDeclaredType('datetime')).toBe('datetime');
     expect(mapDeclaredType('DECIMAL(10,2)')).toBe('decimal');
     expect(mapDeclaredType('BIGINT')).toBe('int');
+    expect(mapDeclaredType('UNIQUEIDENTIFIER')).toBe('uniqueidentifier');
     expect(mapDeclaredType('NVARCHAR(50)')).toBe('string');
     expect(mapDeclaredType()).toBe('string');
     expect(COLLATION).toHaveLength(5);
@@ -32,6 +33,24 @@ describe('tipos TDS', () => {
     expect(columnMetadata([{ name: 'id', type: 'INTEGER' }], [{ id: 9007199254740993n }])[0])
       .toMatchObject({ type: TDS_TYPE.INTNTYPE, dataLength: 8 });
     expect(columnMetadata([{ name: 'id', type: 'INTEGER', notNull: true }])[0].nullable).toBe(false);
+
+    // BIGINT declarado continua com 8 bytes mesmo quando o valor cabe em Int32:
+    // o SMO chama GetInt64() e estoura o cast se receber INTN de 4 bytes.
+    const [big] = columnMetadata([{ name: 'id', type: 'BIGINT' }], [{ id: 0 }]);
+    expect(big).toMatchObject({ type: TDS_TYPE.INTNTYPE, dataLength: 8 });
+    expect(encodeValue(0, big)).toEqual(Buffer.from([8, 0, 0, 0, 0, 0, 0, 0, 0]));
+  });
+
+  test('monta metadados e codifica UNIQUEIDENTIFIER no formato mixed-endian', () => {
+    const [guid] = columnMetadata(
+      [{ name: 'MirroringID', type: 'UNIQUEIDENTIFIER' }],
+      [{ MirroringID: '01020304-0506-0708-090a-0b0c0d0e0f10' }]
+    );
+    expect(guid).toMatchObject({ type: TDS_TYPE.UNIQUEIDTYPE, dataLength: 16 });
+    expect(encodeValue('01020304-0506-0708-090a-0b0c0d0e0f10', guid)).toEqual(
+      Buffer.from('100403020106050807090a0b0c0d0e0f10', 'hex')
+    );
+    expect(encodeValue(null, guid)).toEqual(Buffer.from([0x00]));
   });
 
   test('monta metadados de bit, data, float, binário e texto', () => {

@@ -685,6 +685,100 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(translator.columnTypesFor(sql)).toMatchObject({ Size: 'FLOAT' });
     });
 
+    test('traduz CHARINDEX do T-SQL para instr do SQLite', () => {
+      const sql =
+        "SELECT case when CHARINDEX(N'_CS_', dtb.collation_name) > 0 then 1 else 0 end " +
+        'AS [CaseSensitive] FROM master.sys.databases AS dtb';
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain("instr(dtb.collation_name, '_CS_')");
+      expect(traduzido).not.toMatch(/CHARINDEX/i);
+    });
+
+    test('substitui o batch de propriedades do database do SMO (#tempbackup)', () => {
+      const sql = [
+        'create table #tempbackup (database_name nvarchar(128), [type] char(1), backup_finish_date datetime)',
+        "insert into #tempbackup select database_name, [type], max(backup_finish_date) from msdb..backupset where [type] = 'D' group by database_name, [type]",
+        'create table #tmp_db_encryption_keys (database_id int)',
+        'declare @HasViewPermission int',
+        "select @HasViewPermission = HAS_PERMS_BY_NAME(null, null, 'VIEW SERVER STATE')",
+        'if (@HasViewPermission = 1) begin insert into #tmp_db_encryption_keys select database_id from master.sys.dm_database_encryption_keys end',
+        'SELECT dtb.name AS [Name] FROM master.sys.databases AS dtb WHERE (dtb.name=@_msparam_3)'
+      ].join('\n');
+
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain('AS [Name]');
+      expect(traduzido).toContain('AS [IsDatabaseSnapshotBase]');
+      expect(traduzido).toContain('AS [MirroringID]');
+      expect(traduzido).toContain("'00000000-0000-0000-0000-000000000000'");
+      expect(traduzido).not.toMatch(/#tempbackup/i);
+      expect(traduzido).not.toMatch(/\bIF\b|\bBEGIN\b/i);
+    });
+
+    test('declara os tipos TDS das colunas que o SMO lê com cast específico', () => {
+      const sql = [
+        'create table #tempbackup (database_name nvarchar(128), backup_finish_date datetime)',
+        'SELECT dtb.name AS [Name] FROM master.sys.databases AS dtb WHERE (dtb.name=@_msparam_3)'
+      ].join(' ');
+      expect(translator.columnTypesFor(sql)).toMatchObject({
+        Size: 'FLOAT',
+        IsDatabaseSnapshotBase: 'BIT',
+        MirroringID: 'UNIQUEIDENTIFIER',
+        CreateDate: 'DATETIME',
+        IsSystemObject: 'BIT'
+      });
+
+      expect(
+        translator.columnTypesFor("SELECT CAST(ISNULL(SERVERPROPERTY(N'IsXTPSupported'), 0) AS bit) AS [IsXTPSupported]")
+      ).toEqual({ IsXTPSupported: 'BIT' });
+      expect(
+        translator.columnTypesFor('SELECT (select physical_memory_in_use_kb from sys.dm_os_process_memory) AS [PhysicalMemoryUsageInKB]')
+      ).toEqual({ PhysicalMemoryUsageInKB: 'BIGINT' });
+    });
+
+    test('declara DOUBLE nas consultas auxiliares de tamanho do database', () => {
+      const sql = [
+        'SELECT (SELECT SUM(CAST(df.size as float)) FROM sys.database_files AS df WHERE df.type in (0,2,4)) AS [DbSize],',
+        '(SELECT SUM(CAST(df.size as float)) FROM sys.database_files AS df WHERE df.type in (1,3)) AS [LogSize]'
+      ].join(' ');
+      expect(translator.columnTypesFor(sql)).toMatchObject({
+        DbSize: 'FLOAT',
+        LogSize: 'FLOAT'
+      });
+
+      expect(translator.columnTypesFor(
+        'SELECT CAST(0 AS float) AS [SpaceAvailable] FROM master.sys.databases AS dtb WHERE (dtb.name=@_msparam_0)'
+      )).toMatchObject({ SpaceAvailable: 'FLOAT' });
+    });
+
+    test('remove USE no meio do batch sem afetar o comando isolado', () => {
+      expect(translator.translate('use [master];select 1 AS [ok]')).toBe(
+        'select 1 AS [ok]'
+      );
+      expect(translator.translate('use [model]')).toBe('use [model]');
+    });
+
+    test('traduz dm_io_virtual_file_stats(default, default) como tabela', () => {
+      const sql =
+        'SELECT ISNULL(fs.num_of_writes, 0) AS [NumberOfDiskWrites] ' +
+        'FROM sys.dm_io_virtual_file_stats(default, default) AS fs';
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain('sys.dm_io_virtual_file_stats AS fs');
+      expect(traduzido).not.toMatch(/dm_io_virtual_file_stats\s*\(/i);
+      expect(translator.columnTypesFor(sql)).toEqual({ NumberOfDiskWrites: 'BIGINT' });
+    });
+
+    test('substitui o batch #tempspace de espaco livre em disco', () => {
+      const sql = [
+        'CREATE TABLE #tempspace (value BIGINT)',
+        "IF (SERVERPROPERTY('EngineEdition') = 11) INSERT INTO #tempspace VALUES(-1)",
+        "ELSE IF (OBJECT_ID(N'msdb.sys.sp_getVolumeFreeSpace', N'P')) is null INSERT INTO #tempspace VALUES(-1)",
+        'SELECT TOP 1 value AS [freebytes] FROM #tempspace',
+        'DROP TABLE #tempspace'
+      ].join('\n');
+      expect(translator.translate(sql)).toBe('SELECT -1 AS [freebytes]');
+      expect(translator.columnTypesFor(sql)).toEqual({ freebytes: 'BIGINT' });
+    });
+
     test('expande o batch de versao do SSMS em tres resultsets', () => {
       const lotes = translator.expandirResultSets(
         'DECLARE @edition sysname; ' +

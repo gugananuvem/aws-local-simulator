@@ -24,6 +24,7 @@ const TDS_TYPE = Object.freeze({
   DATETIMNTYPE: 0x6F,  // datetime com 8 bytes de comprimento
   FLTNTYPE: 0x6D,      // real (4) / float (8)
   DECIMALTYPE: 0x6A,   // decimal/numeric com precisao e escala
+  UNIQUEIDTYPE: 0x24,  // uniqueidentifier (16 bytes, prefixo de comprimento)
   NVARCHARTYPE: 0xE7,  // texto UTF-16LE com comprimento UInt16
   VARBINARYTYPE: 0xA5  // binario com comprimento UInt16
 });
@@ -40,17 +41,19 @@ const SHORT_LENGTH_TYPES = new Set([
   TDS_TYPE.BITNTYPE,
   TDS_TYPE.DATETIMNTYPE,
   TDS_TYPE.FLTNTYPE,
-  TDS_TYPE.DECIMALTYPE
+  TDS_TYPE.DECIMALTYPE,
+  TDS_TYPE.UNIQUEIDTYPE
 ]);
 
 /**
  * Mapeia o tipo declarado pelo SQLite para uma familia simplificada.
  * @param {string} declaredType
- * @returns {'int'|'tinyint'|'smallint'|'bit'|'float'|'decimal'|'datetime'|'binary'|'string'}
+ * @returns {'int'|'tinyint'|'smallint'|'bit'|'float'|'decimal'|'datetime'|'binary'|'uniqueidentifier'|'string'}
  */
 function mapDeclaredType(declaredType) {
   const type = String(declaredType || '').toUpperCase();
 
+  if (/UNIQUEIDENTIFIER/.test(type)) return 'uniqueidentifier';
   if (/^(BOOL|BOOLEAN|BIT)$/.test(type)) return 'bit';
   if (/BLOB|BINARY|VARBINARY|IMAGE/.test(type)) return 'binary';
   if (/^(DATE|DATETIME|TIMESTAMP|SMALLDATETIME)/.test(type)) return 'datetime';
@@ -143,12 +146,20 @@ function columnMetadata(columns = [], rows = []) {
     }
 
     if (kind === 'int') {
-      const large = values.some((value) => {
+      // BIGINT declarado deve chegar sempre como INTN de 8 bytes, mesmo quando
+      // o valor cabe em Int32. O SMO le essas colunas com GetInt64() e estoura
+      // "Specified cast is not valid" se receber 4 bytes (ex.: Size 0, reads 0).
+      const declaradoBigInt = /\bBIGINT\b/.test(typeName);
+      const large = declaradoBigInt || values.some((value) => {
         if (typeof value === 'bigint') return true;
         const number = Number(value);
         return !Number.isSafeInteger(number) || Math.abs(number) > 2147483647;
       });
       return { ...base, type: TDS_TYPE.INTNTYPE, dataLength: large ? 8 : 4 };
+    }
+
+    if (kind === 'uniqueidentifier') {
+      return { ...base, type: TDS_TYPE.UNIQUEIDTYPE, dataLength: 16 };
     }
 
     if (kind === 'bit') {
@@ -306,6 +317,22 @@ function encodeValue(value, meta) {
       resto >>= 8n;
     }
     return buffer;
+  }
+
+  if (type === TDS_TYPE.UNIQUEIDTYPE) {
+    // uniqueidentifier usa 16 bytes no formato mixed-endian do SQL Server:
+    // os tres primeiros grupos em little-endian e os dois ultimos em big-endian.
+    const texto = String(value).replace(/[{}-]/g, '');
+    const hexadecimal = /^[0-9a-fA-F]{32}$/.test(texto)
+      ? Buffer.from(texto, 'hex')
+      : Buffer.alloc(16);
+    const dados = Buffer.allocUnsafe(16);
+    dados[0] = hexadecimal[3]; dados[1] = hexadecimal[2];
+    dados[2] = hexadecimal[1]; dados[3] = hexadecimal[0];
+    dados[4] = hexadecimal[5]; dados[5] = hexadecimal[4];
+    dados[6] = hexadecimal[7]; dados[7] = hexadecimal[6];
+    hexadecimal.copy(dados, 8, 8, 16);
+    return Buffer.concat([Buffer.from([16]), dados]);
   }
 
   if (type === TDS_TYPE.VARBINARYTYPE) {
