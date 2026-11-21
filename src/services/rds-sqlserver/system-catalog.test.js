@@ -105,7 +105,7 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(linha).toEqual({
       usuario: 'dbo',
       precisao: 38,
-      membro: 0,
+      membro: 1,
       permissoes: 2147483647,
       colacao: 'SQL_Latin1_General_CP1_CI_AS',
       fulltext: 0,
@@ -138,6 +138,25 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       ORDER BY c.colid
     `).rows;
     expect(colunas).toEqual([{ name: 'Id', colid: 1, tipo: 'int' }]);
+  });
+
+  test('expõe tabelas de particionamento e lock_escalation_desc ao designer', () => {
+    engine.execute('principal', 'CREATE TABLE [dbo].[TB_TESTE_PART] ([Id] INT NOT NULL)');
+
+    const particoes = engine.execute('principal', `
+      select func.name, func.function_id, func.type, func.fanout,
+             para.parameter_id, tp.name as type_name
+      from sys.partition_functions func
+      left outer join (sys.partition_parameters para join main.types tp
+        on tp.user_type_id = para.system_type_id) on para.function_id = func.function_id
+      order by func.function_id, para.parameter_id
+    `).rows;
+    expect(particoes).toEqual([]);
+
+    const tabela = engine.execute('principal',
+      "SELECT lock_escalation_desc FROM main.tables WHERE name = 'TB_TESTE_PART'"
+    ).rows[0];
+    expect(tabela.lock_escalation_desc).toBe('TABLE');
   });
 
   test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {

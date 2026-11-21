@@ -368,6 +368,31 @@ const DDL_SISTEMA = `
     allocated_extent_page_count BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (database_id, file_id)
   );
+
+  -- O Table Designer consulta as funcoes/parametros de particionamento mesmo
+  -- quando a tabela nao tem nenhuma. As tabelas existem vazias para que o
+  -- LEFT JOIN do designer nao falhe com "no such table".
+  CREATE TABLE IF NOT EXISTS partition_functions (
+    function_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    type CHAR(2) NOT NULL DEFAULT 'R',
+    fanout INTEGER NOT NULL DEFAULT 0,
+    boundary_value_on_right BIT NOT NULL DEFAULT 0,
+    create_date DATETIME,
+    modify_date DATETIME
+  );
+
+  CREATE TABLE IF NOT EXISTS partition_parameters (
+    function_id INTEGER NOT NULL,
+    parameter_id INTEGER NOT NULL,
+    system_type_id INTEGER NOT NULL DEFAULT 56,
+    user_type_id INTEGER NOT NULL DEFAULT 56,
+    max_length SMALLINT NOT NULL DEFAULT 4,
+    precision TINYINT NOT NULL DEFAULT 10,
+    scale TINYINT NOT NULL DEFAULT 0,
+    collation_name TEXT,
+    PRIMARY KEY (function_id, parameter_id)
+  );
 `;
 
 /**
@@ -459,6 +484,7 @@ const DDL_DATABASE = `
     durability TINYINT NOT NULL DEFAULT 0,
     is_replicated BIT NOT NULL DEFAULT 0,
     lock_escalation TINYINT NOT NULL DEFAULT 0,
+    lock_escalation_desc TEXT NOT NULL DEFAULT 'TABLE',
     history_table_id INTEGER,
     filestream_data_space_id INTEGER,
     is_dropped_ledger_table BIT NOT NULL DEFAULT 0,
@@ -1841,6 +1867,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['durability', 'TINYINT NOT NULL DEFAULT 0'],
     ['is_replicated', 'BIT NOT NULL DEFAULT 0'],
     ['lock_escalation', 'TINYINT NOT NULL DEFAULT 0'],
+    ['lock_escalation_desc', "TEXT NOT NULL DEFAULT 'TABLE'"],
     ['history_table_id', 'INTEGER'],
     ['filestream_data_space_id', 'INTEGER'],
     ['is_dropped_ledger_table', 'BIT NOT NULL DEFAULT 0'],
@@ -2531,7 +2558,11 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
   db.function('SUSER_SNAME', { varargs: true }, () => usuario);
   db.function('SUSER_ID', { varargs: true }, () => 1);
   db.function('ORIGINAL_LOGIN', { varargs: true }, () => usuario);
-  db.function('IS_MEMBER', { varargs: true }, () => 0);
+  // O Table Designer recusa abrir em modo de edicao quando is_member('db_owner')
+  // e 0. O usuario do simulador e o equivalente a dbo/sysadmin.
+  db.function('IS_MEMBER', { varargs: true }, (role) =>
+    ['db_owner', 'db_ddladmin'].includes(String(role || '').toLowerCase()) ? 1 : 0
+  );
   // PERMISSIONS() e usada pelo Table Designer para decidir se a tabela pode
   // ser alterada. O usuario do simulador tem permissao total.
   db.function('PERMISSIONS', { varargs: true }, () => 2147483647);
