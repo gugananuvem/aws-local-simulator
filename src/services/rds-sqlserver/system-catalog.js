@@ -2024,16 +2024,18 @@ function restaurarProcedimentos(db, rotinas, parametros) {
     const parametrosDaRotina = parametros.filter((parametro) =>
       parametro.object_id === rotina.object_id && Number(parametro.parameter_id) > 0
     );
-    const corpoRotina = rotina.corpo == null
+    const corpoRotina = normalizarQuebrasCrLf(rotina.corpo == null
       ? extrairCorpoFuncao(rotina.definition)
-      : rotina.corpo;
-    const definicaoRotina = temCabecalhoProcedimento(rotina.definition)
-      ? rotina.definition
-      : montarDefinicaoProcedimento(db, {
-          nome: rotina.name,
-          parametros: parametrosDaRotina,
-          corpo: corpoRotina
-        });
+      : rotina.corpo);
+    const definicaoRotina = normalizarQuebrasCrLf(
+      temCabecalhoProcedimento(rotina.definition)
+        ? rotina.definition
+        : montarDefinicaoProcedimento(db, {
+            nome: rotina.name,
+            parametros: parametrosDaRotina,
+            corpo: corpoRotina
+          })
+    );
     inserirModulo.run(objectId, definicaoRotina || '', corpoRotina);
     parametros
       .filter((parametro) => parametro.object_id === rotina.object_id)
@@ -2079,17 +2081,19 @@ function restaurarFuncoes(db, funcoes, parametros) {
     const parametrosDaFuncao = parametros.filter((parametro) =>
       parametro.object_id === funcao.object_id && Number(parametro.parameter_id) > 0
     );
-    const corpoFuncao = funcao.corpo == null
+    const corpoFuncao = normalizarQuebrasCrLf(funcao.corpo == null
       ? extrairCorpoFuncao(funcao.definition)
-      : funcao.corpo;
-    const definicaoFuncao = temCabecalhoFuncao(funcao.definition)
-      ? funcao.definition
-      : montarDefinicaoFuncao(db, {
-          nome: funcao.name,
-          parametros: parametrosDaFuncao,
-          tipoRetorno: funcao.returns_type,
-          corpo: corpoFuncao
-        });
+      : funcao.corpo);
+    const definicaoFuncao = normalizarQuebrasCrLf(
+      temCabecalhoFuncao(funcao.definition)
+        ? funcao.definition
+        : montarDefinicaoFuncao(db, {
+            nome: funcao.name,
+            parametros: parametrosDaFuncao,
+            tipoRetorno: funcao.returns_type,
+            corpo: corpoFuncao
+          })
+    );
     inserirModulo.run(
       objectId,
       definicaoFuncao || '',
@@ -2136,6 +2140,16 @@ function restaurarFuncoes(db, funcoes, parametros) {
 
 function dataHoraAtualSql() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/**
+ * Uniformiza as quebras de linha em CRLF. O SSMS abre um dialogo de "Line
+ * Ending" quando o texto gerado pelo SMO mistura LF e CRLF.
+ * @private
+ */
+function normalizarQuebrasCrLf(texto) {
+  if (typeof texto !== 'string') return texto;
+  return texto.replace(/\r\n?/g, '\n').replace(/\n/g, '\r\n');
 }
 
 /** Verifica se o definition da procedure ja tem o cabecalho exigido pelo SMO. @private */
@@ -2199,10 +2213,12 @@ function criarProcedimento(db, { nome, definicao, corpo, parametros = [], altera
       (name, object_id, schema_id, principal_id, create_date, modify_date)
     VALUES (?, ?, 1, 1, ?, ?)
   `).run(nomeProc, objectId, data, data);
-  const corpoProc = corpo == null ? extrairCorpoFuncao(definicao) : corpo;
-  const definicaoProc = temCabecalhoProcedimento(definicao)
-    ? String(definicao)
-    : montarDefinicaoProcedimento(db, { nome: nomeProc, parametros, corpo: corpoProc });
+  const corpoProc = normalizarQuebrasCrLf(corpo == null ? extrairCorpoFuncao(definicao) : corpo);
+  const definicaoProc = normalizarQuebrasCrLf(
+    temCabecalhoProcedimento(definicao)
+      ? String(definicao)
+      : montarDefinicaoProcedimento(db, { nome: nomeProc, parametros, corpo: corpoProc })
+  );
   db.prepare(`
     INSERT INTO main.sql_modules (object_id, definition, corpo) VALUES (?, ?, ?)
   `).run(objectId, definicaoProc, corpoProc);
@@ -2351,10 +2367,12 @@ function criarFuncao(db, { nome, definicao, corpo, parametros = [], tipoRetorno 
       (name, object_id, schema_id, principal_id, type, type_desc, create_date)
     VALUES (?, ?, 1, 1, 'FN', 'SQL_SCALAR_FUNCTION', ?)
   `).run(nomeFuncao, objectId, data);
-  const corpoFuncao = corpo == null ? extrairCorpoFuncao(definicao) : corpo;
-  const definicaoFuncao = temCabecalhoFuncao(definicao)
-    ? String(definicao)
-    : montarDefinicaoFuncao(db, { nome: nomeFuncao, parametros, tipoRetorno, corpo: corpoFuncao });
+  const corpoFuncao = normalizarQuebrasCrLf(corpo == null ? extrairCorpoFuncao(definicao) : corpo);
+  const definicaoFuncao = normalizarQuebrasCrLf(
+    temCabecalhoFuncao(definicao)
+      ? String(definicao)
+      : montarDefinicaoFuncao(db, { nome: nomeFuncao, parametros, tipoRetorno, corpo: corpoFuncao })
+  );
   db.prepare(`
     INSERT INTO main.sql_modules (object_id, definition, returns_type, corpo)
     VALUES (?, ?, ?, ?)

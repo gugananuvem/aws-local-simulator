@@ -569,6 +569,23 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       .get(corrigido)).toBeDefined();
   });
 
+  test('uniformiza CRLF no definition de procedures e funcoes', () => {
+    engine.execute('principal', 'CREATE PROCEDURE QUEBRAS_PROC AS SELECT 1');
+    engine.execute('principal',
+      'CREATE FUNCTION QUEBRAS_FN (@v int) RETURNS int AS BEGIN\nRETURN @v\nEND'
+    );
+    const db = engine.getOrCreateDatabase('principal');
+    for (const nome of ['QUEBRAS_PROC', 'QUEBRAS_FN']) {
+      const registro = db.prepare(`
+        SELECT m.definition FROM main.sql_modules AS m
+        JOIN main.objects AS o ON o.object_id = m.object_id
+        WHERE o.name = ?
+      `).get(nome);
+      const uniformizado = registro.definition.replace(/\r\n?/g, '\n').replace(/\n/g, '\r\n');
+      expect(registro.definition).toBe(uniformizado);
+    }
+  });
+
   test('responde a consulta de procedures usada pelo SSMS', () => {
     engine.execute('principal', 'CREATE PROCEDURE TESTE AS SELECT 1 AS ok');
 
