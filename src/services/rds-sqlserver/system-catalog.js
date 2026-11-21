@@ -160,7 +160,8 @@ const DDL_SISTEMA = `
   CREATE TABLE IF NOT EXISTS syslanguages (
     name TEXT NOT NULL PRIMARY KEY,
     alias TEXT NOT NULL,
-    langid SMALLINT NOT NULL DEFAULT 1033
+    langid SMALLINT NOT NULL DEFAULT 1033,
+    lcid SMALLINT NOT NULL DEFAULT 1033
   );
 
   CREATE TABLE IF NOT EXISTS server_permissions (
@@ -994,6 +995,10 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     return null;
   });
 
+  // O SMO chama essa funcao qualificada (msdb.dbo...) para saber se o
+  // gerenciamento baseado em politicas esta habilitado.
+  db.function('fn_syspolicy_is_automation_enabled', () => 1);
+
   // OBJECT_ID devolve null para objetos inexistentes (ex.: sysdac_instances,
   // usado pelo SMO para detectar DAC) e o rowid de sqlite_master para os
   // objetos reais do database atual.
@@ -1108,6 +1113,9 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
     ['user_access', 'TINYINT NOT NULL DEFAULT 0'],
     ['is_ledger_on', 'BIT NOT NULL DEFAULT 0'],
     ['is_remote_data_archive_enabled', 'BIT NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'sys', 'syslanguages', [
+    ['lcid', 'SMALLINT NOT NULL DEFAULT 1033']
   ]);
   migrarColunas(db, 'sys', 'server_principals', [
     ['create_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],

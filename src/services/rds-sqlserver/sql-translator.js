@@ -153,6 +153,10 @@ class SqlTranslator {
     resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
     resultado = this._removerEsquema(resultado);
+    resultado = resultado.replace(
+      /\bmsdb\s*\.\s*fn_syspolicy_is_automation_enabled\b/gi,
+      'fn_syspolicy_is_automation_enabled'
+    );
     resultado = this._traduzirCatalogoLocal(resultado);
     resultado = this._traduzirLiteraisHex(resultado);
     resultado = this._traduzirProcedural(resultado);

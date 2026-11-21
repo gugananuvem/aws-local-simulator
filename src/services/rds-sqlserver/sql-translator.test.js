@@ -793,6 +793,15 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
   });
 
   describe('shims de conexão do SSMS/SMO', () => {
+    test('remove o schema da funcao de politicas do msdb', () => {
+      const entrada =
+        'SELECT case when 1=msdb.dbo.fn_syspolicy_is_automation_enabled() ' +
+        'then 1 else 0 end AS [PolicyHealthState]';
+      const resultado = translator.translate(entrada);
+      expect(resultado).toContain('1=fn_syspolicy_is_automation_enabled()');
+      expect(resultado).not.toContain('msdb.fn_');
+    });
+
     test('reduz o batch de grupos de disponibilidade ao SELECT final', () => {
       const entrada = [
         'declare @HasViewPermission int',

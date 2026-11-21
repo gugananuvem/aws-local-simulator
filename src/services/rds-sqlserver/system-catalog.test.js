@@ -159,6 +159,21 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     }]);
   });
 
+  test('expõe sys.syslanguages com lcid e a funcao de politicas do msdb', () => {
+    const idiomas = engine.execute('principal',
+      'SELECT s.name AS Name, s.alias AS Alias, s.lcid AS LocaleID, s.langid AS LangID ' +
+      'FROM sys.syslanguages s ORDER BY s.name ASC'
+    );
+    expect(idiomas.rows).toEqual([{
+      Name: 'us_english', Alias: 'English', LocaleID: 1033, LangID: 1033
+    }]);
+
+    const automacao = engine.execute('principal',
+      'SELECT fn_syspolicy_is_automation_enabled() AS habilitado'
+    );
+    expect(automacao.rows).toEqual([{ habilitado: 1 }]);
+  });
+
   test('expõe sys.configurations com SMO e DMO habilitado', () => {
     const resultado = engine.execute('principal',
       'SELECT name, configuration_id AS id, value AS valor, ' +
