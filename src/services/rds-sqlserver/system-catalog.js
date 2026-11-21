@@ -393,6 +393,19 @@ const DDL_SISTEMA = `
     collation_name TEXT,
     PRIMARY KEY (function_id, parameter_id)
   );
+
+  CREATE TABLE IF NOT EXISTS partition_schemes (
+    data_space_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    function_id INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS destination_data_spaces (
+    partition_scheme_id INTEGER NOT NULL,
+    destination_id INTEGER NOT NULL,
+    data_space_id INTEGER NOT NULL,
+    PRIMARY KEY (partition_scheme_id, destination_id)
+  );
 `;
 
 /**
@@ -651,7 +664,11 @@ const DDL_DATABASE = `
     is_user_defined BIT NOT NULL DEFAULT 0,
     schema_id INTEGER NOT NULL DEFAULT 4,
     is_assembly_type BIT NOT NULL DEFAULT 0,
-    is_table_type BIT NOT NULL DEFAULT 0
+    is_table_type BIT NOT NULL DEFAULT 0,
+    is_nullable BIT NOT NULL DEFAULT 1,
+    default_object_id INTEGER NOT NULL DEFAULT 0,
+    rule_object_id INTEGER NOT NULL DEFAULT 0,
+    collation_name TEXT
   );
 
   CREATE TABLE IF NOT EXISTS all_columns (
@@ -673,6 +690,10 @@ const DDL_DATABASE = `
     xml_collection_id INTEGER NOT NULL DEFAULT 0,
     is_ansi_padded BIT NOT NULL DEFAULT 1,
     is_rowguidcol BIT NOT NULL DEFAULT 0,
+    is_replicated BIT NOT NULL DEFAULT 0,
+    is_non_sql_subscribed BIT NOT NULL DEFAULT 0,
+    is_merge_published BIT NOT NULL DEFAULT 0,
+    is_dts_replicated BIT NOT NULL DEFAULT 0,
     is_filestream BIT NOT NULL DEFAULT 0,
     is_column_set BIT NOT NULL DEFAULT 0,
     generated_always_type TINYINT NOT NULL DEFAULT 0,
@@ -1916,6 +1937,10 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['xml_collection_id', 'INTEGER NOT NULL DEFAULT 0'],
     ['is_ansi_padded', 'BIT NOT NULL DEFAULT 1'],
     ['is_rowguidcol', 'BIT NOT NULL DEFAULT 0'],
+    ['is_replicated', 'BIT NOT NULL DEFAULT 0'],
+    ['is_non_sql_subscribed', 'BIT NOT NULL DEFAULT 0'],
+    ['is_merge_published', 'BIT NOT NULL DEFAULT 0'],
+    ['is_dts_replicated', 'BIT NOT NULL DEFAULT 0'],
     ['is_filestream', 'BIT NOT NULL DEFAULT 0'],
     ['is_column_set', 'BIT NOT NULL DEFAULT 0'],
     ['generated_always_type', 'TINYINT NOT NULL DEFAULT 0'],
@@ -1935,7 +1960,11 @@ function sincronizarCatalogoDatabase(db, dbName) {
   migrarColunas(db, 'main', 'types', [
     ['schema_id', 'INTEGER NOT NULL DEFAULT 4'],
     ['is_assembly_type', 'BIT NOT NULL DEFAULT 0'],
-    ['is_table_type', 'BIT NOT NULL DEFAULT 0']
+    ['is_table_type', 'BIT NOT NULL DEFAULT 0'],
+    ['is_nullable', 'BIT NOT NULL DEFAULT 1'],
+    ['default_object_id', 'INTEGER NOT NULL DEFAULT 0'],
+    ['rule_object_id', 'INTEGER NOT NULL DEFAULT 0'],
+    ['collation_name', 'TEXT']
   ]);
   migrarColunas(db, 'main', 'all_parameters', [
     ['has_default_value', 'BIT NOT NULL DEFAULT 0'],
@@ -2430,6 +2459,12 @@ function sincronizarCatalogoDatabase(db, dbName) {
   db.__objetosPorId = new Map(
     objetosCatalogo.map((objeto) => [objeto.object_id, objeto.name])
   );
+  const colunasCatalogo = db.prepare(
+    'SELECT object_id, column_id, name FROM main.all_columns'
+  ).all();
+  db.__colunasPorId = new Map(
+    colunasCatalogo.map((coluna) => [`${coluna.object_id}:${coluna.column_id}`, coluna.name])
+  );
 }
 
 /**
@@ -2619,6 +2654,15 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     const nome = String(propriedade || '').toLowerCase();
     if (nome === 'isdeterministic' || nome === 'isprecise') return 1;
     return 0;
+  });
+  // COL_NAME e usada pelo designer ao ler colunas de indice full-text. Como o
+  // simulador nao registra esse tipo de indice, a funcao so precisa devolver o
+  // nome quando a coluna existe no catalogo (mesmo cache de OBJECT_ID/NAME).
+  db.function('COL_NAME', { varargs: true }, (id, coluna) => {
+    if (id == null || coluna == null) return null;
+    const cache = db.__colunasPorId;
+    if (!cache) return null;
+    return cache.get(`${Number(id)}:${Number(coluna)}`) || null;
   });
 
   // O SMO usa SQL_VARIANT_PROPERTY para decidir como formatar os valores das

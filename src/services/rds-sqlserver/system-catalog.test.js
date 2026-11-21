@@ -153,10 +153,87 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     `).rows;
     expect(particoes).toEqual([]);
 
+    const esquemas = engine.execute('principal', `
+      select sch.name, sch.data_space_id, sch.function_id, dest.destination_id,
+             fg.name as fg_name, fg.type
+      from sys.partition_schemes sch
+      inner join (sys.destination_data_spaces dest
+        inner join sys.filegroups fg on fg.data_space_id = dest.data_space_id)
+        on dest.partition_scheme_id = sch.data_space_id
+      order by sch.data_space_id, dest.destination_id
+    `).rows;
+    expect(esquemas).toEqual([]);
+
+    const tipos = engine.execute('principal', `
+      select a.name as user_type_name, a.max_length, a.precision, a.scale,
+             a.is_nullable, a.collation_name
+      from sys.types a
+      where a.system_type_id <> a.user_type_id and a.schema_id <> 4
+      order by a.user_type_id
+    `).rows;
+    expect(tipos).toEqual([]);
+
     const tabela = engine.execute('principal',
       "SELECT lock_escalation_desc FROM main.tables WHERE name = 'TB_TESTE_PART'"
     ).rows[0];
     expect(tabela.lock_escalation_desc).toBe('TABLE');
+  });
+
+  test('carrega as colunas consultadas pelo script do Table Designer', () => {
+    engine.execute(
+      'principal',
+      'CREATE TABLE [dbo].[TB_TESTE_COLUNAS] ([Id] INT NOT NULL, [Nome] NVARCHAR(50) NULL)'
+    );
+
+    const colunas = engine.execute('principal', `
+      select col.name, col.column_id, st.name as DT_name, schema_name(st.schema_id) as DT_schema,
+             col.max_length, col.precision, col.scale, bt.name as BT_name, col.collation_name,
+             col.is_nullable, col.is_ansi_padded, col.is_rowguidcol, col.is_identity,
+             case when(idc.column_id is null) then null else CONVERT(nvarchar(40), idc.seed_value) end,
+             case when(idc.column_id is null) then null else CONVERT(nvarchar(40), idc.increment_value) end,
+             CONVERT(bit, case when(cmc.column_id is null) then 0 else 1 end) as is_computed,
+             convert(bit, ColumnProperty(col.object_id, col.name, N'IsIdNotForRepl')) as IsIdNotForRepl,
+             col.is_replicated, col.is_non_sql_subscribed, col.is_merge_published,
+             col.is_dts_replicated, col.rule_object_id, robj.name as Rul_name,
+             schema_name(robj.schema_id) as Rul_schema, col.default_object_id,
+             OBJECTPROPERTY(col.default_object_id, N'IsDefaultCnst') as is_defcnst,
+             dobj.name as def_name, schema_name(dobj.schema_id) as def_schema,
+             CONVERT(bit, case when (ftc.column_id is null) then 0 else 1 end) as is_FullTextCol,
+             col_name(col.object_id, ftc.type_column_id) FT_type_column,
+             ftc.language_id as FT_language_id,
+             case when(cmc.column_id is null) then null else cmc.definition end as formular,
+             case when(cmc.column_id is null) then null else cmc.is_persisted end as is_persisted,
+             defCst.definition,
+             COLUMNPROPERTY(col.object_id, col.name, 'IsDeterministic') as IsDeterministic,
+             xmlcoll.name as xmlSchema_name, schema_name(xmlcoll.schema_id) as xmlSchema_schema,
+             col.is_xml_document, col.is_sparse, col.is_column_set,
+             CONVERT(bit, case when (ISNULL(ftc.statistical_semantics, 0) = 0) then 0 else 1 end) as is_StatisticalSemantics,
+             col.is_filestream
+      from sys.columns col
+      left outer join sys.types st on st.user_type_id = col.user_type_id
+      left outer join sys.types bt on bt.user_type_id = col.system_type_id
+      left outer join sys.objects robj on robj.object_id = col.rule_object_id and robj.type = 'R'
+      left outer join sys.objects dobj on dobj.object_id = col.default_object_id and dobj.type = 'D'
+      left outer join sys.default_constraints defCst on defCst.parent_object_id = col.object_id and defCst.parent_column_id = col.column_id
+      left outer join sys.identity_columns idc on idc.object_id = col.object_id and idc.column_id = col.column_id
+      left outer join sys.computed_columns cmc on cmc.object_id = col.object_id and cmc.column_id = col.column_id
+      left outer join sys.fulltext_index_columns ftc on ftc.object_id = col.object_id and ftc.column_id = col.column_id
+      left outer join sys.xml_schema_collections xmlcoll on xmlcoll.xml_Collection_id = col.xml_Collection_id
+      where col.object_id = object_id(N'dbo.TB_TESTE_COLUNAS')
+      order by col.column_id
+    `).rows;
+
+    expect(colunas).toHaveLength(2);
+    // O batch do designer tem expressoes sem alias, então o engine devolve
+    // linhas posicionais para evitar colisao de nomes no TDS.
+    expect(colunas[0].slice(0, 20)).toEqual([
+      'Id', 1, 'int', 'sys', 4, 10, 0, 'int', null, 0, 1, 0, 0,
+      null, null, 0, 0, 0, 0, 0
+    ]);
+    expect(colunas[1].slice(0, 20)).toEqual([
+      'Nome', 2, 'nvarchar', 'sys', 100, 0, 0, 'nvarchar',
+      null, 1, 1, 0, 0, null, null, 0, 0, 0, 0, 0
+    ]);
   });
 
   test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {
