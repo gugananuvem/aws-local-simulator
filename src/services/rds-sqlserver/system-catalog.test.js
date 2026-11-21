@@ -114,15 +114,35 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(fullText).toEqual([{ name: 'English' }]);
 
     const escopo = engine.execute('principal', `
-      SELECT name, value, value_for_secondary FROM sys.database_scoped_configurations
-      ORDER BY name
+      SELECT name, configuration_id, value, value_for_secondary, is_value_default
+      FROM sys.database_scoped_configurations ORDER BY name
     `).rows;
     expect(escopo).toEqual([
-      { name: 'LEGACY_CARDINALITY_ESTIMATION', value: 0, value_for_secondary: 2 },
-      { name: 'MAXDOP', value: 0, value_for_secondary: 0 },
-      { name: 'PARAMETER_SNIFFING', value: 1, value_for_secondary: 2 },
-      { name: 'QUERY_OPTIMIZER_HOTFIXES', value: 0, value_for_secondary: 2 }
+      { name: 'LEGACY_CARDINALITY_ESTIMATION', configuration_id: 18, value: 0, value_for_secondary: 2, is_value_default: 1 },
+      { name: 'MAXDOP', configuration_id: 9, value: 0, value_for_secondary: 0, is_value_default: 1 },
+      { name: 'PARAMETER_SNIFFING', configuration_id: 19, value: 1, value_for_secondary: 2, is_value_default: 1 },
+      { name: 'QUERY_OPTIMIZER_HOTFIXES', configuration_id: 20, value: 0, value_for_secondary: 2, is_value_default: 1 }
     ]);
+    expect(engine.execute('principal',
+      "SELECT SQL_VARIANT_PROPERTY(value, 'BaseType') AS BaseType " +
+      "FROM sys.database_scoped_configurations WHERE name = 'MAXDOP'").rows)
+      .toEqual([{ BaseType: 'int' }]);
+  });
+
+  test('expõe database_query_store_options usada pelo script CREATE do database', () => {
+    const opcoes = engine.execute('principal', `
+      SELECT actual_state AS [ActualState], desired_state AS [DesiredState],
+             query_capture_mode AS [QueryCaptureMode],
+             max_storage_size_mb AS [MaxStorageSizeInMB]
+      FROM sys.database_query_store_options
+    `).rows;
+    expect(opcoes.length).toBeGreaterThan(0);
+    expect(opcoes[0]).toEqual({
+      ActualState: 0,
+      DesiredState: 0,
+      QueryCaptureMode: 1,
+      MaxStorageSizeInMB: 0
+    });
   });
 
   test('expõe filegroups, database_files e master_files usados pela aba Filegroups', () => {

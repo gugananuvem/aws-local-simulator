@@ -1222,6 +1222,19 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       );
     });
 
+    test('informa os tipos TDS das opcoes de Query Store no script do database', () => {
+      expect(translator.columnTypesFor(
+        'SELECT dqso.actual_state AS [ActualState], ' +
+        'dqso.current_storage_size_mb AS [CurrentStorageSizeInMB], ' +
+        'dqso.query_capture_mode AS [QueryCaptureMode] ' +
+        'FROM sys.database_query_store_options AS dqso'
+      )).toEqual(expect.objectContaining({
+        ActualState: 'TINYINT',
+        CurrentStorageSizeInMB: 'BIGINT',
+        QueryCaptureMode: 'TINYINT'
+      }));
+    });
+
     test('informa BIT e DATETIME nas colunas da lista de procedures e funcoes', () => {
       const sql =
         'SELECT sp.name AS [Name], ' +

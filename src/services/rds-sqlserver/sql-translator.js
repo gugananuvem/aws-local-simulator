@@ -1110,6 +1110,29 @@ class SqlTranslator {
       return tipos;
     }
 
+    // O SMO le as opcoes de Query Store com GetByte/GetInt16/GetInt64; sem os
+    // tipos TDS explicitos o SQLite devolve INTN e o script do database falha.
+    if (/\bdatabase_query_store_options\b/i.test(sql)) {
+      return {
+        ActualState: 'TINYINT',
+        DesiredState: 'TINYINT',
+        ReadOnlyReason: 'INT',
+        CurrentStorageSizeInMB: 'BIGINT',
+        MaxStorageSizeInMB: 'BIGINT',
+        StaleQueryThresholdInDays: 'INT',
+        DataFlushIntervalInSeconds: 'INT',
+        StatisticsCollectionIntervalInMinutes: 'INT',
+        QueryCaptureMode: 'TINYINT',
+        SizeBasedCleanupMode: 'TINYINT',
+        MaxPlansPerQuery: 'INT',
+        WaitStatsCaptureMode: 'TINYINT',
+        CapturePolicyExecutionCount: 'INT',
+        CapturePolicyTotalCompileCpuTimeInMS: 'BIGINT',
+        CapturePolicyTotalExecutionCpuTimeInMS: 'BIGINT',
+        CapturePolicyStaleThresholdInHrs: 'INT'
+      };
+    }
+
     // sys.numbered_procedures.procedure_number e SMALLINT no SQL Server. O
     // SSMS le essa coluna com GetInt16(); sem o tipo explicito o TDS chega
     // como INTN de 4 bytes e o script de "Modify" falha com

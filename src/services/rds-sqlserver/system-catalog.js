@@ -142,6 +142,26 @@ const DDL_SISTEMA = `
     non_transacted_access TINYINT NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS database_query_store_options (
+    database_id INTEGER NOT NULL PRIMARY KEY,
+    actual_state TINYINT NOT NULL DEFAULT 0,
+    desired_state TINYINT NOT NULL DEFAULT 0,
+    readonly_reason INTEGER NOT NULL DEFAULT 0,
+    current_storage_size_mb BIGINT NOT NULL DEFAULT 0,
+    max_storage_size_mb BIGINT NOT NULL DEFAULT 0,
+    stale_query_threshold_days INTEGER NOT NULL DEFAULT 30,
+    flush_interval_seconds INTEGER NOT NULL DEFAULT 900,
+    interval_length_minutes INTEGER NOT NULL DEFAULT 60,
+    query_capture_mode TINYINT NOT NULL DEFAULT 1,
+    size_based_cleanup_mode TINYINT NOT NULL DEFAULT 1,
+    max_plans_per_query INTEGER NOT NULL DEFAULT 200,
+    wait_stats_capture_mode TINYINT NOT NULL DEFAULT 1,
+    capture_policy_execution_count INTEGER NOT NULL DEFAULT 30,
+    capture_policy_total_compile_cpu_time_ms BIGINT NOT NULL DEFAULT 1000,
+    capture_policy_total_execution_cpu_time_ms BIGINT NOT NULL DEFAULT 100,
+    capture_policy_stale_threshold_hours INTEGER NOT NULL DEFAULT 1
+  );
+
   CREATE TABLE IF NOT EXISTS server_principal_credentials (
     principal_id INTEGER NOT NULL,
     credential_id INTEGER NOT NULL,
@@ -163,8 +183,10 @@ const DDL_SISTEMA = `
   -- O SMO le as configuracoes escopo de database apos CREATE DATABASE.
   CREATE TABLE IF NOT EXISTS database_scoped_configurations (
     name TEXT NOT NULL PRIMARY KEY,
+    configuration_id INT NOT NULL DEFAULT 0,
     value INT NOT NULL DEFAULT 0,
-    value_for_secondary INT NOT NULL DEFAULT 2
+    value_for_secondary INT NOT NULL DEFAULT 2,
+    is_value_default BIT NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS endpoints (
@@ -1200,6 +1222,9 @@ function popularTabelas(db, schema, nomesDatabases) {
   const inserirFilestream = db.prepare(`
     INSERT OR IGNORE INTO ${schema}.database_filestream_options (database_id) VALUES (?)
   `);
+  const inserirQueryStore = db.prepare(`
+    INSERT OR IGNORE INTO ${schema}.database_query_store_options (database_id) VALUES (?)
+  `);
   const inserirEstatisticaArquivo = db.prepare(`
     INSERT OR IGNORE INTO ${schema}.dm_io_virtual_file_stats
       (database_id, file_id) VALUES (?, ?)
@@ -1218,6 +1243,7 @@ function popularTabelas(db, schema, nomesDatabases) {
     inserirRecuperacao.run(databaseId, guid, guid);
     inserirChangeTracking.run(databaseId);
     inserirFilestream.run(databaseId);
+    inserirQueryStore.run(databaseId);
     for (const fileId of [1, 2]) {
       inserirEstatisticaArquivo.run(databaseId, fileId);
       inserirUsoEspacoArquivo.run(databaseId, fileId);
@@ -1233,13 +1259,14 @@ function popularTabelas(db, schema, nomesDatabases) {
 
   const inserirConfiguracaoEscopo = db.prepare(`
     INSERT OR IGNORE INTO ${schema}.database_scoped_configurations
-      (name, value, value_for_secondary) VALUES (?, ?, ?)
+      (name, configuration_id, value, value_for_secondary, is_value_default)
+    VALUES (?, ?, ?, ?, 1)
   `);
   [
-    ['MAXDOP', 0, 0],
-    ['LEGACY_CARDINALITY_ESTIMATION', 0, 2],
-    ['PARAMETER_SNIFFING', 1, 2],
-    ['QUERY_OPTIMIZER_HOTFIXES', 0, 2]
+    ['MAXDOP', 9, 0, 0],
+    ['LEGACY_CARDINALITY_ESTIMATION', 18, 0, 2],
+    ['PARAMETER_SNIFFING', 19, 1, 2],
+    ['QUERY_OPTIMIZER_HOTFIXES', 20, 0, 2]
   ].forEach((config) => inserirConfiguracaoEscopo.run(...config));
 
   db.prepare(`
@@ -1955,6 +1982,14 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     return 0;
   });
 
+  // O SMO usa SQL_VARIANT_PROPERTY para decidir como formatar os valores das
+  // configuracoes escopo de database. No SQLite as colunas value sao INTEGER,
+  // entao BaseType deve devolver 'int' para o CASE cair no ramo ISNULL.
+  db.function('SQL_VARIANT_PROPERTY', { varargs: true }, (_valor, propriedade) => {
+    if (String(propriedade || '').toLowerCase() === 'basetype') return 'int';
+    return null;
+  });
+
   // QUOTENAME usada pelo SMO para montar URN de objetos. Sem delimitador o
   // SQL Server usa colchetes, escapando ']' como ']]'.
   db.function('QUOTENAME', { varargs: true }, (valor, delimitador) => {
@@ -2132,6 +2167,28 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
   criarTabelas(db, 'sys');
   migrarColunas(db, 'sys', 'database_filestream_options', [
     ['non_transacted_access', 'TINYINT NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'sys', 'database_query_store_options', [
+    ['actual_state', 'TINYINT NOT NULL DEFAULT 0'],
+    ['desired_state', 'TINYINT NOT NULL DEFAULT 0'],
+    ['readonly_reason', 'INTEGER NOT NULL DEFAULT 0'],
+    ['current_storage_size_mb', 'BIGINT NOT NULL DEFAULT 0'],
+    ['max_storage_size_mb', 'BIGINT NOT NULL DEFAULT 0'],
+    ['stale_query_threshold_days', 'INTEGER NOT NULL DEFAULT 30'],
+    ['flush_interval_seconds', 'INTEGER NOT NULL DEFAULT 900'],
+    ['interval_length_minutes', 'INTEGER NOT NULL DEFAULT 60'],
+    ['query_capture_mode', 'TINYINT NOT NULL DEFAULT 1'],
+    ['size_based_cleanup_mode', 'TINYINT NOT NULL DEFAULT 1'],
+    ['max_plans_per_query', 'INTEGER NOT NULL DEFAULT 200'],
+    ['wait_stats_capture_mode', 'TINYINT NOT NULL DEFAULT 1'],
+    ['capture_policy_execution_count', 'INTEGER NOT NULL DEFAULT 30'],
+    ['capture_policy_total_compile_cpu_time_ms', 'BIGINT NOT NULL DEFAULT 1000'],
+    ['capture_policy_total_execution_cpu_time_ms', 'BIGINT NOT NULL DEFAULT 100'],
+    ['capture_policy_stale_threshold_hours', 'INTEGER NOT NULL DEFAULT 1']
+  ]);
+  migrarColunas(db, 'sys', 'database_scoped_configurations', [
+    ['configuration_id', 'INT NOT NULL DEFAULT 0'],
+    ['is_value_default', 'BIT NOT NULL DEFAULT 1']
   ]);
   migrarColunas(db, 'sys', 'databases', [
     ['catalog_collation_type', 'TINYINT NOT NULL DEFAULT 2'],
