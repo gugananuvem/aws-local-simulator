@@ -358,6 +358,9 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       modify_date: '2023-01-01 00:00:00'
     }]);
     expect(() => engine.execute('principal', 'SELECT name FROM sys.stats')).not.toThrow();
+    expect(() => engine.execute('principal',
+      'SELECT k.object_id FROM sys.key_constraints AS k'
+    )).not.toThrow();
   });
 
   test('expõe server_role_members, default_constraints e politicas do msdb', () => {

@@ -847,8 +847,19 @@ const DDL_DATABASE = `
   );
 
   CREATE TABLE IF NOT EXISTS key_constraints (
+    name TEXT NOT NULL DEFAULT '',
+    object_id INTEGER NOT NULL DEFAULT 0,
+    principal_id INTEGER,
+    schema_id INTEGER NOT NULL DEFAULT 1,
     parent_object_id INTEGER NOT NULL,
     unique_index_id INTEGER NOT NULL,
+    type CHAR(2) NOT NULL DEFAULT 'PK',
+    type_desc TEXT NOT NULL DEFAULT 'PRIMARY_KEY_CONSTRAINT',
+    create_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    modify_date DATETIME DEFAULT '2023-01-01 00:00:00',
+    is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_schema_published BIT NOT NULL DEFAULT 0,
     is_system_named BIT NOT NULL DEFAULT 1
   );
 
@@ -1512,6 +1523,19 @@ function sincronizarCatalogoDatabase(db, dbName) {
   ]);
   migrarColunas(db, 'main', 'stats', [
     ['name', "TEXT NOT NULL DEFAULT ''"]
+  ]);
+  migrarColunas(db, 'main', 'key_constraints', [
+    ['name', "TEXT NOT NULL DEFAULT ''"],
+    ['object_id', 'INTEGER NOT NULL DEFAULT 0'],
+    ['principal_id', 'INTEGER'],
+    ['schema_id', 'INTEGER NOT NULL DEFAULT 1'],
+    ['type', "CHAR(2) NOT NULL DEFAULT 'PK'"],
+    ['type_desc', "TEXT NOT NULL DEFAULT 'PRIMARY_KEY_CONSTRAINT'"],
+    ['create_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],
+    ['modify_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],
+    ['is_ms_shipped', 'BIT NOT NULL DEFAULT 0'],
+    ['is_published', 'BIT NOT NULL DEFAULT 0'],
+    ['is_schema_published', 'BIT NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'main', 'synonyms', [
     ['base_object_name', "TEXT DEFAULT ''"]
