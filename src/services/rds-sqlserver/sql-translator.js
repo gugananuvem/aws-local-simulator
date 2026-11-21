@@ -162,6 +162,20 @@ class SqlTranslator {
     // COLLATE database_default e usado pelo SMO ao montar o catalogo de
     // arquivos. O SQLite nao conhece essa collation e rejeita a consulta toda.
     resultado = resultado.replace(/\s+COLLATE\s+(?:\[?database_default\]?)/gi, '');
+    // A lista de Stored Procedures do SSMS passa os filtros de is_ms_shipped e
+    // uses_native_compilation como nvarchar ('0'/'1'). O SQL Server converte
+    // implicitamente para bit; o SQLite compara texto com numero e nao acha a
+    // procedure. Forcamos CAST para os dois parametros booleanos da consulta.
+    if (/\bAS\s+\[IsNativelyCompiled\]/i.test(resultado) && /\bsys\.all_objects\b/i.test(resultado)) {
+      resultado = resultado.replace(
+        /(\bAS\s+bit\)\s*=\s*)(@_msparam_\d+)/gi,
+        '$1CAST($2 AS INTEGER)'
+      );
+      resultado = resultado.replace(
+        /(uses_native_compilation\s*,\s*0\)\s*=\s*)(@_msparam_\d+)/gi,
+        '$1CAST($2 AS INTEGER)'
+      );
+    }
     resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
     resultado = this._removerColchetesSimples(resultado);

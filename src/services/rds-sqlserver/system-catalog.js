@@ -1671,13 +1671,16 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
   });
 
   db.function('DB_ID', { varargs: true }, (nome) => {
-    if (nome == null) return 1;
+    const alvo = nome == null ? dbName : nome;
     const indice = databases()
-      .findIndex((item) => item.toLowerCase() === String(nome).toLowerCase());
-    return indice < 0 ? null : indice + 1;
+      .findIndex((item) => item.toLowerCase() === String(alvo).toLowerCase());
+    return indice < 0 ? (nome == null ? 1 : null) : indice + 1;
   });
   db.function('DB_NAME', { varargs: true }, (id) => {
-    if (id == null) return MASTER;
+    // Sem argumento, DB_NAME() devolve o database da conexao atual. O URN que
+    // o SSMS monta para Stored Procedures usa essa funcao; devolver master
+    // fazia a procedure ficar fora do no Ultrapoints2 no Object Explorer.
+    if (id == null) return dbName || MASTER;
     return databases()[Number(id) - 1] || null;
   });
 

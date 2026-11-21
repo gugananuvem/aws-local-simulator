@@ -750,6 +750,22 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       )).toMatchObject({ SpaceAvailable: 'FLOAT' });
     });
 
+    test('converte filtros nvarchar booleanos da consulta de procedures do SSMS', () => {
+      const sql = [
+        'SELECT sp.name AS [Name], ISNULL(sm.uses_native_compilation,0) AS [IsNativelyCompiled]',
+        'FROM sys.all_objects AS sp',
+        'LEFT OUTER JOIN sys.all_sql_modules AS sm ON sm.object_id = sp.object_id',
+        'WHERE (sp.type = @_msparam_0)',
+        'and(CAST(case when sp.is_ms_shipped = 1 then 1 else 0 end AS bit)=@_msparam_3',
+        'and ISNULL(sm.uses_native_compilation,0)=@_msparam_4)'
+      ].join(' ');
+
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain('AS bit)=CAST(? AS INTEGER)');
+      expect(traduzido).toContain('uses_native_compilation,0)=CAST(? AS INTEGER)');
+      expect(traduzido.match(/CAST\(\? AS INTEGER\)/g)).toHaveLength(2);
+    });
+
     test('remove USE no meio do batch sem afetar o comando isolado', () => {
       expect(translator.translate('use [master];select 1 AS [ok]')).toBe(
         'select 1 AS [ok]'

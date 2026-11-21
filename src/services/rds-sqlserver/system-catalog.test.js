@@ -33,6 +33,17 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(resultado.columns.find((coluna) => coluna.name === 'state').type).toBe('TINYINT');
   });
 
+  test('DB_NAME() e DB_ID() sem argumento usam o database da conexao', () => {
+    engine.execute('master', 'CREATE DATABASE BancoAtual');
+
+    const atual = engine.execute('BancoAtual', 'SELECT DB_NAME() AS nome, DB_ID() AS id');
+    const esperado = engine.execute('master', "SELECT DB_ID('BancoAtual') AS id");
+
+    expect(atual.rows[0].nome).toBe('BancoAtual');
+    expect(atual.rows[0].id).toBe(esperado.rows[0].id);
+    expect(engine.execute('master', 'SELECT DB_NAME() AS nome').rows[0].nome).toBe('master');
+  });
+
   test('expõe tabelas de recuperacao-uso consultadas pelo SMO apos CREATE DATABASE', () => {
     engine.execute('master', 'CREATE DATABASE BancoRecuperacao');
 
