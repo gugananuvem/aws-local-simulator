@@ -1079,6 +1079,33 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       });
     });
 
+    test('informa BIT e DATETIME nas colunas da lista de procedures e funcoes', () => {
+      const sql =
+        'SELECT sp.name AS [Name], ' +
+        'CAST(CASE WHEN ISNULL(smsp.definition, ssmsp.definition) IS NULL THEN 1 ELSE 0 END AS bit) AS [IsEncrypted], ' +
+        'ISNULL(sm.uses_native_compilation,0) AS [IsNativelyCompiled] ' +
+        'FROM sys.all_objects AS sp';
+      expect(translator.columnTypesFor(sql)).toEqual({
+        IsEncrypted: 'BIT',
+        IsNativelyCompiled: 'BIT',
+        ImplementationType: 'INT',
+        FunctionType: 'INT',
+        CreateDate: 'DATETIME'
+      });
+    });
+
+    test('converte o parametro de FunctionType da lista de funcoes para INTEGER', () => {
+      const sql =
+        "SELECT (case when 'FN' = udf.type then 1 else 0 end) AS [FunctionType], " +
+        'ISNULL(sm.uses_native_compilation,0) AS [IsNativelyCompiled] ' +
+        'FROM sys.all_objects AS udf ' +
+        "WHERE (case when 'FN' = udf.type then 1 else 0 end)=@_msparam_0 " +
+        'and CAST(case when udf.is_ms_shipped = 1 then 1 else 0 end AS bit)=@_msparam_1';
+      const traduzido = translator.translate(sql);
+      expect(traduzido).toContain('end)=CAST(? AS INTEGER)');
+      expect(traduzido).toContain('AS bit)=CAST(? AS INTEGER)');
+    });
+
     test('informa DECIMAL(38,0) nas colunas de identity do SMO', () => {
       expect(translator.columnTypesFor(
         'SELECT clmns.name AS [DataType], ' +

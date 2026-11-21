@@ -175,6 +175,12 @@ class SqlTranslator {
         /(uses_native_compilation\s*,\s*0\)\s*=\s*)(@_msparam_\d+)/gi,
         '$1CAST($2 AS INTEGER)'
       );
+      // A lista de Scalar-valued Functions passa o tipo da funcao (1 = FN)
+      // como nvarchar no primeiro parametro; o CASE termina com 'end)='.
+      resultado = resultado.replace(
+        /(\bend\s*\)\s*=\s*)(@_msparam_\d+)/gi,
+        '$1CAST($2 AS INTEGER)'
+      );
     }
     resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
@@ -1206,6 +1212,23 @@ class SqlTranslator {
         HasClusteredIndex: 'BIT',
         LedgerViewType: 'TINYINT',
         IsDroppedLedgerView: 'BIT',
+        CreateDate: 'DATETIME'
+      };
+    }
+
+    // A lista de Stored Procedures e Functions do Object Explorer consulta
+    // sys.all_objects (nao sys.procedures) e le IsEncrypted/
+    // IsNativelyCompiled com GetBoolean(). Sem o tipo TDS explicito o SSMS
+    // fecha com InvalidCastException em StoredProcedure.GetIconName().
+    if (
+      /\b(?:sys|main)\.all_objects\b/i.test(sql) &&
+      /\b(?:IsEncrypted|IsNativelyCompiled)\b/i.test(sql)
+    ) {
+      return {
+        IsEncrypted: 'BIT',
+        IsNativelyCompiled: 'BIT',
+        ImplementationType: 'INT',
+        FunctionType: 'INT',
         CreateDate: 'DATETIME'
       };
     }
