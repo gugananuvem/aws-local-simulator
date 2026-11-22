@@ -343,6 +343,24 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(indicesEspaciais).toEqual([]);
   });
 
+  test('carrega índices full-text consultados pelo designer', () => {
+    engine.execute('principal', 'CREATE TABLE [dbo].[TB_TESTE_FULLTEXT] ([Id] INT NOT NULL)');
+
+    const indiceFullText = engine.execute('principal', `
+      select FtInd.unique_index_id, Ind.name as Index_Name, FtInd.fulltext_catalog_id,
+             FtCat.name as Catalog_Name, FtInd.is_enabled, FtInd.change_tracking_state,
+             FtInd.has_crawl_completed, FtInd.crawl_type, cast(0 as int), cast(0 as int),
+             FtInd.crawl_start_date, FtInd.crawl_end_date, FtInd.incremental_timestamp
+      from sys.fulltext_indexes FtInd
+      left outer join sys.fulltext_catalogs FtCat
+        on FtCat.fulltext_catalog_id = FtInd.fulltext_catalog_id
+      inner join sys.indexes Ind on Ind.object_id = FtInd.object_id
+        and Ind.index_id = FtInd.unique_index_id
+      where FtInd.object_id = object_id(N'dbo.TB_TESTE_FULLTEXT')
+    `).rows;
+    expect(indiceFullText).toEqual([]);
+  });
+
   test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {
     const configuracoes = engine.execute('master', `
       SELECT configuration_id, name, value_in_use FROM sys.configurations

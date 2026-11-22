@@ -1096,6 +1096,11 @@ const DDL_DATABASE = `
     data_space_id INTEGER NOT NULL DEFAULT 1,
     is_enabled BIT NOT NULL DEFAULT 1,
     change_tracking_state TEXT NOT NULL DEFAULT 'M',
+    has_crawl_completed BIT NOT NULL DEFAULT 0,
+    crawl_type TEXT NOT NULL DEFAULT '',
+    crawl_start_date DATETIME,
+    crawl_end_date DATETIME,
+    incremental_timestamp TEXT,
     stoplist_id INTEGER,
     property_list_id INTEGER
   );
@@ -1954,6 +1959,13 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['is_hypothetical', 'BIT NOT NULL DEFAULT 0'],
     ['allow_row_locks', 'BIT NOT NULL DEFAULT 1'],
     ['allow_page_locks', 'BIT NOT NULL DEFAULT 1']
+  ]);
+  migrarColunas(db, 'main', 'fulltext_indexes', [
+    ['has_crawl_completed', 'BIT NOT NULL DEFAULT 0'],
+    ['crawl_type', "TEXT NOT NULL DEFAULT ''"],
+    ['crawl_start_date', 'DATETIME'],
+    ['crawl_end_date', 'DATETIME'],
+    ['incremental_timestamp', 'TEXT']
   ]);
   migrarColunas(db, 'main', 'index_columns', [
     ['key_ordinal', 'INTEGER NOT NULL DEFAULT 0'],
