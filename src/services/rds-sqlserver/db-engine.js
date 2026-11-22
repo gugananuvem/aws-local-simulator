@@ -98,7 +98,9 @@ class DbEngine {
    * @returns {{ type: string, rows: Array, columns: Array, changes: number, lastInsertRowid: number }}
    */
   execute(dbName, sql, params = []) {
-    const db = this.getOrCreateDatabase(dbName);
+    const alvo = this._resolverDatabaseQualificado(dbName, sql);
+    const db = this.getOrCreateDatabase(alvo);
+    this._validarEstadoDatabase(db, alvo, sql);
     return this._executar(db, sql, params);
   }
 
@@ -132,6 +134,7 @@ class DbEngine {
    */
   executeInTransaction(transactionId, sql, params = []) {
     const transacao = this._obterTransacao(transactionId);
+    this._validarEstadoDatabase(transacao.db, transacao.dbName, sql);
     return this._executar(transacao.db, sql, params);
   }
 
@@ -1447,6 +1450,58 @@ class DbEngine {
   }
 
   /**
+   * Detecta consultas qualificadas como [db].dbo.obj ou [db].sys.obj e roteia
+   * para o database indicado quando ele existe no simulador.
+   * @private
+   */
+  _resolverDatabaseQualificado(dbNamePadrao, sqlBruto) {
+    const sql = String(sqlBruto || '');
+    const padrao = /(?:\[(?<b>[^\]]+)\]|"(?<q>[^"]+)"|(?<p>[A-Za-z_][\w$#@]*))\s*\.\s*(?:\[?(?:dbo|sys)\]?|"?(?:dbo|sys)"?)\s*\./gi;
+    let m;
+    while ((m = padrao.exec(sql)) !== null) {
+      const nome = m.groups.b || m.groups.q || m.groups.p;
+      if (!nome) continue;
+      const lower = nome.toLowerCase();
+      if (['master', 'msdb', 'tempdb', 'model'].includes(lower)) continue;
+      if (lower === String(dbNamePadrao || '').toLowerCase()) return dbNamePadrao;
+      if (this._databaseExiste(nome)) return nome;
+    }
+    return dbNamePadrao;
+  }
+
+  /**
+   * Valida se o database pode executar a instrução conforme state/read_only.
+   * @private
+   */
+  _validarEstadoDatabase(db, dbName, sql) {
+    if (!db || !dbName) return;
+    const nome = String(dbName);
+    if (nome.toLowerCase() === 'master') return;
+    let linha;
+    try {
+      linha = db.prepare('SELECT state, state_desc, is_read_only, name FROM sys.databases WHERE name = ?')
+        .get(nome);
+    } catch (_erro) {
+      return; // catálogo ainda não pronto
+    }
+    if (!linha) return;
+    const tipo = this._detectarTipo(String(sql || ''));
+    const state = Number(linha.state);
+    if (state === 6) {
+      throw this._erroTsql(942, 1,
+        `Database '${linha.name}' cannot be opened because it is offline.`);
+    }
+    if (state !== 0) {
+      throw this._erroTsql(942, 1,
+        `Database '${linha.name}' is not currently available (state: ${linha.state_desc || state}).`);
+    }
+    if (Number(linha.is_read_only) === 1 && tipo !== 'select') {
+      throw this._erroTsql(3906, 1,
+        `Failed to update database "${linha.name}" because the database is read-only.`);
+    }
+  }
+
+  /**
    * Interpreta comandos ALTER DATABASE básicos usados pelo SSMS (Take Offline/Online).
    * @private
    */
@@ -1465,6 +1520,8 @@ class DbEngine {
     const corpo = m[4].replace(/;+\s*$/, '').trim().toUpperCase().replace(/\s+/g, ' ');
     if (corpo === 'OFFLINE') return { nome, state: 6, stateDesc: 'OFFLINE' };
     if (corpo === 'ONLINE') return { nome, state: 0, stateDesc: 'ONLINE' };
+    if (corpo === 'READ_ONLY' || corpo === 'READONLY') return { nome, isReadOnly: 1 };
+    if (corpo === 'READ_WRITE' || corpo === 'READWRITE') return { nome, isReadOnly: 0 };
     if (corpo === 'SINGLE_USER' || corpo === 'RESTRICTED_USER' || corpo === 'MULTI_USER') {
       return { nome, somenteUserAccess: corpo };
     }
@@ -1476,13 +1533,17 @@ class DbEngine {
    * @private
    */
   _aplicarAlterDatabase(db, acao) {
-    if (acao.state !== undefined) {
-      for (const alvo of this.databases.values()) {
-        try {
+    for (const alvo of this.databases.values()) {
+      try {
+        if (acao.state !== undefined) {
           alvo.prepare('UPDATE sys.databases SET state = ?, state_desc = ? WHERE name = ?')
             .run(acao.state, acao.stateDesc, acao.nome);
-        } catch (_erro) { /* ignora banco sem catálogo carregado */ }
-      }
+        }
+        if (acao.isReadOnly !== undefined) {
+          alvo.prepare('UPDATE sys.databases SET is_read_only = ? WHERE name = ?')
+            .run(acao.isReadOnly, acao.nome);
+        }
+      } catch (_erro) { /* ignora banco sem catálogo carregado */ }
     }
     return true;
   }
