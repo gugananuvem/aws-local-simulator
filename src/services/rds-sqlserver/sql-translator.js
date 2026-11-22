@@ -2728,6 +2728,7 @@ class SqlTranslator {
       if (/^\s*CREATE\s+(?:UNIQUE\s+)?(?:CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\b/i.test(mascarado)) {
         let traduzido = trecho.replace(/\b(CREATE\s+(?:UNIQUE\s+)?)(?:CLUSTERED\s+|NONCLUSTERED\s+)(INDEX\b)/ig, '$1$2');
         traduzido = this._substituirTodos(traduzido, '\\bINCLUDE\\s*\\([^)]*\\)', () => '', true);
+        traduzido = traduzido.replace(/\)\s*WITH\s*\([^)]*\)/ig, ')');
         traduzido = traduzido.replace(/\s+WITH\s*\([^)]*\)/ig, '');
         traduzido = this._removerOnPrimary(traduzido);
         resultado = resultado.slice(0, início) + traduzido + resultado.slice(fim);
