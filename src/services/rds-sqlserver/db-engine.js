@@ -748,12 +748,23 @@ class DbEngine {
 
       const data = new Date().toISOString().slice(0, 19).replace('T', ' ');
       try {
+        const existente = db.prepare(
+          'SELECT 1 FROM main.default_definitions WHERE lower(table_name) = lower(?) AND lower(column_name) = lower(?)'
+        ).get(nomeTabela, nomeColuna);
+        if (existente) {
+          throw this._erroTsql(1781, 1, 'Column already has a DEFAULT bound to it.');
+        }
         db.prepare(`
-          INSERT OR REPLACE INTO main.default_definitions
+          INSERT INTO main.default_definitions
             (table_name, column_name, name, definition, create_date)
           VALUES (?, ?, ?, ?, ?)
         `).run(nomeTabela, nomeColuna, nomeDefault, `(${expressao})`, data);
       } catch (erro) {
+        if (erro && erro.number === 1781) {
+          const encadeado = this._erroTsql(1750, 0, 'Could not create constraint or index. See previous errors.');
+          encadeado.precedingErrors = [erro];
+          throw encadeado;
+        }
         logger.debug(`[RDS SQL Server] Definicao de default persistida ignorada (${nomeTabela}.${nomeColuna}): ${erro.message}`);
       }
 

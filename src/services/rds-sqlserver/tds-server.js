@@ -541,13 +541,18 @@ class TdsServer {
         }
       } catch (error) {
         hasResults = true;
-        response.push(errorToken(
-          error.number || 50000,
-          error.state || 1,
-          error.class || 16,
-          error.message || String(error),
-          this._serverName(session)
-        ));
+        const erros = Array.isArray(error.precedingErrors) && error.precedingErrors.length
+          ? [...error.precedingErrors, error]
+          : [error];
+        for (const item of erros) {
+          response.push(errorToken(
+            item.number || 50000,
+            item.state || 1,
+            item.class || 16,
+            item.message || String(item),
+            this._serverName(session)
+          ));
+        }
         response.push(doneToken({
           status: DONE_STATUS.ERROR | DONE_STATUS.COUNT,
           rowcount: 0
