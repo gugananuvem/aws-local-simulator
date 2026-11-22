@@ -1294,7 +1294,9 @@ class DbEngine {
           alvo.prepare(`
             INSERT INTO sys.databases (name, database_id, state, state_desc, create_date)
             VALUES (?, ?, 0, 'ONLINE', ?)
-            ON CONFLICT(name) DO UPDATE SET state = 0, state_desc = 'ONLINE'
+            ON CONFLICT(name) DO UPDATE SET
+              database_id = excluded.database_id,
+              create_date = COALESCE(sys.databases.create_date, excluded.create_date)
           `).run(nome, proximo, new Date().toISOString());
           if (ajustes.length) {
             const conjuntos = ajustes.map(([coluna]) => `${coluna} = ?`).join(', ');

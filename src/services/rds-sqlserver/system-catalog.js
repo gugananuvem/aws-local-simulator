@@ -1786,7 +1786,9 @@ function popularTabelas(db, schema, nomesDatabases) {
   const inserirDatabase = db.prepare(`
     INSERT INTO ${schema}.databases (name, database_id, state, state_desc, create_date)
     VALUES (?, ?, 0, 'ONLINE', ?)
-    ON CONFLICT(name) DO UPDATE SET state = 0, state_desc = 'ONLINE'
+    ON CONFLICT(name) DO UPDATE SET
+      database_id = excluded.database_id,
+      create_date = COALESCE(sys.databases.create_date, excluded.create_date)
   `);
   const data = new Date().toISOString();
   // IDs ja atribuidos precisam ser preservados: um database pode aparecer em
