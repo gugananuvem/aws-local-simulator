@@ -755,7 +755,12 @@ class SqlTranslator {
       .replace(/@@MAX_PRECISION\b/gi, '38')
       .replace(/@@SPID\b/gi, '1')
       .replace(/@@TRANCOUNT\b/gi, '0')
-      .replace(/@@VERSION\b/gi, "'16.00.4035.2'");
+      .replace(/@@VERSION\b/gi, "'16.00.4035.2'")
+      // O View Designer consulta SELECT CURRENT_USER ao abrir a lista de
+      // tabelas; no SQLite isso vira uma coluna inexistente.
+      .replace(/\bCURRENT_USER\b/gi, "'dbo'")
+      .replace(/\bSESSION_USER\b/gi, "'dbo'")
+      .replace(/\bSYSTEM_USER\b/gi, "'dbo'");
   }
 
   /**
