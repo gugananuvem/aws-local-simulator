@@ -1211,9 +1211,15 @@ const DDL_DATABASE = `
 
   -- O designer de views (VDT) ainda usa as tabelas legadas syscomments/sysusers
   -- e INFORMATION_SCHEMA.ROUTINES para localizar o texto e o dono da view.
+  -- Os CASTs reproduzem os tipos reais do SQL Server (smallint e nvarchar(4000)):
+  -- com "TEXT" como tipo declarado o VDT nao reconhece a coluna de texto e
+  -- recarrega a view em loop, deixando a janela do designer em branco.
   DROP VIEW IF EXISTS syscomments;
   CREATE VIEW syscomments AS
-    SELECT object_id AS id, 1 AS colid, 1 AS texttype, definition AS text
+    SELECT object_id AS id,
+           CAST(1 AS SMALLINT) AS colid,
+           CAST(1 AS SMALLINT) AS texttype,
+           CAST(definition AS NVARCHAR(4000)) AS text
     FROM sql_modules;
 
   DROP VIEW IF EXISTS sysusers;
@@ -2275,6 +2281,29 @@ function sincronizarCatalogoDatabase(db, dbName) {
       inserirView.run(objeto.name, objeto.object_id, data, objeto.sql || '');
       db.prepare('INSERT INTO main.sql_modules (object_id, definition) VALUES (?, ?)')
         .run(objeto.object_id, objeto.sql || '');
+
+      // O SMO carrega View.Columns a partir de sys.columns. Sem as colunas da
+      // view o designer abre em branco, mesmo com o texto em syscomments.
+      // PRAGMA table_info devolve as colunas derivadas da view no SQLite.
+      db.prepare('DELETE FROM main.all_columns WHERE object_id = ?').run(objeto.object_id);
+      const colunasView = db.prepare(`PRAGMA main.table_info("${nomeSeguro}")`).all();
+      for (const coluna of colunasView) {
+        const declarado = String(coluna.type || '').split('(')[0].trim().toUpperCase();
+        const definicao = TIPOS_SQL[declarado] || TIPOS_SQL.NVARCHAR;
+        inserirColuna.run(
+          coluna.name,
+          objeto.object_id,
+          coluna.cid + 1,
+          definicao[1],
+          definicao[2],
+          definicao[3],
+          definicao[4],
+          definicao[5],
+          1,
+          0,
+          0
+        );
+      }
       continue;
     }
 

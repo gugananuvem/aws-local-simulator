@@ -731,6 +731,23 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     ]);
   });
 
+  test('publica as colunas da view em sys.all_columns para o designer', () => {
+    engine.execute('principal', 'CREATE TABLE [dbo].[TB_BASE] ([Id] INT NOT NULL, [Nome] NVARCHAR(50) NULL)');
+    engine.execute('principal', 'CREATE VIEW [dbo].[VW_BASE] AS SELECT [Id], [Nome] FROM [dbo].[TB_BASE]');
+
+    const colunas = engine.execute('principal', `
+      SELECT c.column_id, c.name, t.name AS tipo
+      FROM sys.columns c INNER JOIN sys.all_views v ON v.object_id = c.object_id
+      INNER JOIN sys.types t ON t.user_type_id = c.user_type_id
+      WHERE v.name = 'VW_BASE'
+      ORDER BY c.column_id
+    `).rows;
+    expect(colunas).toEqual([
+      { column_id: 1, name: 'Id', tipo: 'int' },
+      { column_id: 2, name: 'Nome', tipo: 'varchar' }
+    ]);
+  });
+
   test('expõe colunas de metadados exigidas pelo script de views do SMO 19', () => {
     engine.execute('principal', 'CREATE VIEW vw_teste AS SELECT 1 AS valor');
 
