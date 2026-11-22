@@ -1218,7 +1218,9 @@ const DDL_DATABASE = `
   CREATE VIEW syscomments AS
     SELECT object_id AS id,
            CAST(1 AS SMALLINT) AS colid,
-           CAST(1 AS SMALLINT) AS texttype,
+           -- sys.syscomments devolve 2 + 4 * criptografado; o VDT usa esse
+           -- valor para montar o texto em chunks e recarrega em loop se for 1.
+           CAST(2 AS SMALLINT) AS texttype,
            CAST(definition AS NVARCHAR(4000)) AS text
     FROM sql_modules;
 
@@ -1356,6 +1358,47 @@ function dividirDefinicoes(texto) {
   }
   partes.push(atual);
   return partes;
+}
+
+/**
+ * O PRAGMA table_info de uma view so devolve TEXT/INTEGER: o SQLite nao
+ * preserva os tipos T-SQL da tabela base. Sem isso o SSMS mostra todas as
+ * colunas da view como varchar(8000). Copiamos os tipos do catalogo da tabela
+ * referenciada no SELECT, resolvendo tanto SELECT * quanto listas explicitas.
+ * @private
+ */
+function resolverTiposColunasView(db, sql, colunasPragma) {
+  const texto = String(sql || '');
+  const selecao = /\bSELECT\s+([\s\S]*?)\s+FROM\s+(?:(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([A-Za-z_][\w$#@]*))\s*\.\s*)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([A-Za-z_][\w$#@]*))/i.exec(texto);
+  if (!selecao) return null;
+
+  // Grupos 2-5 sao o schema opcional; 6-9 sao o nome da tabela.
+  const nomeTabela = selecao[6] || selecao[7] || selecao[8] || selecao[9];
+  const tabela = db.prepare('SELECT object_id FROM main.objects WHERE name = ?').get(nomeTabela);
+  if (!tabela) return null;
+
+  const colunasBase = db.prepare(`
+    SELECT name, user_type_id, system_type_id, max_length, precision, scale, is_nullable
+    FROM main.all_columns WHERE object_id = ? ORDER BY column_id
+  `).all(tabela.object_id);
+  if (!colunasBase.length) return null;
+
+  const lista = selecao[1].trim();
+  let colunasSelecionadas;
+  if (lista === '*') {
+    colunasSelecionadas = colunasBase;
+  } else {
+    colunasSelecionadas = lista.split(',').map((parte) => {
+      const nome = parte.trim().split(/\s+/).pop()
+        .replace(/^\[([^\]]+)\]$/, '$1')
+        .replace(/^"([^"]+)"$/, '$1')
+        .replace(/^`([^`]+)`$/, '$1');
+      return colunasBase.find((coluna) => coluna.name.toLowerCase() === nome.toLowerCase());
+    }).filter(Boolean);
+  }
+
+  if (colunasSelecionadas.length !== colunasPragma.length) return null;
+  return colunasSelecionadas;
 }
 
 /**
@@ -2152,6 +2195,17 @@ function sincronizarCatalogoDatabase(db, dbName) {
     FROM main.foreign_key_definitions
   `).all();
 
+  // MS_DiagramPane/MS_Description precisam sobreviver ao rebuild do catalogo.
+  // O View Designer le o pane via sys.extended_properties; sem as linhas a
+  // janela abre em branco. Guardamos o nome do objeto pelo cache anterior
+  // (rowid do SQLite pode mudar se a view for recriada).
+  const extendedPropertiesPersistentes = db.prepare(`
+    SELECT major_id, minor_id, class, name, value FROM main.extended_properties
+  `).all().map((propriedade) => ({
+    ...propriedade,
+    objectName: db.__objetosPorId && db.__objetosPorId.get(Number(propriedade.major_id))
+  }));
+
   for (const tabela of [
     'objects', 'tables', 'all_views', 'synonyms', 'indexes', 'all_columns',
     'sql_modules', 'system_sql_modules', 'extended_properties',
@@ -2287,19 +2341,22 @@ function sincronizarCatalogoDatabase(db, dbName) {
       // PRAGMA table_info devolve as colunas derivadas da view no SQLite.
       db.prepare('DELETE FROM main.all_columns WHERE object_id = ?').run(objeto.object_id);
       const colunasView = db.prepare(`PRAGMA main.table_info("${nomeSeguro}")`).all();
-      for (const coluna of colunasView) {
+      const colunasBase = resolverTiposColunasView(db, objeto.sql, colunasView) || [];
+      for (let indice = 0; indice < colunasView.length; indice += 1) {
+        const coluna = colunasView[indice];
+        const base = colunasBase[indice];
         const declarado = String(coluna.type || '').split('(')[0].trim().toUpperCase();
         const definicao = TIPOS_SQL[declarado] || TIPOS_SQL.NVARCHAR;
         inserirColuna.run(
           coluna.name,
           objeto.object_id,
           coluna.cid + 1,
-          definicao[1],
-          definicao[2],
-          definicao[3],
-          definicao[4],
-          definicao[5],
-          1,
+          base ? base.user_type_id : definicao[1],
+          base ? base.system_type_id : definicao[2],
+          base ? base.max_length : definicao[3],
+          base ? base.precision : definicao[4],
+          base ? base.scale : definicao[5],
+          base ? base.is_nullable : 1,
           0,
           0
         );
@@ -2496,6 +2553,22 @@ function sincronizarCatalogoDatabase(db, dbName) {
       referenciada.object_id, colunaReferenciada.column_id
     );
   });
+
+  const inserirExtendedProperty = db.prepare(`
+    INSERT INTO main.extended_properties (major_id, minor_id, class, name, value)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  for (const propriedade of extendedPropertiesPersistentes) {
+    let objectId = propriedade.objectName
+      ? db.prepare('SELECT object_id FROM main.objects WHERE name = ?')
+        .get(propriedade.objectName)?.object_id
+      : null;
+    if (objectId == null) objectId = propriedade.major_id;
+    inserirExtendedProperty.run(
+      objectId, propriedade.minor_id, propriedade.class,
+      propriedade.name, propriedade.value
+    );
+  }
 
   // Views de sistema no schema sys: aparecem na pasta "System Views" do SSMS
   // e permitem inspecionar as colunas de cada catalogo com SELECT.
@@ -2774,18 +2847,27 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     return cache.get(`${Number(id)}:${Number(coluna)}`) || null;
   });
   // DATALENGTH e usada pelo designer de views para medir o texto do modulo.
+  // syscomments.text e NVARCHAR, entao o SQL Server devolve 2 bytes por
+  // caractere; devolver o tamanho UTF-8 faz o VDT calcular o buffer errado.
   db.function('DATALENGTH', { varargs: true }, (valor) => {
     if (valor == null) return 0;
     return Buffer.isBuffer(valor)
       ? valor.length
-      : Buffer.byteLength(String(valor), 'utf8');
+      : Buffer.byteLength(String(valor), 'utf16le');
   });
 
   // O SMO usa SQL_VARIANT_PROPERTY para decidir como formatar os valores das
-  // configuracoes escopo de database. No SQLite as colunas value sao INTEGER,
-  // entao BaseType deve devolver 'int' para o CASE cair no ramo ISNULL.
-  db.function('SQL_VARIANT_PROPERTY', { varargs: true }, (_valor, propriedade) => {
-    if (String(propriedade || '').toLowerCase() === 'basetype') return 'int';
+  // configuracoes escopo de database (int). O VDT usa a mesma funcao nas
+  // extended_properties: MS_DiagramPaneCount e int, MS_DiagramPane1 e nvarchar.
+  // Devolver 'int' para texto faz o designer descartar o pane e abrir em branco.
+  db.function('SQL_VARIANT_PROPERTY', { varargs: true }, (valor, propriedade) => {
+    const prop = String(propriedade || '').toLowerCase();
+    const texto = valor == null ? '' : String(valor);
+    const numerico = /^-?\d+(?:\.\d+)?$/.test(texto);
+    if (prop === 'basetype') return numerico ? 'int' : 'nvarchar';
+    if (prop === 'maxlength') return numerico ? 4 : texto.length * 2;
+    if (prop === 'precision') return numerico ? 10 : 0;
+    if (prop === 'scale') return 0;
     return null;
   });
 
@@ -2846,10 +2928,13 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
   // better-sqlite3 bloqueia consultas dentro da UDF.
   db.function('OBJECT_ID', { varargs: true }, (nome) => {
     if (nome == null) return null;
+    // O VDT usa OBJECT_ID(N'[dbo].[VW001]'), com o schema entre colchetes.
+    // Remover "dbo." antes dos colchetes deixava "dbo.VW001" como chave e a
+    // funcao devolvia NULL: sem extended properties o designer abria em branco.
     const alvo = String(nome)
-      .replace(/^dbo\./i, '')
       .replace(/\[/g, '')
       .replace(/\]/g, '')
+      .replace(/^dbo\./i, '')
       .toLowerCase();
     if (ehMsdb && OBJETOS_MSDB.has(alvo)) return 1001;
     const cache = db.__objetosPorNome;

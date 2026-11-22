@@ -99,7 +99,7 @@ function columnMetadata(columns = [], rows = []) {
     const name = column && typeof column.name === 'string'
       ? column.name
       : `Column${index + 1}`;
-    const declared = (column && column.type) || '';
+    let declared = (column && column.type) || '';
     const typeName = String(declared).toUpperCase();
     const nullable = !(column && column.notNull);
 
@@ -133,6 +133,22 @@ function columnMetadata(columns = [], rows = []) {
       })
     ) {
       kind = 'tinyint';
+    }
+
+    // syscomments.texttype e syscomments.colid são SMALLINT no SQL Server. O
+    // View Designer lê texttype com SqlDataReader.GetInt16(); se a coluna chegar
+    // como INTN de 4 bytes ele estoura "Specified cast is not valid" e abre a
+    // janela em branco. CAST não preserva o tipo declarado no SQLite, então a
+    // correção precisa ser feita por nome aqui, antes de montar o metadado TDS.
+    if (
+      !declared && /^(texttype|colid)$/i.test(name) && values.length > 0 &&
+      values.every((value) => {
+        const numero = Number(value);
+        return Number.isInteger(numero) && numero >= -32768 && numero <= 32767;
+      })
+    ) {
+      declared = 'SMALLINT';
+      kind = 'smallint';
     }
 
     const base = { name, kind, nullable, declaredType: declared };
@@ -195,12 +211,17 @@ function columnMetadata(columns = [], rows = []) {
       const bytes = Buffer.from(String(value), 'utf16le').length;
       max = Math.max(max, bytes);
     }
+    // syscomments.text é NVARCHAR(4000) no SQL Server. O View Designer usa o
+    // ColumnSize anunciado para dimensionar o buffer de leitura do texto da
+    // view; dimensionar pelo valor real (ex.: 84 bytes) faz a leitura falhar
+    // silenciosamente e a janela abre em branco.
+    const tamanhoTexto = /^text$/i.test(name) && !declared
+      ? MAX_NVARCHAR_BYTES
+      : Math.min(Math.max(max, 2), MAX_NVARCHAR_BYTES);
     return {
       ...base,
       type: TDS_TYPE.NVARCHARTYPE,
-      maxLength: values.length
-        ? Math.min(Math.max(max, 2), MAX_NVARCHAR_BYTES)
-        : MAX_NVARCHAR_BYTES
+      maxLength: values.length ? tamanhoTexto : MAX_NVARCHAR_BYTES
     };
   });
 }

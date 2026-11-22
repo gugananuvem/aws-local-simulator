@@ -41,6 +41,20 @@ describe('tipos TDS', () => {
     expect(encodeValue(0, big)).toEqual(Buffer.from([8, 0, 0, 0, 0, 0, 0, 0, 0]));
   });
 
+  test('envia texttype e colid de syscomments como SMALLINT para o View Designer', () => {
+    const colunas = columnMetadata(
+      [{ name: 'texttype', type: '' }, { name: 'colid', type: '' }],
+      [{ texttype: 1, colid: 1 }]
+    );
+    expect(colunas[0]).toMatchObject({
+      type: TDS_TYPE.INTNTYPE, dataLength: 2, kind: 'smallint'
+    });
+    expect(colunas[1]).toMatchObject({
+      type: TDS_TYPE.INTNTYPE, dataLength: 2, kind: 'smallint'
+    });
+    expect(encodeValue(1, colunas[0])).toEqual(Buffer.from([2, 1, 0]));
+  });
+
   test('monta metadados e codifica UNIQUEIDENTIFIER no formato mixed-endian', () => {
     const [guid] = columnMetadata(
       [{ name: 'MirroringID', type: 'UNIQUEIDENTIFIER' }],
