@@ -2931,11 +2931,14 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     // O VDT usa OBJECT_ID(N'[dbo].[VW001]'), com o schema entre colchetes.
     // Remover "dbo." antes dos colchetes deixava "dbo.VW001" como chave e a
     // funcao devolvia NULL: sem extended properties o designer abria em branco.
-    const alvo = String(nome)
-      .replace(/\[/g, '')
-      .replace(/\]/g, '')
-      .replace(/^dbo\./i, '')
-      .toLowerCase();
+    // O Designer de Views qualifica os objetos como
+    // OBJECT_ID(N'Ultrapoints2.dbo.TB001'). Sem remover o database o cache nao
+    // encontra a coluna e a tabela aparece como <unknown> no CriteriaPane.
+    const semColchetes = String(nome).replace(/\[([^\]]+)\]/g, '$1');
+    const partes = semColchetes.split('.');
+    const alvo = (partes.length >= 3
+      ? partes[partes.length - 1]
+      : semColchetes.replace(/^dbo\./i, '')).toLowerCase();
     if (ehMsdb && OBJETOS_MSDB.has(alvo)) return 1001;
     const cache = db.__objetosPorNome;
     return cache && cache.has(alvo) ? cache.get(alvo) : null;

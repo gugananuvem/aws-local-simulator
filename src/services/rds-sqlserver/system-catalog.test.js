@@ -595,6 +595,35 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
       .toBe(1001);
   });
 
+  test('OBJECT_ID aceita o nome qualificado pelo database usado pelo View Designer', () => {
+    engine.execute('principal', 'CREATE TABLE TB_DO_DESIGN (id INT)');
+
+    const resultado = engine.execute('principal', `
+      SELECT OBJECT_ID(N'principal.dbo.TB_DO_DESIGN') AS completo,
+             OBJECT_ID(N'[principal].[dbo].[TB_DO_DESIGN]') AS entreColchetes,
+             OBJECT_ID(N'dbo.TB_DO_DESIGN') AS semDatabase
+    `).rows[0];
+    expect(resultado.completo).not.toBeNull();
+    expect(resultado.entreColchetes).toBe(resultado.completo);
+    expect(resultado.semDatabase).toBe(resultado.completo);
+  });
+
+  test('syscomments devolve texttype 2 para definicoes nao criptografadas', () => {
+    engine.execute('principal', 'CREATE VIEW VW_DO_DESIGN AS SELECT 1 AS valor');
+
+    const linha = engine.execute('principal', `
+      SELECT texttype, text FROM syscomments
+      WHERE id = OBJECT_ID(N'principal.dbo.VW_DO_DESIGN')
+    `).rows[0];
+    expect(linha.texttype).toBe(2);
+    expect(linha.text).toContain('CREATE VIEW');
+  });
+
+  test('traduz CURRENT_USER para o principal dbo', () => {
+    expect(engine.execute('principal', 'SELECT CURRENT_USER AS usuario').rows[0].usuario)
+      .toBe('dbo');
+  });
+
   test('permite consultar objetos do msdb a partir de outro database', () => {
     engine.execute('msdb', 'SELECT 1 AS ok');
 
