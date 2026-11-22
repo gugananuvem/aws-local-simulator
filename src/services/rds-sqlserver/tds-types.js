@@ -139,28 +139,21 @@ function columnMetadata(columns = [], rows = []) {
     // Quando a expressão vem sem tipo declarado (CAST AS bit que o SQLite apaga,
     // CASE, ISNULL, COALESCE, aritmética), inferimos pelo nome+valor para evitar
     // "Specified cast is not valid" no SSMS (ex.: Script Key/Constraint As).
-    if (!declared && values.length > 0) {
-      const todosZeroUm = values.every((value) => {
+    if (!declared) {
+      const todosZeroUm = values.length > 0 && values.every((value) => {
         const numero = Number(value);
         return Number.isInteger(numero) && (numero === 0 || numero === 1);
       });
-      const todosInteiros = values.every((value) => Number.isInteger(Number(value)));
-      if (todosZeroUm && /^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$|IsFileTableDefined$)/.test(name)) {
-        kind = 'bit';
-      } else if (
-        todosInteiros &&
-        /^(?:FillFactor|IndexType|SpatialIndexType|SecondaryXmlIndexType|ResumableOperationState)$/i.test(name)
-      ) {
-        kind = 'tinyint';
-      } else if (
-        todosInteiros &&
-        /^(?:Level[1-4]Grid|IndexKeyType)$/i.test(name) &&
-        values.every((value) => {
+      const todosInteiros = values.length > 0 && values.every((value) => Number.isInteger(Number(value)));
+      if (/^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$)/.test(name)) {
+        if (values.length === 0 || todosZeroUm) kind = 'bit';
+      } else if (/^(?:FillFactor|IndexType|SpatialIndexType|SecondaryXmlIndexType|ResumableOperationState|BackupSetType)$/i.test(name)) {
+        if (values.length === 0 || todosInteiros) kind = 'tinyint';
+      } else if (/^(?:Level[1-4]Grid|IndexKeyType)$/i.test(name)) {
+        if (values.length === 0 || (todosInteiros && values.every((value) => {
           const numero = Number(value);
           return numero >= -32768 && numero <= 32767;
-        })
-      ) {
-        kind = 'smallint';
+        }))) kind = 'smallint';
       }
     }
 

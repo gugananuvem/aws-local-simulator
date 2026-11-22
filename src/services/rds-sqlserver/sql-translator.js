@@ -850,7 +850,7 @@ class SqlTranslator {
    * @private
    */
   _removerShimAvailabilityGroups(sql) {
-    if (!/#tmp_db_ars\b/i.test(sql) || !/#tmp_sync_states\b/i.test(sql)) return sql;
+    if (!/#tmp_db_ars\b/i.test(sql)) return sql;
 
     const inicioCondicao = sql.search(/\bif\s*\(\s*@HasViewPermission\b/i);
     if (inicioCondicao < 0) return sql;
@@ -862,11 +862,34 @@ class SqlTranslator {
       .map((trecho) => trecho.trim().replace(/^create\s+table\b/i, 'CREATE TABLE IF NOT EXISTS'))
       .join('; ');
 
-    const inicioSelecao = sql.search(/\bSELECT\s+dtb\.name\s+AS\s+\[Database_Name\]/i);
-    if (inicioSelecao < 0) return sql;
-    const selecao = sql.slice(inicioSelecao).trim();
+    // Pega a SELECT principal (a que lista databases/objetos), não a primeira
+    // SELECT procedural (ex.: select @HasViewPermission = ...).
+    const selecaoRe = /\bSELECT\s+dtb\.name\s+AS\s+\[Database_Name\][\s\S]*$/i;
+    let m = selecaoRe.exec(sql);
+    if (!m) {
+      // Fallback: última SELECT grande do batch.
+      const todas = [...sql.matchAll(/\bSELECT\b/gi)];
+      for (let i = todas.length - 1; i >= 0; i--) {
+        const cand = sql.slice(todas[i].index).trim();
+        if (/\bFROM\b/i.test(cand) && cand.length > 40) { m = { 0: cand, index: todas[i].index }; break; }
+      }
+    }
+    if (!m) return criacoes || sql;
 
-    return `${criacoes}; ${selecao}`;
+    let selecao = sql.slice(m.index).trim();
+    selecao = selecao.replace(/^end\b\s*/i, '').trim();
+    // Remove drops de temp tables #tmp_* no final; serão recriadas no próximo batch.
+    selecao = selecao.replace(/(?:\s*;\s*|\s+)\bDROP\s+TABLE\s+#{1,2}[A-Za-z_]\w*\b/gi, '').trim();
+    selecao = selecao.replace(/;\s*;+/g, ';').replace(/;\s*$/g, '').trim();
+    if (!selecao) return criacoes || sql;
+
+    // Shim AG: sys.databases não tem replica_id no simulador. O SSMS consulta
+    // AvailabilityGroupName juntando #tmp_db_ars; devolvemos vazio.
+    if (/\bdtb\.replica_id\b/i.test(selecao) || /\bAvailabilityGroupName\b/i.test(selecao)) {
+      selecao = "SELECT '' AS [AvailabilityGroupName]";
+    }
+
+    return criacoes ? `${criacoes}; ${selecao}` : selecao;
   }
 
   /**
@@ -1992,7 +2015,7 @@ class SqlTranslator {
         '2 AS [LoginMode]',
         "'' AS [MailProfile]",
         `'${caminho}\\DATA' AS [BackupDirectory]`,
-        '1000 AS [PerfMonMode]',
+        '0 AS [PerfMonMode]',
         `'${caminho}' AS [InstallDataDirectory]`,
         "'MSSQLSERVER' AS [ServiceName]",
         `'${caminho}\\Log' AS [ErrorLogPath]`,
@@ -2038,14 +2061,14 @@ class SqlTranslator {
         "'' AS [ClusterName]",
         '4 AS [ClusterQuorumType]',
         '3 AS [ClusterQuorumState]',
-        'NULL AS [ServiceAccountSid]',
+        '0 AS [ServiceAccountSid]',
         'CAST(0 AS BIT) AS [IsPolyBaseInstalled]',
         "'LOCAL' AS [Name]",
         "'' AS [InstanceName]",
         '1 AS [Status]',
         "'\\' AS [PathSeparator]",
         '0 AS [IsContainedAuthentication]',
-        'NULL AS [ServerType]'
+        '0 AS [ServerType]'
       ];
       return `SELECT ${colunas.join(', ')}`;
     }
@@ -2110,11 +2133,12 @@ class SqlTranslator {
     ) {
       const caminho = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
       return (
-        'SELECT 2 AS [AuditLevel], 12 AS [NumberOfLogFiles], 2 AS [LoginMode], ' +
+        "SELECT 'Server[@Name=''LOCAL'']' + '/Setting' AS [Urn], " +
+        '2 AS [AuditLevel], 12 AS [NumberOfLogFiles], 2 AS [LoginMode], ' +
         `'${caminho}' AS [DefaultFile], '${caminho}' AS [DefaultLog], ` +
         '0 AS [ErrorLogSizeKb], -1 AS [TapeLoadWaitTime], ' +
         "'' AS [MailProfile], " +
-        `'${caminho}' AS [BackupDirectory], 1000 AS [PerfMonMode]`
+        `'${caminho}' AS [BackupDirectory], 0 AS [PerfMonMode]`
       );
     }
 
@@ -2168,7 +2192,7 @@ class SqlTranslator {
       const colunas = [
         "'LOCAL' AS [Server_Name]",
         "'Server[@Name=''LOCAL'']' AS [Server_Urn]",
-        'NULL AS [Server_ServerType]'
+        '0 AS [Server_ServerType]'
       ];
       if (/\bServer_Status\b/i.test(sql)) colunas.push('1 AS [Server_Status]');
       colunas.push(
@@ -2650,7 +2674,7 @@ class SqlTranslator {
 
     for (let tentativa = 0; tentativa < 20; tentativa += 1) {
       const máscara = this._mascarar(resultado);
-      const correspondência = /\bTOP\s+(\(\s*(\d+)\s*\)|(\d+))(?:\s+PERCENT\b)?/i.exec(
+      const correspondência = /\bTOP\s*(\(\s*(\d+)\s*\)|(\d+))(?:\s+PERCENT\b)?/i.exec(
         máscara.code
       );
       if (!correspondência) {

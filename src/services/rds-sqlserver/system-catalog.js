@@ -1683,6 +1683,128 @@ const DDL_MSDB = `
     state TINYINT NOT NULL DEFAULT 1,
     state_description TEXT NOT NULL DEFAULT 'Healthy'
   );
+
+  -- Tabelas de backup/restore consultadas pelo SSMS (Tasks > Back Up/Restore).
+  -- Mantidas vazias: o simulador não executa backup real, mas o SMO precisa
+  -- que as consultas retornem esquema válido (resultado vazio) em vez de erro.
+  CREATE TABLE IF NOT EXISTS backupset (
+    backup_set_id INTEGER PRIMARY KEY,
+    backup_set_uuid TEXT,
+    media_set_id INTEGER,
+    first_family_number INTEGER,
+    first_media_number INTEGER,
+    last_family_number INTEGER,
+    last_media_number INTEGER,
+    catalog_family_number INTEGER,
+    catalog_media_number INTEGER,
+    position INTEGER,
+    expiration_date DATETIME,
+    software_vendor_id INTEGER,
+    name TEXT,
+    description TEXT,
+    user_name TEXT,
+    software_major_version INTEGER,
+    software_minor_version INTEGER,
+    software_build_version INTEGER,
+    time_zone INTEGER,
+    mtf_minor_version INTEGER,
+    first_lsn NUMERIC(25,0),
+    last_lsn NUMERIC(25,0),
+    checkpoint_lsn NUMERIC(25,0),
+    database_backup_lsn NUMERIC(25,0),
+    database_creation_date DATETIME,
+    backup_start_date DATETIME,
+    backup_finish_date DATETIME,
+    type CHAR(1),
+    sort_order INTEGER,
+    code_page INTEGER,
+    compatibility_level INTEGER,
+    database_version INTEGER,
+    backup_size NUMERIC(20,0),
+    database_name TEXT,
+    server_name TEXT,
+    machine_name TEXT,
+    flags INTEGER,
+    unicode_locale INTEGER,
+    unicode_compare_style INTEGER,
+    collation_name TEXT,
+    is_password_protected BIT DEFAULT 0,
+    recovery_model TEXT,
+    has_bulk_logged_data BIT DEFAULT 0,
+    is_snapshot BIT DEFAULT 0,
+    is_readonly BIT DEFAULT 0,
+    is_single_user BIT DEFAULT 0,
+    has_backup_checksums BIT DEFAULT 0,
+    is_damaged BIT DEFAULT 0,
+    begins_log_chain BIT DEFAULT 0,
+    has_incomplete_metadata BIT DEFAULT 0,
+    is_force_offline BIT DEFAULT 0,
+    is_copy_only BIT DEFAULT 0,
+    first_recovery_fork_guid TEXT,
+    last_recovery_fork_guid TEXT,
+    fork_point_lsn NUMERIC(25,0),
+    database_guid TEXT,
+    family_guid TEXT,
+    differential_base_lsn NUMERIC(25,0),
+    differential_base_guid TEXT,
+    compressed_backup_size NUMERIC(20,0),
+    key_algorithm TEXT,
+    encryptor_thumbprint BLOB,
+    encryptor_type TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS backupmediafamily (
+    media_set_id INTEGER,
+    family_sequence_number INTEGER,
+    media_family_id TEXT,
+    media_count INTEGER,
+    logical_device_name TEXT,
+    physical_device_name TEXT,
+    device_type INTEGER,
+    physical_block_size INTEGER,
+    mirror INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS backupmediaset (
+    media_set_id INTEGER PRIMARY KEY,
+    media_uuid TEXT,
+    media_family_count INTEGER,
+    name TEXT,
+    description TEXT,
+    software_name TEXT,
+    software_vendor_id INTEGER,
+    MTF_major_version INTEGER,
+    mirror_count INTEGER,
+    is_password_protected BIT DEFAULT 0,
+    is_compressed BIT DEFAULT 0,
+    is_encrypted BIT DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS restorehistory (
+    restore_history_id INTEGER PRIMARY KEY,
+    restore_date DATETIME,
+    destination_database_name TEXT,
+    user_name TEXT,
+    backup_set_id INTEGER,
+    restore_type CHAR(1),
+    replace BIT DEFAULT 0,
+    recovery BIT DEFAULT 0,
+    restart BIT DEFAULT 0,
+    stop_at DATETIME,
+    device_count INTEGER,
+    stop_at_mark_name TEXT,
+    stop_before BIT DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS restorefile (
+    restore_history_id INTEGER,
+    file_number NUMERIC(10,0)
+  );
+
+  CREATE TABLE IF NOT EXISTS restorefilegroup (
+    restore_history_id INTEGER,
+    filegroup_name TEXT
+  );
 `;
 
 // `langid` e um ID sequencial do Database Engine (us_english = 0), nao o LCID do Windows.
