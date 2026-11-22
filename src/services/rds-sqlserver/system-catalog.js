@@ -1233,6 +1233,45 @@ const DDL_DATABASE = `
   CREATE VIEW routines AS
     SELECT name AS SPECIFIC_NAME, '' AS DATA_TYPE
     FROM procedures;
+
+  -- Tabela legada consultada pelo SSMS em Tasks > Take Offline/Detach.
+  -- Mapeia a sessao simulada para as colunas minimas esperadas pelo SMO.
+  DROP VIEW IF EXISTS sysprocesses;
+  CREATE VIEW sysprocesses AS
+    SELECT
+      s.session_id AS spid,
+      0 AS kpid,
+      0 AS blocked,
+      CAST(0x0000 AS BLOB) AS waittype,
+      0 AS waittime,
+      '' AS lastwaittype,
+      '' AS waitresource,
+      s.database_id AS dbid,
+      1 AS uid,
+      0 AS cpu,
+      0 AS physical_io,
+      0 AS memusage,
+      '2023-01-01 00:00:00' AS login_time,
+      '2023-01-01 00:00:00' AS last_batch,
+      0 AS ecid,
+      0 AS open_tran,
+      s.status AS status,
+      CAST(X'01' AS BLOB) AS sid,
+      'localhost' AS hostname,
+      'sqlcmd' AS program_name,
+      '1' AS hostprocess,
+      '' AS cmd,
+      '' AS nt_domain,
+      '' AS nt_username,
+      '' AS net_address,
+      'TCP' AS net_library,
+      s.login_name AS loginame,
+      CAST(X'' AS BLOB) AS context_info,
+      CAST(X'' AS BLOB) AS sql_handle,
+      0 AS stmt_start,
+      0 AS stmt_end,
+      0 AS request_id
+    FROM dm_exec_sessions s;
 `;
 
 /** Tabelas criadas pelo proprio catalogo, que nao devem aparecer como objetos de usuario. */
@@ -1254,7 +1293,7 @@ const OBJETOS_DO_CATALOGO = new Set([
   'all_parameters', 'parameters', 'procedures', 'numbered_procedures', 'triggers', 'database_permissions',
   'assemblies', 'assembly_modules', 'table_types', 'assembly_types',
   'sysdac_instances', 'syspolicy_configuration', 'sysobjects', 'syscolumns', 'systypes',
-  'syscomments', 'sysusers', 'routines'
+  'syscomments', 'sysusers', 'routines', 'sysprocesses'
 ]);
 
 /** Mapeamento dos tipos SQLite para os tipos do catalogo sys.types. */

@@ -804,6 +804,13 @@ class SqlTranslator {
     ].join('');
     let resultado = this._substituirTodos(sql, qualificadorDatabase, () => '', true);
     resultado = this._substituirTodos(resultado, '\\bmaster\\s*\\.\\s*sys\\s*\\.\\s*', () => 'sys.');
+    // Tabelas legadas qualificadas como master.dbo.sysprocesses ou
+    // master..sysprocesses (usadas pelo SSMS em "Take Offline"/Tasks).
+    resultado = this._substituirTodos(
+      resultado,
+      '\\bmaster\\s*\\.\\s*(?:dbo\\s*\\.\\s*|\\.\\s*)',
+      () => ''
+    );
     // O SMO tambem qualifica o catalogo com o nome do database atual
     // (Ultrapoints2.sys.all_columns). No SQLite isso vira tres segmentos
     // (Ultrapoints2.main.all_columns) e o designer falha com "near \".\"".
