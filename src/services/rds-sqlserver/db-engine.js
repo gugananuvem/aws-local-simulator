@@ -1513,7 +1513,7 @@ class DbEngine {
       /^\s*GRANT\b/i,
       /^\s*DENY\b/i,
       /^\s*REVOKE\b/i,
-      /^\s*ALTER\s+TABLE\b[\s\S]*\b(?:WITH\s+(?:CHECK|NOCHECK)\s+)?(?:ADD\s+CONSTRAINT\b[\s\S]*\bFOREIGN\s+KEY\b|CHECK\s+CONSTRAINT\b|NOCHECK\s+CONSTRAINT\b)/i,
+      /^\s*ALTER\s+TABLE\b[\s\S]*\b(?:WITH\s+(?:CHECK|NOCHECK)\s+)?(?:ADD\s+CONSTRAINT\b[\s\S]*\b(?:FOREIGN\s+KEY\b|CHECK\b)|CHECK\s+CONSTRAINT\b|NOCHECK\s+CONSTRAINT\b)/i,
       /^\s*EXEC(?:UTE)?\s+(?:\[[^\]]+\]|"[^"]+"|\w+\.)*(?:sp_addextendedproperty|sp_fulltext_database|sp_db_vardecimal_storage_format|sp_configure|sp_executesql)\b/i,
       /^\s*IF\s*\([\s\S]*FULLTEXTSERVICEPROPERTY[\s\S]*\bEXEC\b[\s\S]*$/i,
     ];
