@@ -406,6 +406,18 @@ const DDL_SISTEMA = `
     data_space_id INTEGER NOT NULL,
     PRIMARY KEY (partition_scheme_id, destination_id)
   );
+
+  -- O designer de indice XML faz INNER JOIN com sys.internal_tables mesmo
+  -- quando a tabela nao tem indice XML. A tabela fica vazia no simulador.
+  CREATE TABLE IF NOT EXISTS internal_tables (
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    parent_id INTEGER NOT NULL,
+    internal_type INTEGER NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    type CHAR(2) NOT NULL DEFAULT 'IT',
+    type_desc TEXT NOT NULL DEFAULT 'INTERNAL_TABLE',
+    is_ms_shipped BIT NOT NULL DEFAULT 1
+  );
 `;
 
 /**
@@ -1028,7 +1040,13 @@ const DDL_DATABASE = `
     xml_index_type INTEGER NOT NULL DEFAULT 0,
     secondary_type TEXT,
     using_xml_index_id INTEGER,
-    path_id INTEGER
+    path_id INTEGER,
+    fill_factor INTEGER NOT NULL DEFAULT 0,
+    is_padded BIT NOT NULL DEFAULT 0,
+    is_disabled BIT NOT NULL DEFAULT 0,
+    is_hypothetical BIT NOT NULL DEFAULT 0,
+    allow_row_locks BIT NOT NULL DEFAULT 1,
+    allow_page_locks BIT NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS selective_xml_index_paths (
@@ -1912,7 +1930,13 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['level_4_grid', 'INTEGER NOT NULL DEFAULT 0']
   ]);
   migrarColunas(db, 'main', 'xml_indexes', [
-    ['name', 'TEXT']
+    ['name', 'TEXT'],
+    ['fill_factor', 'INTEGER NOT NULL DEFAULT 0'],
+    ['is_padded', 'BIT NOT NULL DEFAULT 0'],
+    ['is_disabled', 'BIT NOT NULL DEFAULT 0'],
+    ['is_hypothetical', 'BIT NOT NULL DEFAULT 0'],
+    ['allow_row_locks', 'BIT NOT NULL DEFAULT 1'],
+    ['allow_page_locks', 'BIT NOT NULL DEFAULT 1']
   ]);
   migrarColunas(db, 'main', 'index_columns', [
     ['key_ordinal', 'INTEGER NOT NULL DEFAULT 0'],
