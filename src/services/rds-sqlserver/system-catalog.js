@@ -1303,7 +1303,19 @@ const OBJETOS_DO_CATALOGO = new Set([
   'all_parameters', 'parameters', 'procedures', 'numbered_procedures', 'triggers', 'database_permissions',
   'assemblies', 'assembly_modules', 'table_types', 'assembly_types',
   'sysdac_instances', 'syspolicy_configuration', 'sysobjects', 'syscolumns', 'systypes',
-  'syscomments', 'sysusers', 'routines', 'sysprocesses'
+  'syscomments', 'sysusers', 'routines', 'sysprocesses',
+  // Tabelas internas do catálogo/DMVs que não devem aparecer como objetos de usuário.
+  'databases', 'database_mirroring', 'database_recovery_status', 'change_tracking_databases',
+  'database_filestream_options', 'database_query_store_options', 'database_scoped_configurations',
+  'dm_exec_connections', 'dm_exec_sessions', 'dm_os_process_memory', 'dm_db_file_space_usage',
+  'dm_io_virtual_file_stats', 'dm_cryptographic_provider_properties',
+  'endpoints', 'server_principals', 'server_role_members', 'server_permissions',
+  'server_principal_credentials', 'sql_logins', 'server_triggers', 'server_assembly_modules',
+  'server_sql_modules', 'configurations', 'master_files', 'backup_devices', 'certificates',
+  'asymmetric_keys', 'credentials', 'cryptographic_providers', 'syslanguages', 'fn_helpcollations',
+  'fulltext_languages', 'internal_tables', 'syspolicy_system_health_state',
+  'partition_functions', 'partition_parameters', 'partition_schemes', 'destination_data_spaces',
+  'msdb'
 ]);
 
 /** Mapeamento dos tipos SQLite para os tipos do catalogo sys.types. */
@@ -2298,7 +2310,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
     FROM main.sqlite_master
     WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
     ORDER BY rowid
-  `).all().filter((objeto) => !OBJETOS_DO_CATALOGO.has(objeto.name));
+  `).all().filter((objeto) => !OBJETOS_DO_CATALOGO.has(objeto.name) && !/^_tmp_/i.test(objeto.name));
 
   const inserirObjeto = db.prepare(`
     INSERT INTO main.objects
