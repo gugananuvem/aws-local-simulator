@@ -784,6 +784,8 @@ const DDL_DATABASE = `
     create_date DATETIME,
     modify_date DATETIME,
     is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_schema_published BIT NOT NULL DEFAULT 0,
     definition TEXT,
     is_system_named BIT NOT NULL DEFAULT 1
   );
@@ -1095,6 +1097,7 @@ const DDL_DATABASE = `
     is_ms_shipped BIT NOT NULL DEFAULT 0,
     is_published BIT NOT NULL DEFAULT 0,
     is_schema_published BIT NOT NULL DEFAULT 0,
+    is_enforced BIT NOT NULL DEFAULT 1,
     is_system_named BIT NOT NULL DEFAULT 1
   );
 
@@ -2104,6 +2107,8 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['column_store_order_ordinal', 'INTEGER']
   ]);
   migrarColunas(db, 'main', 'default_constraints', [
+    ['is_published', 'BIT NOT NULL DEFAULT 0'],
+    ['is_schema_published', 'BIT NOT NULL DEFAULT 0'],
     ['is_system_named', 'BIT NOT NULL DEFAULT 1']
   ]);
   migrarColunas(db, 'main', 'foreign_key_columns', [
@@ -2201,7 +2206,9 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['modify_date', "DATETIME DEFAULT '2023-01-01 00:00:00'"],
     ['is_ms_shipped', 'BIT NOT NULL DEFAULT 0'],
     ['is_published', 'BIT NOT NULL DEFAULT 0'],
-    ['is_schema_published', 'BIT NOT NULL DEFAULT 0']
+    ['is_schema_published', 'BIT NOT NULL DEFAULT 0'],
+    ['is_enforced', 'BIT NOT NULL DEFAULT 1'],
+    ['is_system_named', 'BIT NOT NULL DEFAULT 1']
   ]);
   migrarColunas(db, 'main', 'synonyms', [
     ['base_object_name', "TEXT DEFAULT ''"]

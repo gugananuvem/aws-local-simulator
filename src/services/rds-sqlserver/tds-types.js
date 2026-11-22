@@ -135,6 +135,35 @@ function columnMetadata(columns = [], rows = []) {
       kind = 'tinyint';
     }
 
+    // O SMO lê várias colunas de metadados com GetBoolean()/GetByte()/GetInt16().
+    // Quando a expressão vem sem tipo declarado (CAST AS bit que o SQLite apaga,
+    // CASE, ISNULL, COALESCE, aritmética), inferimos pelo nome+valor para evitar
+    // "Specified cast is not valid" no SSMS (ex.: Script Key/Constraint As).
+    if (!declared && values.length > 0) {
+      const todosZeroUm = values.every((value) => {
+        const numero = Number(value);
+        return Number.isInteger(numero) && (numero === 0 || numero === 1);
+      });
+      const todosInteiros = values.every((value) => Number.isInteger(Number(value)));
+      if (todosZeroUm && /^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$|IsFileTableDefined$)/.test(name)) {
+        kind = 'bit';
+      } else if (
+        todosInteiros &&
+        /^(?:FillFactor|IndexType|SpatialIndexType|SecondaryXmlIndexType|ResumableOperationState)$/i.test(name)
+      ) {
+        kind = 'tinyint';
+      } else if (
+        todosInteiros &&
+        /^(?:Level[1-4]Grid|IndexKeyType)$/i.test(name) &&
+        values.every((value) => {
+          const numero = Number(value);
+          return numero >= -32768 && numero <= 32767;
+        })
+      ) {
+        kind = 'smallint';
+      }
+    }
+
     // syscomments.texttype e syscomments.colid são SMALLINT no SQL Server. O
     // View Designer lê texttype com SqlDataReader.GetInt16(); se a coluna chegar
     // como INTN de 4 bytes ele estoura "Specified cast is not valid" e abre a
