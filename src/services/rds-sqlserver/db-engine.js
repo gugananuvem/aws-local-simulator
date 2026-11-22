@@ -1421,6 +1421,9 @@ class DbEngine {
       this._aplicarAlterDatabase(db, alterDatabase);
       return this._resultadoVazio('ddl');
     }
+    if (this._ehComandoSemSuporteNoSqlite(sql)) {
+      return this._resultadoVazio('ddl');
+    }
     const tipo = this._detectarTipo(sql);
 
     if (tipo === 'select') {
@@ -1444,7 +1447,17 @@ class DbEngine {
       };
     }
 
-    db.exec(sql);
+    if (/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?VIEW\b/i.test(sql)) {
+      this._validarCreateView(db, sql);
+    }
+    try {
+      db.exec(sql);
+    } catch (erro) {
+      if (/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?VIEW\b/i.test(sql)) {
+        this._limparViewInvalida(db, sql);
+      }
+      throw erro;
+    }
     if (/^\s*(?:CREATE|ALTER|DROP)\s+(?:TABLE|VIEW|INDEX)\b/i.test(sql)) {
       catalogoSistema.sincronizarCatalogoDatabase(db);
     }
@@ -1469,6 +1482,31 @@ class DbEngine {
       if (this._databaseExiste(nome)) return nome;
     }
     return dbNamePadrao;
+  }
+
+  /**
+   * Ignora comandos de script SSMS/T-SQL sem equivalente no SQLite.
+   * @private
+   */
+  _ehComandoSemSuporteNoSqlite(sql) {
+    const mascarado = String(sql || '')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/'[^']*'/g, "''")
+      .trim();
+    if (!mascarado) return false;
+    const padroes = [
+      /^\s*CREATE\s+USER\b/i,
+      /^\s*ALTER\s+ROLE\b/i,
+      /^\s*ALTER\s+AUTHORIZATION\b/i,
+      /^\s*GRANT\b/i,
+      /^\s*DENY\b/i,
+      /^\s*REVOKE\b/i,
+      /^\s*ALTER\s+TABLE\b[\s\S]*\b(?:WITH\s+(?:CHECK|NOCHECK)\s+)?(?:ADD\s+CONSTRAINT\b[\s\S]*\bFOREIGN\s+KEY\b|CHECK\s+CONSTRAINT\b|NOCHECK\s+CONSTRAINT\b)/i,
+      /^\s*EXEC(?:UTE)?\s+(?:\[[^\]]+\]|"[^"]+"|\w+\.)*(?:sp_addextendedproperty|sp_fulltext_database|sp_db_vardecimal_storage_format|sp_configure|sp_executesql)\b/i,
+      /^\s*IF\s*\([\s\S]*FULLTEXTSERVICEPROPERTY[\s\S]*\bEXEC\b[\s\S]*$/i,
+    ];
+    return padroes.some((p) => p.test(mascarado));
   }
 
   /**
@@ -1515,11 +1553,13 @@ class DbEngine {
       .replace(/--[^\n]*/g, ' ')
       .replace(/'[^']*'/g, "''");
     const m = mascarado.match(
-      /^\s*ALTER\s+DATABASE\s+(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w$#@]*))\s+SET\s+([\s\S]+)$/i
+      /^\s*ALTER\s+DATABASE\s+(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w$#@]*))(?:\s+SET\s+([\s\S]+))?$/i
     );
     if (!m) return null;
     const nome = m[1] || m[2] || m[3];
-    const corpo = m[4].replace(/;+\s*$/, '').trim().toUpperCase().replace(/\s+/g, ' ');
+    const corpoBruto = (m[4] || '').replace(/;+\s*$/, '').trim();
+    const corpo = corpoBruto.toUpperCase().replace(/\s+/g, ' ');
+    if (!corpo) return { nome, noOp: true, opcao: '' };
     if (corpo === 'OFFLINE') return { nome, state: 6, stateDesc: 'OFFLINE' };
     if (corpo === 'ONLINE') return { nome, state: 0, stateDesc: 'ONLINE' };
     if (corpo === 'READ_ONLY' || corpo === 'READONLY') return { nome, isReadOnly: 1 };
@@ -1527,7 +1567,9 @@ class DbEngine {
     if (corpo === 'SINGLE_USER' || corpo === 'RESTRICTED_USER' || corpo === 'MULTI_USER') {
       return { nome, somenteUserAccess: corpo };
     }
-    return null;
+    // Opções de configuração do SQL Server sem equivalente no SQLite:
+    // aceita como no-op para compatibilidade com scripts gerados pelo SSMS.
+    return { nome, noOp: true, opcao: corpo };
   }
 
   /**
@@ -1535,6 +1577,7 @@ class DbEngine {
    * @private
    */
   _aplicarAlterDatabase(db, acao) {
+    if (acao.noOp) return true;
     for (const alvo of this.databases.values()) {
       try {
         if (acao.state !== undefined) {
@@ -1548,6 +1591,46 @@ class DbEngine {
       } catch (_erro) { /* ignora banco sem catálogo carregado */ }
     }
     return true;
+  }
+
+  /** @private */
+  _nomeViewDoCreate(sql) {
+    const mascarado = String(sql || '')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/'[^']*'/g, "''");
+    const m = mascarado.match(/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?VIEW\s+(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w$#@]*))(?:\s*\.\s*(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w$#@]*)))?/i);
+    if (!m) return null;
+    return m[4] || m[5] || m[6] || m[1] || m[2] || m[3] || null;
+  }
+
+  /** @private */
+  _limparViewInvalida(db, sql) {
+    const nome = this._nomeViewDoCreate(sql);
+    if (!nome) return;
+    try {
+      const existe = db.prepare("SELECT 1 FROM sqlite_master WHERE type='view' AND name=? LIMIT 1").get(nome);
+      if (existe) {
+        db.prepare(`DROP VIEW IF EXISTS "${String(nome).replace(/"/g, '""')}"`).run();
+      }
+    } catch (_erro) { /* melhor esforço */ }
+  }
+
+  /** @private */
+  _validarCreateView(db, sql) {
+    const mascarado = String(sql || '')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/'[^']*'/g, "''");
+    const m = mascarado.match(/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?VIEW[\s\S]+?\bAS\s+([\s\S]+)$/i);
+    if (!m) return;
+    const selectSql = m[1].trim().replace(/;+\s*$/, '');
+    if (!selectSql) return;
+    try {
+      db.prepare(selectSql);
+    } catch (erro) {
+      throw erro;
+    }
   }
 
   /** @private */

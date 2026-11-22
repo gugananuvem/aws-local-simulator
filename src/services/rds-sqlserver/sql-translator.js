@@ -398,6 +398,7 @@ class SqlTranslator {
     resultado = this._traduzirUpdateJoin(resultado);
     resultado = this._traduzirFuncoes(resultado, gravarDataHora);
     resultado = this._traduzirTop(resultado);
+    resultado = this._removerHintsTabela(resultado);
     resultado = this._traduzirDdl(resultado);
     resultado = this._normalizarWhitespace(resultado);
 
@@ -2714,15 +2715,23 @@ class SqlTranslator {
     for (let i = segmentos.length - 1; i >= 0; i -= 1) {
       const { início, fim } = segmentos[i];
       const trecho = sql.slice(início, fim);
-      if (!/\b(?:CREATE|ALTER)\s+TABLE\b/i.test(this._mascarar(trecho).code)) {
+      const mascarado = this._mascarar(trecho).code;
+      if (/\b(?:CREATE|ALTER)\s+TABLE\b/i.test(mascarado)) {
+        let traduzido = this._traduzirTipos(trecho);
+        traduzido = this._removerOpcoesRestricao(traduzido);
+        traduzido = this._removerOnPrimary(traduzido);
+        traduzido = this._traduzirIdentity(traduzido);
+        traduzido = this._removerChavePrimariaRedundante(traduzido);
+        resultado = resultado.slice(0, início) + traduzido + resultado.slice(fim);
         continue;
       }
-      let traduzido = this._traduzirTipos(trecho);
-      traduzido = this._removerOpcoesRestricao(traduzido);
-      traduzido = this._removerOnPrimary(traduzido);
-      traduzido = this._traduzirIdentity(traduzido);
-      traduzido = this._removerChavePrimariaRedundante(traduzido);
-      resultado = resultado.slice(0, início) + traduzido + resultado.slice(fim);
+      if (/^\s*CREATE\s+(?:UNIQUE\s+)?(?:CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\b/i.test(mascarado)) {
+        let traduzido = trecho.replace(/\b(CREATE\s+(?:UNIQUE\s+)?)(?:CLUSTERED\s+|NONCLUSTERED\s+)(INDEX\b)/ig, '$1$2');
+        traduzido = this._substituirTodos(traduzido, '\\bINCLUDE\\s*\\([^)]*\\)', () => '', true);
+        traduzido = traduzido.replace(/\s+WITH\s*\([^)]*\)/ig, '');
+        traduzido = this._removerOnPrimary(traduzido);
+        resultado = resultado.slice(0, início) + traduzido + resultado.slice(fim);
+      }
     }
 
     return resultado;
@@ -2777,6 +2786,37 @@ class SqlTranslator {
     );
   }
 
+  /** Remove hints de tabela T-SQL (WITH (NOLOCK), etc.) não suportados no SQLite. @private */
+  _removerHintsTabela(sql) {
+    return this._substituirTodos(
+      sql,
+      '\\bWITH\\s*\\(\\s*(?:NOLOCK|READUNCOMMITTED|READCOMMITTED|REPEATABLEREAD|SERIALIZABLE|ROWLOCK|TABLOCKX?|UPDLOCK|HOLDLOCK|NOWAIT|READPAST|XLOCK|PAGLOCK)(?:\\s*,\\s*(?:NOLOCK|READUNCOMMITTED|READCOMMITTED|REPEATABLEREAD|SERIALIZABLE|ROWLOCK|TABLOCKX?|UPDLOCK|HOLDLOCK|NOWAIT|READPAST|XLOCK|PAGLOCK))*\\s*\\)',
+      () => '',
+      true
+    );
+  }
+
+  /** Normaliza CREATE INDEX removendo CLUSTERED/NONCLUSTERED e opções WITH/ON. @private */
+  _normalizarCreateIndex(sql) {
+    const segmentos = this._segmentosInstrucoes(this._mascarar(sql).code);
+    let resultado = sql;
+    for (let i = segmentos.length - 1; i >= 0; i -= 1) {
+      const { início, fim } = segmentos[i];
+      const trecho = sql.slice(início, fim);
+      if (!/^\s*CREATE\s+(?:UNIQUE\s+)?(?:CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\b/i.test(this._mascarar(trecho).code)) {
+        continue;
+      }
+      let traduzido = trecho
+        .replace(/\b(CREATE\s+(?:UNIQUE\s+)?)(?:CLUSTERED\s+|NONCLUSTERED\s+)(INDEX\b)/ig, '$1$2');
+      traduzido = this._substituirTodos(traduzido, '\\bINCLUDE\\s*\\([^)]*\\)', () => '', true);
+      traduzido = this._substituirTodos(traduzido, '\\bWHERE\\s+[^;]+$', (m) => m, false);
+      traduzido = traduzido.replace(/\s+WITH\s*\([^)]*\)/ig, '');
+      traduzido = this._removerOnPrimary(traduzido);
+      resultado = resultado.slice(0, início) + traduzido + resultado.slice(fim);
+    }
+    return resultado;
+  }
+
   /** Remove as cláusulas ON/TEXTIMAGE_ON [PRIMARY] de um trecho DDL. @private */
   _removerOnPrimary(sql) {
     return this._substituirTodos(
@@ -2798,7 +2838,7 @@ class SqlTranslator {
     }
     return this._substituirTodos(
       sql,
-      ',\\s*CONSTRAINT\\s+(?:\\[[^\\]]+\\]|"[^"]+"|\\w+)\\s+PRIMARY\\s+KEY\\s+' +
+      ',\\s*(?:CONSTRAINT\\s+(?:\\[[^\\]]+\\]|"[^"]+"|\\w+)\\s+)?PRIMARY\\s+KEY\\s+' +
         '(?:CLUSTERED|NONCLUSTERED)?\\s*\\([^)]*\\)(?:\\s*WITH\\s*\\([^)]*\\))?',
       () => '',
       true

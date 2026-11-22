@@ -2403,7 +2403,14 @@ function sincronizarCatalogoDatabase(db, dbName) {
       // view o designer abre em branco, mesmo com o texto em syscomments.
       // PRAGMA table_info devolve as colunas derivadas da view no SQLite.
       db.prepare('DELETE FROM main.all_columns WHERE object_id = ?').run(objeto.object_id);
-      const colunasView = db.prepare(`PRAGMA main.table_info("${nomeSeguro}")`).all();
+      let colunasView = [];
+      try {
+        colunasView = db.prepare(`PRAGMA main.table_info("${nomeSeguro}")`).all();
+      } catch (_erro) {
+        // View quebrada (dependência ausente/UDF indisponível): mantém o objeto
+        // no catálogo, mas sem colunas inferidas para não bloquear a sincronização.
+        colunasView = [];
+      }
       const colunasBase = resolverTiposColunasView(db, objeto.sql, colunasView) || [];
       for (let indice = 0; indice < colunasView.length; indice += 1) {
         const coluna = colunasView[indice];
@@ -3200,8 +3207,8 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
         ('LogOnSuccess', '0', 'Registra ocorrencias bem-sucedidas')
     `).run();
   }
-  sincronizarCatalogoDatabase(db, dbName);
   registrarFuncoes(db, { dbName, engine, listarDatabases, usuario });
+  sincronizarCatalogoDatabase(db, dbName);
 }
 
 /** @private */
