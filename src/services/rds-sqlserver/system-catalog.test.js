@@ -361,6 +361,31 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(indiceFullText).toEqual([]);
   });
 
+  test('carrega texto e metadados legados usados pelo designer de views', () => {
+    engine.execute('principal', 'CREATE VIEW [dbo].[VW001] AS SELECT 1 AS valor');
+
+    const texto = engine.execute('principal', `
+      SELECT sc.texttype, sc.text, DATALENGTH(sc.text)
+      FROM (sys.schemas ss INNER JOIN sys.objects so ON ss.schema_id = so.schema_id)
+      INNER JOIN syscomments sc ON so.object_id = sc.id
+      WHERE so.type = N'V' AND ss.name = N'dbo' AND so.name = N'VW001'
+      ORDER BY sc.colid
+    `).rows;
+    expect(texto).toHaveLength(1);
+    // DATALENGTH(sc.text) nao tem alias, então o engine devolve linha posicional.
+    expect(texto[0][0]).toBe(1);
+    expect(String(texto[0][1])).toMatch(/VW001/i);
+    expect(texto[0][2]).toBeGreaterThan(0);
+
+    const funcoesAgregacao = engine.execute('principal', `
+      SELECT su.name, so.name, isr.DATA_TYPE
+      FROM sysobjects so INNER JOIN sysusers su ON so.uid = su.uid
+      INNER JOIN INFORMATION_SCHEMA.ROUTINES isr ON so.name = isr.SPECIFIC_NAME
+      WHERE so.type = N'AF'
+    `).rows;
+    expect(funcoesAgregacao).toEqual([]);
+  });
+
   test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {
     const configuracoes = engine.execute('master', `
       SELECT configuration_id, name, value_in_use FROM sys.configurations

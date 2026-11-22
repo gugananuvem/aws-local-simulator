@@ -1208,6 +1208,23 @@ const DDL_DATABASE = `
       1 AS allownulls,
       t.is_user_defined AS isusertype
     FROM types t;
+
+  -- O designer de views (VDT) ainda usa as tabelas legadas syscomments/sysusers
+  -- e INFORMATION_SCHEMA.ROUTINES para localizar o texto e o dono da view.
+  DROP VIEW IF EXISTS syscomments;
+  CREATE VIEW syscomments AS
+    SELECT object_id AS id, 1 AS colid, 1 AS texttype, definition AS text
+    FROM sql_modules;
+
+  DROP VIEW IF EXISTS sysusers;
+  CREATE VIEW sysusers AS
+    SELECT principal_id AS uid, name
+    FROM database_principals;
+
+  DROP VIEW IF EXISTS routines;
+  CREATE VIEW routines AS
+    SELECT name AS SPECIFIC_NAME, '' AS DATA_TYPE
+    FROM procedures;
 `;
 
 /** Tabelas criadas pelo proprio catalogo, que nao devem aparecer como objetos de usuario. */
@@ -1228,7 +1245,8 @@ const OBJETOS_DO_CATALOGO = new Set([
   'registered_search_property_lists', 'fulltext_index_columns',
   'all_parameters', 'parameters', 'procedures', 'numbered_procedures', 'triggers', 'database_permissions',
   'assemblies', 'assembly_modules', 'table_types', 'assembly_types',
-  'sysdac_instances', 'syspolicy_configuration', 'sysobjects', 'syscolumns', 'systypes'
+  'sysdac_instances', 'syspolicy_configuration', 'sysobjects', 'syscolumns', 'systypes',
+  'syscomments', 'sysusers', 'routines'
 ]);
 
 /** Mapeamento dos tipos SQLite para os tipos do catalogo sys.types. */
@@ -2725,6 +2743,13 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     const cache = db.__colunasPorId;
     if (!cache) return null;
     return cache.get(`${Number(id)}:${Number(coluna)}`) || null;
+  });
+  // DATALENGTH e usada pelo designer de views para medir o texto do modulo.
+  db.function('DATALENGTH', { varargs: true }, (valor) => {
+    if (valor == null) return 0;
+    return Buffer.isBuffer(valor)
+      ? valor.length
+      : Buffer.byteLength(String(valor), 'utf8');
   });
 
   // O SMO usa SQL_VARIANT_PROPERTY para decidir como formatar os valores das

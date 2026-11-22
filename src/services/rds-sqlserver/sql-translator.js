@@ -979,10 +979,12 @@ class SqlTranslator {
    * @private
    */
   _traduzirCatalogoLocal(sql) {
-    const semFuncao = sql.replace(
-      /\bsys\s*\.\s*fn_varbintohexsubstring\b/gi,
-      'fn_varbintohexsubstring'
-    );
+    const semFuncao = sql
+      .replace(/\bINFORMATION_SCHEMA\s*\.\s*ROUTINES\b/gi, 'main.routines')
+      .replace(
+        /\bsys\s*\.\s*fn_varbintohexsubstring\b/gi,
+        'fn_varbintohexsubstring'
+      );
     const objetos = [
       'tables', 'all_views', 'views', 'system_views', 'synonyms', 'objects',
       'all_objects', 'indexes',
