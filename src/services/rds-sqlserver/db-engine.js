@@ -1411,6 +1411,11 @@ class DbEngine {
 
   /** @private */
   _executarInstrucao(db, sql, params) {
+    const alterDatabase = this._traduzirAlterDatabase(sql);
+    if (alterDatabase) {
+      this._aplicarAlterDatabase(db, alterDatabase);
+      return this._resultadoVazio('ddl');
+    }
     const tipo = this._detectarTipo(sql);
 
     if (tipo === 'select') {
@@ -1439,6 +1444,47 @@ class DbEngine {
       catalogoSistema.sincronizarCatalogoDatabase(db);
     }
     return this._resultadoVazio('ddl');
+  }
+
+  /**
+   * Interpreta comandos ALTER DATABASE básicos usados pelo SSMS (Take Offline/Online).
+   * @private
+   */
+  _traduzirAlterDatabase(sql) {
+    // Remove comentários/literais apenas para casar o comando; ALTER DATABASE
+    // não possui conteúdo sensível a mascaramento aqui.
+    const mascarado = String(sql)
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/'[^']*'/g, "''");
+    const m = mascarado.match(
+      /^\s*ALTER\s+DATABASE\s+(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w$#@]*))\s+SET\s+([\s\S]+)$/i
+    );
+    if (!m) return null;
+    const nome = m[1] || m[2] || m[3];
+    const corpo = m[4].replace(/;+\s*$/, '').trim().toUpperCase().replace(/\s+/g, ' ');
+    if (corpo === 'OFFLINE') return { nome, state: 6, stateDesc: 'OFFLINE' };
+    if (corpo === 'ONLINE') return { nome, state: 0, stateDesc: 'ONLINE' };
+    if (corpo === 'SINGLE_USER' || corpo === 'RESTRICTED_USER' || corpo === 'MULTI_USER') {
+      return { nome, somenteUserAccess: corpo };
+    }
+    return null;
+  }
+
+  /**
+   * Aplica estado básico de database no catálogo sys.databases.
+   * @private
+   */
+  _aplicarAlterDatabase(db, acao) {
+    if (acao.state !== undefined) {
+      for (const alvo of this.databases.values()) {
+        try {
+          alvo.prepare('UPDATE sys.databases SET state = ?, state_desc = ? WHERE name = ?')
+            .run(acao.state, acao.stateDesc, acao.nome);
+        } catch (_erro) { /* ignora banco sem catálogo carregado */ }
+      }
+    }
+    return true;
   }
 
   /** @private */
