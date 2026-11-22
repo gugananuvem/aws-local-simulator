@@ -116,7 +116,17 @@ const DDL_SISTEMA = `
     mirroring_role TINYINT,
     mirroring_state TINYINT,
     mirroring_witness_state TINYINT,
-    mirroring_guid TEXT
+    mirroring_guid TEXT,
+    mirroring_partner_name TEXT,
+    mirroring_partner_instance TEXT,
+    mirroring_safety_level TINYINT,
+    mirroring_safety_sequence INT,
+    mirroring_failover_lsn TEXT,
+    mirroring_connection_timeout INT,
+    mirroring_redo_queue INT,
+    mirroring_redo_queue_type TEXT,
+    mirroring_end_of_log_lsn TEXT,
+    mirroring_replication_lsn TEXT
   );
 
   CREATE TABLE IF NOT EXISTS database_recovery_status (
