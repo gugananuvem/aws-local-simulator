@@ -412,6 +412,7 @@ const DDL_SISTEMA = `
   CREATE TABLE IF NOT EXISTS internal_tables (
     object_id INTEGER NOT NULL PRIMARY KEY,
     parent_id INTEGER NOT NULL,
+    parent_minor_id INTEGER NOT NULL DEFAULT 0,
     internal_type INTEGER NOT NULL,
     name TEXT NOT NULL DEFAULT '',
     type CHAR(2) NOT NULL DEFAULT 'IT',
@@ -1024,7 +1025,14 @@ const DDL_DATABASE = `
   CREATE TABLE IF NOT EXISTS spatial_indexes (
     object_id INTEGER NOT NULL,
     index_id INTEGER NOT NULL,
-    spatial_index_type INTEGER NOT NULL DEFAULT 0
+    name TEXT,
+    spatial_index_type INTEGER NOT NULL DEFAULT 0,
+    fill_factor INTEGER NOT NULL DEFAULT 0,
+    is_padded BIT NOT NULL DEFAULT 0,
+    is_disabled BIT NOT NULL DEFAULT 0,
+    is_hypothetical BIT NOT NULL DEFAULT 0,
+    allow_row_locks BIT NOT NULL DEFAULT 1,
+    allow_page_locks BIT NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS hash_indexes (
@@ -1928,6 +1936,15 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['level_2_grid', 'INTEGER NOT NULL DEFAULT 0'],
     ['level_3_grid', 'INTEGER NOT NULL DEFAULT 0'],
     ['level_4_grid', 'INTEGER NOT NULL DEFAULT 0']
+  ]);
+  migrarColunas(db, 'main', 'spatial_indexes', [
+    ['name', 'TEXT'],
+    ['fill_factor', 'INTEGER NOT NULL DEFAULT 0'],
+    ['is_padded', 'BIT NOT NULL DEFAULT 0'],
+    ['is_disabled', 'BIT NOT NULL DEFAULT 0'],
+    ['is_hypothetical', 'BIT NOT NULL DEFAULT 0'],
+    ['allow_row_locks', 'BIT NOT NULL DEFAULT 1'],
+    ['allow_page_locks', 'BIT NOT NULL DEFAULT 1']
   ]);
   migrarColunas(db, 'main', 'xml_indexes', [
     ['name', 'TEXT'],
@@ -2866,6 +2883,9 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
   `).run();
 
   criarTabelas(db, 'sys');
+  migrarColunas(db, 'sys', 'internal_tables', [
+    ['parent_minor_id', 'INTEGER NOT NULL DEFAULT 0']
+  ]);
   migrarColunas(db, 'sys', 'database_filestream_options', [
     ['non_transacted_access', 'TINYINT NOT NULL DEFAULT 0']
   ]);

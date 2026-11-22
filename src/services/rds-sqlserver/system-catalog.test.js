@@ -314,6 +314,35 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(indicesXml).toEqual([]);
   });
 
+  test('carrega índices espaciais consultados pelo designer', () => {
+    engine.execute('principal', 'CREATE TABLE [dbo].[TB_TESTE_SPATIAL] ([Id] INT NOT NULL)');
+
+    const indicesEspaciais = engine.execute('principal', `
+      select IndA.name, IndA.index_id, IndA.fill_factor, IndA.is_padded,
+             IndA.is_disabled, IndA.is_hypothetical, IndA.allow_row_locks,
+             IndA.allow_page_locks, IndA.spatial_index_type,
+             isnull(IndB.bounding_box_xmin,0), isnull(IndB.bounding_box_ymin,0),
+             isnull(IndB.bounding_box_xmax,0), isnull(IndB.bounding_box_ymax,0),
+             isnull(IndB.level_1_grid,16), isnull(IndB.level_2_grid,16),
+             isnull(IndB.level_3_grid,16), isnull(IndB.level_4_grid,16),
+             IndB.cells_per_object, ind_col.index_column_id, col.name as column_nName,
+             ind_col.key_ordinal, ind_col.is_descending_key, ind_col.column_id,
+             st.no_recompute
+      from (sys.spatial_indexes IndA left outer join sys.spatial_index_tessellations IndB
+        on IndB.object_id = IndA.object_id and IndB.index_id = IndA.index_id)
+      inner join(sys.internal_tables IntT inner join sys.stats st
+        on st.object_id = IntT.object_id and st.stats_id = 1)
+        on IntT.parent_id = IndA.object_id and IntT.parent_minor_id = IndA.index_id
+      inner join sys.index_columns ind_col on ind_col.object_id = IndA.object_id
+        and ind_col.index_id = IndA.index_id
+      inner join sys.columns col on col.object_id = ind_col.object_id
+        and col.column_id = ind_col.column_id
+      where IndA.object_id = object_id(N'dbo.TB_TESTE_SPATIAL')
+      order by IndA.index_id, ind_col.key_ordinal
+    `).rows;
+    expect(indicesEspaciais).toEqual([]);
+  });
+
   test('expõe as configurações lidas pelo SMO após CREATE DATABASE', () => {
     const configuracoes = engine.execute('master', `
       SELECT configuration_id, name, value_in_use FROM sys.configurations
