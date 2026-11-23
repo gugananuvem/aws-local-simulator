@@ -167,6 +167,7 @@ class PacketAssembler {
  * @returns {Buffer}
  */
 function buildPreloginResponse(version = [0x0B, 0x00, 0x00, 0x00, 0x00, 0x00]) {
+  // VERSION: 6 bytes (major,minor,buildHi,buildLoLE,sub). 11.0.0.0 default.
   const entries = [
     { token: 0x00, data: Buffer.from(version) },              // VERSION
     { token: 0x01, data: Buffer.from([0x02]) },               // ENCRYPTION = NOT_SUP

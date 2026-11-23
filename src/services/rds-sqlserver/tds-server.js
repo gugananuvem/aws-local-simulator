@@ -432,14 +432,24 @@ class TdsServer {
     // policy health; ignorar esse campo faz o SqlClient falhar localmente.
     session.dbName = String(login.database || '').trim() || cluster.DatabaseName || 'master';
     const serverName = this._serverName(session);
+    const negotiatedTdsVersion = (login.tdsVersion >= 0x71000001 && login.tdsVersion <= 0x74000004)
+      ? login.tdsVersion
+      : 0x74000004;
 
-    const response = Buffer.concat([
+    const { envChangeToken, ENVCHANGE } = require('./tds-tokens');
+    const packetSize = String(Math.min(Math.max(session.packetSize || 4096, 512), 32767));
+    const loginTokens = [
+      loginAckToken(serverName, { ...versaoLoginAck(), tdsVersion: negotiatedTdsVersion }),
       databaseEnvChangeToken('', session.dbName),
-      collationEnvChangeToken(),
-      loginAckToken(serverName, versaoLoginAck()),
-      infoToken(`Conectado ao cluster local ${serverName} (TDS 7.4).`, serverName),
-      doneToken({ rowcount: 0 })
-    ]);
+    ];
+    // Para TDS 7.4+ (SSMS moderno): DATABASE + COLLATION + INFO + DONE.
+    // Não incluir LANGUAGE/PACKET_SIZE aqui - SqlClient rejeita com Error state 15, Token 5.
+    if (negotiatedTdsVersion >= 0x74000004) {
+      loginTokens.push(collationEnvChangeToken());
+      loginTokens.push(infoToken(`Conectado ao cluster local ${serverName} (TDS 7.4).`, serverName));
+    }
+    loginTokens.push(doneToken({ rowcount: 0 }));
+    const response = Buffer.concat(loginTokens);
 
     this._sendRaw(socket, session, TYPE.TABULAR, response);
     this.logger.debug(`[TDS] Login aceito (spid ${session.spid}): ${login.userName} -> ${session.dbName}`);
@@ -584,6 +594,14 @@ class TdsServer {
         await this._executeSql(socket, session, sql, rpc.params.slice(2));
         return;
       }
+    }
+
+    // RPCs comuns de metadados OLE DB/ODBC. Roteia como batch para os shims do translator.
+    if (procName === 'sp_server_info') {
+      const attr = rpc.params.length ? rpc.params[0] : null;
+      const sql = attr == null ? 'EXEC sp_server_info' : `EXEC sp_server_info ${Number(attr)}`;
+      await this._executeSql(socket, session, sql);
+      return;
     }
 
     const description = procName ? `RPC '${procName}'` : 'RPC';

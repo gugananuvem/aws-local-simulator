@@ -79,12 +79,27 @@ function tokenWithLength16(token, body) {
 }
 
 /**
- * LOGINACK (0xAD). O tamanho e UInt16LE, a versao TDS e gravada em BE e o
- * nome do programaServer vem como B_VARCHAR.
+ * LOGINACK (0xAD). TDSVersion é DWORD LE no fio, formato canônico MS-TDS.
+ * 7.4: 0x04000074 -> bytes 74 00 00 04.
  */
+function loginAckTdsVersion(login7Version) {
+  const v = login7Version >>> 0;
+  const map = {
+    0x74000004: 0x04000074,
+    0x730B0003: 0x030B0003,
+    0x730A0003: 0x030A0003,
+    0x72090002: 0x02000972,
+    0x71000001: 0x01000071,
+  };
+  if (map[v]) return map[v];
+  if ([0x04000074, 0x030B0003, 0x030A0003, 0x02000972, 0x01000071].includes(v)) return v;
+  return 0x04000074;
+}
+
 function loginAckToken(serverName = 'LOCAL', options = {}) {
+  const tdsVersion = options.tdsVersion == null ? TDS_VERSION_74 : options.tdsVersion;
   const version = Buffer.alloc(4);
-  version.writeUInt32BE(options.tdsVersion == null ? TDS_VERSION_74 : options.tdsVersion, 0);
+  version.writeUInt32LE(loginAckTdsVersion(tdsVersion), 0);
 
   const body = Buffer.concat([
     Buffer.from([options.interface == null ? 0x01 : options.interface]), // SQL_TSQL
@@ -136,7 +151,15 @@ function databaseEnvChangeToken(oldDatabase, newDatabase) {
  * Tanto o valor novo quanto o antigo tem 5 bytes (info UInt32 + sortId).
  */
 function collationEnvChangeToken(collation = COLLATION) {
-  return envChangeToken(ENVCHANGE.COLLATION, collation, collation, { encoding: 'utf8' });
+  // COLLATION ENVCHANGE: NewValueLen(1) + NewValue(5) + OldValueLen(1) + OldValue(5)
+  const body = Buffer.concat([
+    Buffer.from([ENVCHANGE.COLLATION & 0xFF]),
+    Buffer.from([collation.length & 0xFF]),
+    Buffer.from(collation),
+    Buffer.from([collation.length & 0xFF]),
+    Buffer.from(collation),
+  ]);
+  return tokenWithLength16(TOKEN.ENVCHANGE, body);
 }
 
 /**

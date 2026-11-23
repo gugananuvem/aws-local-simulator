@@ -756,7 +756,7 @@ class SqlTranslator {
       .replace(/@@MAX_PRECISION\b/gi, '38')
       .replace(/@@SPID\b/gi, '1')
       .replace(/@@TRANCOUNT\b/gi, '0')
-      .replace(/@@VERSION\b/gi, "'16.00.4035.2'")
+      .replace(/@@VERSION\b/gi, "'Microsoft SQL Server 2022 (RTM) - 16.00.4035.2 (X64) Standard Edition (64-bit) on Windows'")
       // O View Designer consulta SELECT CURRENT_USER ao abrir a lista de
       // tabelas; no SQLite isso vira uma coluna inexistente.
       .replace(/\bCURRENT_USER\b/gi, "'dbo'")
@@ -2242,6 +2242,31 @@ class SqlTranslator {
           return `SELECT ${valor || '0'} AS [${apelido}]`;
         }
       }
+    }
+
+    // Shim sp_server_info: usado por OLE DB/ODBC para validar destino SQL Server.
+    if (/\bsp_server_info\b/i.test(código)) {
+      const mAttr = sql.match(/\bsp_server_info\s+(@\w+\s*=\s*)?(\d+)/i);
+      const attrId = mAttr ? parseInt(mAttr[2], 10) : null;
+      const rows = [
+        [1, 'DBMS_NAME', 'Microsoft SQL Server'],
+        [2, 'DBMS_VER', 'Microsoft SQL Server 2022 - 16.00.4035.2'],
+        [10, 'OWNER_TERM', 'owner'],
+        [11, 'TABLE_TERM', 'table'],
+        [12, 'MAX_OWNER_NAME_LENGTH', '128'],
+        [13, 'TABLE_LENGTH', '128'],
+        [16, 'IDENTIFIER_CASE', 'SENSITIVE'],
+        [17, 'TX_ISOLATION', 'READ COMMITTED'],
+        [18, 'COLLATION_SEQ', 'charset=iso_1 sort_order=nocase_iso'],
+        [22, 'ACCESSIBLE_TABLES', 'Y'],
+        [500, 'SYS_SPROC_VERSION', '16.00.4035.2']
+      ];
+      const filtered = Number.isFinite(attrId) ? rows.filter((r) => r[0] === attrId) : rows;
+      const esc = (v) => "'" + String(v).replace(/'/g, "''") + "'";
+      if (filtered.length === 0) {
+        return "SELECT CAST(0 AS INT) AS [attribute_id], CAST('' AS NVARCHAR(60)) AS [attribute_name], CAST('' AS NVARCHAR(255)) AS [attribute_value] WHERE 1=0";
+      }
+      return filtered.map((r) => `SELECT ${r[0]} AS [attribute_id], ${esc(r[1])} AS [attribute_name], ${esc(r[2])} AS [attribute_value]`).join(' UNION ALL ');
     }
 
     if (/\bxp_msver\b/i.test(código) && /#SVer\b/i.test(código)) {

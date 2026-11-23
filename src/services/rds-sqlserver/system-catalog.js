@@ -2902,7 +2902,7 @@ function registrarFuncoesData(db) {
  * Registra as funções T-SQL usadas pelo SSMS/SMO em toda conexão SQLite.
  * @private
  */
-function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admin' }) {
+function registrarFuncoes(db, { dataDir, dbName, engine, listarDatabases, usuario = 'admin' }) {
   registrarFuncoesData(db);
   const edicao = editionDoMotor(engine);
   const ehMsdb = String(dbName || '').toLowerCase() === 'msdb';
@@ -3151,18 +3151,62 @@ function registrarFuncoes(db, { dbName, engine, listarDatabases, usuario = 'admi
     return cache && cache.has(Number(id)) ? cache.get(Number(id)) : null;
   });
 
+  const databaseIdPorNome = (nome) => {
+    try {
+      const linha = db.prepare('SELECT database_id FROM sys.databases WHERE lower(name) = lower(?)').get(String(nome));
+      if (linha && linha.database_id != null) return Number(linha.database_id);
+    } catch (err) {
+      if (err && /busy/i.test(err.message || '')) {
+        try {
+          const Database = require('better-sqlite3');
+          const masterDbPath = path.join(dataDir, `${MASTER}.db`);
+          const tmp = new Database(masterDbPath, { readonly: true, fileMustExist: true });
+          try {
+            const linha = tmp.prepare('SELECT database_id FROM databases WHERE lower(name) = lower(?)').get(String(nome));
+            if (linha && linha.database_id != null) return Number(linha.database_id);
+          } finally {
+            tmp.close();
+          }
+        } catch (_) { /* fallback abaixo */ }
+      }
+    }
+    const indice = databases().findIndex((item) => item.toLowerCase() === String(nome).toLowerCase());
+    return indice < 0 ? null : indice + 1;
+  };
+  const databaseNomePorId = (id) => {
+    try {
+      const linha = db.prepare('SELECT name FROM sys.databases WHERE database_id = ?').get(Number(id));
+      if (linha && linha.name != null) return String(linha.name);
+    } catch (err) {
+      if (err && /busy/i.test(err.message || '')) {
+        try {
+          const Database = require('better-sqlite3');
+          const masterDbPath = path.join(dataDir, `${MASTER}.db`);
+          const tmp = new Database(masterDbPath, { readonly: true, fileMustExist: true });
+          try {
+            const linha = tmp.prepare('SELECT name FROM databases WHERE database_id = ?').get(Number(id));
+            if (linha && linha.name != null) return String(linha.name);
+          } finally {
+            tmp.close();
+          }
+        } catch (_) { /* fallback abaixo */ }
+      }
+    }
+    return databases()[Number(id) - 1] || null;
+  };
+
   db.function('DB_ID', { varargs: true }, (nome) => {
     const alvo = nome == null ? dbName : nome;
-    const indice = databases()
-      .findIndex((item) => item.toLowerCase() === String(alvo).toLowerCase());
-    return indice < 0 ? (nome == null ? 1 : null) : indice + 1;
+    const id = databaseIdPorNome(alvo);
+    if (id != null) return id;
+    return nome == null ? 1 : null;
   });
   db.function('DB_NAME', { varargs: true }, (id) => {
     // Sem argumento, DB_NAME() devolve o database da conexao atual. O URN que
     // o SSMS monta para Stored Procedures usa essa funcao; devolver master
     // fazia a procedure ficar fora do no Ultrapoints2 no Object Explorer.
     if (id == null) return dbName || MASTER;
-    return databases()[Number(id) - 1] || null;
+    return databaseNomePorId(id);
   });
 
   // HAS_DBACCESS é usado pelo SSMS para decidir quais nós do Object Explorer
@@ -3336,7 +3380,7 @@ function instalar(db, { dataDir, dbName, engine, listarDatabases, usuario }) {
         ('LogOnSuccess', '0', 'Registra ocorrencias bem-sucedidas')
     `).run();
   }
-  registrarFuncoes(db, { dbName, engine, listarDatabases, usuario });
+  registrarFuncoes(db, { dataDir, dbName, engine, listarDatabases, usuario });
   sincronizarCatalogoDatabase(db, dbName);
 }
 
