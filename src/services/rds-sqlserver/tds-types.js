@@ -135,6 +135,16 @@ function columnMetadata(columns = [], rows = []) {
       kind = 'tinyint';
     }
 
+    // Colunas de enum/estado do SMO chegam como NULL no shim AG/Availability.
+    // Sem tipo declarado e sem valores, caem em NVARCHAR e o SMO falha com
+    // "Object cannot be cast from DBNull to other types" ao ler GetInt32/GetByte.
+    if (
+      !declared &&
+      /(?:^|_)AvailabilityDatabaseSynchronizationState$/i.test(name)
+    ) {
+      kind = 'int';
+    }
+
     // O SMO lê várias colunas de metadados com GetBoolean()/GetByte()/GetInt16().
     // Quando a expressão vem sem tipo declarado (CAST AS bit que o SQLite apaga,
     // CASE, ISNULL, COALESCE, aritmética), inferimos pelo nome+valor para evitar
@@ -145,7 +155,7 @@ function columnMetadata(columns = [], rows = []) {
         return Number.isInteger(numero) && (numero === 0 || numero === 1);
       });
       const todosInteiros = values.length > 0 && values.every((value) => Number.isInteger(Number(value)));
-      if (/^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$)/.test(name)) {
+      if (/^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$|SkipTapeLabel$)/.test(name)) {
         if (values.length === 0 || todosZeroUm) kind = 'bit';
       } else if (/^(?:FillFactor|IndexType|SpatialIndexType|SecondaryXmlIndexType|ResumableOperationState|BackupSetType)$/i.test(name)) {
         if (values.length === 0 || todosInteiros) kind = 'tinyint';

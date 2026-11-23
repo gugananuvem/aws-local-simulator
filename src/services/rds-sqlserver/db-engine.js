@@ -489,6 +489,8 @@ class DbEngine {
   _executar(db, sqlBruto, params = []) {
     this._resultadoRotina = null;
     let parametros = Array.isArray(params) ? params : params == null ? [] : [params];
+    const resultadoBackupRestore = this._executarBackupRestore(db, sqlBruto);
+    if (resultadoBackupRestore) return resultadoBackupRestore;
     const restante = this._executarDdlDatabase(sqlBruto);
     const { restante: semDefaults, defaults } = this._executarDefaultsTabela(restante);
     const { restante: semForeignKeys, foreignKeys } = this._executarForeignKeysTabela(semDefaults);
@@ -539,6 +541,58 @@ class DbEngine {
       if (resultados[i].type === 'dml') return resultados[i];
     }
     return resultados[resultados.length - 1];
+  }
+
+  /**
+   * BACKUP/RESTORE DATABASE - simula backup criando copia do arquivo .db.
+   * SSMS emite BACKUP DATABASE ... TO DISK = N'...' WITH ...; aceitamos e
+   * geramos o arquivo para manter compatibilidade de fluxo.
+   * @private
+   */
+  _executarBackupRestore(db, sqlBruto) {
+    const sql = String(sqlBruto || '').trim();
+    const mBackup = /^BACKUP\s+DATABASE\s+(?:\[([^\]]+)\]|"([^"]+)"|(\S+))\s+TO\s+DISK\s*=\s*N?'([^']+)'/i.exec(sql);
+    if (mBackup) {
+      const nome = mBackup[1] || mBackup[2] || mBackup[3];
+      const destino = mBackup[4];
+      const caminhoDb = path.join(this.dataDir, String(nome) + ".db");
+      if (!fs.existsSync(caminhoDb)) {
+        throw this._erroTsql(911, 1, `Database '${nome}' does not exist. Make sure that the name is entered correctly.`);
+      }
+      fs.mkdirSync(path.dirname(destino), { recursive: true });
+      try { const inst = this.getOrCreateDatabase(nome); inst.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+      fs.copyFileSync(caminhoDb, destino);
+      this._registrarBackupMsdb(nome, destino);
+      return { type: 'dml', rowCount: 0, rows: [], columns: [] };
+    }
+    const mRestore = /^RESTORE\s+DATABASE\s+(?:\[([^\]]+)\]|"([^"]+)"|(\S+))\s+FROM\s+DISK\s*=\s*N?'([^']+)'/i.exec(sql);
+    if (mRestore) {
+      const nome = mRestore[1] || mRestore[2] || mRestore[3];
+      const origem = mRestore[4];
+      if (!fs.existsSync(origem)) {
+        throw this._erroTsql(3201, 16, `Cannot open backup device '${origem}'. Operating system error 2(The system cannot find the file specified.).`);
+      }
+      const caminhoDb = path.join(this.dataDir, String(nome) + ".db");
+      fs.mkdirSync(path.dirname(caminhoDb), { recursive: true });
+      const chave = String(nome).toLowerCase();
+      const existente = this.databases.get(chave);
+      if (existente) { try { existente.close(); } catch (_) {} this.databases.delete(chave); }
+      fs.copyFileSync(origem, caminhoDb);
+      this._registrarBackupMsdb(nome, origem, 'RESTORE');
+      return { type: 'dml', rowCount: 0, rows: [], columns: [] };
+    }
+    return null;
+  }
+
+  _registrarBackupMsdb(databaseName, physicalDevice, tipo = 'BACKUP') {
+    try {
+      const msdb = this.getOrCreateDatabase('msdb');
+      const now = new Date().toISOString().replace('T', ' ').replace('Z', '');
+      msdb.prepare('INSERT INTO backupmediafamily (media_set_id, physical_device_name, device_type) VALUES (1, ?, 2)').run(physicalDevice);
+      if (tipo === 'BACKUP') {
+        msdb.prepare('INSERT INTO backupset (database_name, type, backup_start_date, backup_finish_date, name, server_name) VALUES (?, ?, ?, ?, ?, ?)').run(databaseName, 'D', now, now, databaseName + '-Full Database Backup', 'LOCAL');
+      }
+    } catch (_) {}
   }
 
   /**
