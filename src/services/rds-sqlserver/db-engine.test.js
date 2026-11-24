@@ -72,6 +72,45 @@ describe('DbEngine (RDS SQL Server)', () => {
     expect(remove.changes).toBe(1);
   });
 
+  test('BACKUP copia o .db e HEADERONLY/FILELISTONLY devolvem metadados do restore', () => {
+    const destino = path.join(dataDir, 'ultrapoints.bak');
+    engine.getOrCreateDatabase('Ultrapoints2');
+
+    const backup = engine.execute(
+      'master',
+      `BACKUP DATABASE [Ultrapoints2] TO DISK = N'${destino}' WITH NOFORMAT, NOINIT`
+    );
+    expect(backup.type).toBe('dml');
+    expect(fs.existsSync(destino)).toBe(true);
+
+    const header = engine.execute(
+      'master',
+      `RESTORE HEADERONLY FROM DISK = N'${destino}' WITH NOUNLOAD`
+    );
+    expect(header.type).toBe('select');
+    expect(header.rows).toHaveLength(1);
+    expect(header.rows[0].DatabaseName).toBe('Ultrapoints2');
+    expect(header.rows[0].BackupType).toBe(1);
+    expect(header.columns).toHaveLength(59);
+    expect(header.columns.find((coluna) => coluna.name === 'BackupType').type).toBe('TINYINT');
+    expect(header.columns.find((coluna) => coluna.name === 'FirstLSN').type).toBe('DECIMAL(25,0)');
+    expect(header.columns.find((coluna) => coluna.name === 'TimeZone').type).toBe('TEXT');
+
+    const arquivos = engine.execute('master', `RESTORE FILELISTONLY FROM DISK = N'${destino}'`);
+    expect(arquivos.type).toBe('select');
+    expect(arquivos.rows).toHaveLength(2);
+    expect(arquivos.rows.map((linha) => linha.Type)).toEqual(['D', 'L']);
+    expect(arquivos.columns.find((coluna) => coluna.name === 'IsPresent').type).toBe('BIT');
+    expect(arquivos.columns.find((coluna) => coluna.name === 'FileID').type).toBe('BIGINT');
+    expect(arquivos.columns.find((coluna) => coluna.name === 'BackupSizeInBytes').type).toBe('BIGINT');
+
+    const rotulo = engine.execute('master', `RESTORE LABELONLY FROM DISK = N'${destino}'`);
+    expect(rotulo.type).toBe('select');
+    expect(rotulo.rows).toHaveLength(1);
+    expect(rotulo.columns.find((coluna) => coluna.name === 'MediaSetId').type).toBe('UNIQUEIDENTIFIER');
+    expect(rotulo.columns.find((coluna) => coluna.name === 'MediaLabelPresent').type).toBe('TINYINT');
+  });
+
   test('traduz o SQL bruto antes de detectá-lo e executá-lo', () => {
     const chamadas = [];
     const tradutor = {

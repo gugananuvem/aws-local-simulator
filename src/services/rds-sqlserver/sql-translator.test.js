@@ -1162,6 +1162,16 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(traduzido).toContain('AS [DefaultFile]');
       expect(traduzido).toContain("'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA' AS [DefaultLog]");
       expect(traduzido).toContain('AS [PerfMonMode]');
+
+      // O SMO converte as colunas por posicao. Uma coluna extra no inicio
+      // (como [Urn]) faz AuditLevel receber uma string e estourar
+      // Enum.ToObject ao abrir Database > Tasks > Restore no SSMS.
+      const colunas = [...traduzido.matchAll(/AS \[([^\]]+)\]/g)].map((m) => m[1]);
+      expect(colunas).toEqual([
+        'AuditLevel', 'NumberOfLogFiles', 'LoginMode', 'DefaultFile',
+        'DefaultLog', 'ErrorLogSizeKb', 'TapeLoadWaitTime', 'MailProfile',
+        'BackupDirectory', 'PerfMonMode'
+      ]);
     });
 
     test('usa colunas proprias no batch completo de propriedades do servidor', () => {

@@ -2268,9 +2268,11 @@ class SqlTranslator {
       /\binstancedefaultdatapath\b/i.test(sql)
     ) {
       const caminho = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
+      // O batch original devolve exatamente estas 10 colunas, nesta ordem.
+      // Incluir [Urn] desloca os valores e faz o SMO chamar Enum.ToObject com
+      // a string da URN no lugar de AuditLevel, estourando no Restore Wizard.
       return (
-        "SELECT 'Server[@Name=''LOCAL'']' + '/Setting' AS [Urn], " +
-        '2 AS [AuditLevel], 12 AS [NumberOfLogFiles], 2 AS [LoginMode], ' +
+        'SELECT 2 AS [AuditLevel], 12 AS [NumberOfLogFiles], 2 AS [LoginMode], ' +
         `'${caminho}' AS [DefaultFile], '${caminho}' AS [DefaultLog], ` +
         '0 AS [ErrorLogSizeKb], -1 AS [TapeLoadWaitTime], ' +
         "'' AS [MailProfile], " +

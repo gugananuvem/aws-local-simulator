@@ -565,6 +565,26 @@ class DbEngine {
       this._registrarBackupMsdb(nome, destino);
       return { type: 'dml', rowCount: 0, rows: [], columns: [] };
     }
+
+    // O Restore Wizard do SSMS/SMO chama HEADERONLY antes de abrir o dialogo e
+    // FILELISTONLY ao montar a pagina Files. Sem esses resultsets o SMO recebe
+    // "near RESTORE: syntax error" e o dialogo nem aparece.
+    const mHeader = /^RESTORE\s+HEADERONLY\s+FROM\s+DISK\s*=\s*N?'([^']+)'/i.exec(sql);
+    if (mHeader) {
+      return this._resultadoBackupHeader(mHeader[1]);
+    }
+    const mFileList = /^RESTORE\s+FILELISTONLY\s+FROM\s+DISK\s*=\s*N?'([^']+)'/i.exec(sql);
+    if (mFileList) {
+      return this._resultadoBackupFileList(mFileList[1]);
+    }
+    const mLabel = /^RESTORE\s+LABELONLY\s+FROM\s+DISK\s*=\s*N?'([^']+)'/i.exec(sql);
+    if (mLabel) {
+      return this._resultadoBackupLabel(mLabel[1]);
+    }
+    if (/^RESTORE\s+VERIFYONLY\s+FROM\s+DISK\s*=\s*N?'([^']+)'/i.test(sql)) {
+      return { type: 'dml', rowCount: 0, rows: [], columns: [] };
+    }
+
     const mRestore = /^RESTORE\s+DATABASE\s+(?:\[([^\]]+)\]|"([^"]+)"|(\S+))\s+FROM\s+DISK\s*=\s*N?'([^']+)'/i.exec(sql);
     if (mRestore) {
       const nome = mRestore[1] || mRestore[2] || mRestore[3];
@@ -584,13 +604,244 @@ class DbEngine {
     return null;
   }
 
+  /**
+   * Resultado de RESTORE HEADERONLY no formato esperado pelo SMO. Os tipos
+   * precisam ser declarados: o BackupSet faz unbox.any de Byte/Int16/Decimal/
+   * Guid diretamente nas colunas do DataTable devolvido por ReadBackupHeader.
+   * @private
+   */
+  _resultadoBackupHeader(origem) {
+    if (!fs.existsSync(origem)) {
+      throw this._erroTsql(3201, 16, `Cannot open backup device '${origem}'. Operating system error 2(The system cannot find the file specified.).`);
+    }
+    const meta = this._metadadosBackupPorDispositivo(origem);
+    const nome = meta.database_name || path.basename(String(origem), path.extname(String(origem)));
+    const data = meta.backup_finish_date || new Date(fs.statSync(origem).mtimeMs).toISOString().replace('T', ' ').slice(0, 19);
+    const tamanho = meta.backup_size == null ? fs.statSync(origem).size : meta.backup_size;
+    const guia = '00000000-0000-0000-0000-000000000000';
+
+    const definicoes = [
+      ['BackupName', 'TEXT'], ['BackupDescription', 'TEXT'], ['BackupType', 'TINYINT'],
+      ['ExpirationDate', 'DATETIME'], ['Compressed', 'BIT'], ['Position', 'SMALLINT'],
+      ['DeviceType', 'TINYINT'], ['UserName', 'TEXT'], ['ServerName', 'TEXT'],
+      ['DatabaseName', 'TEXT'], ['DatabaseVersion', 'INT'], ['DatabaseCreationDate', 'DATETIME'],
+      ['BackupSize', 'DECIMAL(20,0)'], ['FirstLSN', 'DECIMAL(25,0)'], ['LastLSN', 'DECIMAL(25,0)'],
+      ['CheckpointLSN', 'DECIMAL(25,0)'], ['DatabaseBackupLSN', 'DECIMAL(25,0)'],
+      ['BackupStartDate', 'DATETIME'], ['BackupFinishDate', 'DATETIME'], ['SortOrder', 'SMALLINT'],
+      ['CodePage', 'SMALLINT'], ['UnicodeLocaleId', 'INT'], ['UnicodeComparisonStyle', 'INT'],
+      ['CompatibilityLevel', 'TINYINT'], ['SoftwareVendorId', 'INT'],
+      ['SoftwareVersionMajor', 'INT'], ['SoftwareVersionMinor', 'INT'], ['SoftwareVersionBuild', 'INT'],
+      ['MachineName', 'TEXT'], ['Flags', 'INT'], ['BindingID', 'UNIQUEIDENTIFIER'],
+      ['RecoveryForkID', 'UNIQUEIDENTIFIER'], ['Collation', 'TEXT'], ['FamilyGUID', 'UNIQUEIDENTIFIER'],
+      ['HasBulkLoggedData', 'BIT'], ['IsSnapshot', 'BIT'], ['IsReadOnly', 'BIT'],
+      ['IsSingleUser', 'BIT'], ['HasBackupChecksums', 'BIT'], ['IsDamaged', 'BIT'],
+      ['BeginsLogChain', 'BIT'], ['HasIncompleteMetaData', 'BIT'], ['IsForceOffline', 'BIT'],
+      ['IsCopyOnly', 'BIT'], ['FirstRecoveryForkID', 'UNIQUEIDENTIFIER'],
+      ['ForkPointLSN', 'DECIMAL(25,0)'], ['RecoveryModel', 'TEXT'],
+      ['DifferentialBaseLSN', 'DECIMAL(25,0)'], ['DifferentialBaseGUID', 'UNIQUEIDENTIFIER'],
+      ['BackupTypeDescription', 'TEXT'], ['BackupSetGUID', 'UNIQUEIDENTIFIER'],
+      ['CompressedBackupSize', 'BIGINT'], ['Containment', 'TINYINT'],
+      ['KeyAlgorithm', 'TEXT'], ['EncryptorThumbprint', 'VARBINARY'], ['EncryptorType', 'TEXT'],
+      ['LastValidRestoreTime', 'DATETIME'], ['TimeZone', 'TEXT'], ['CompressionAlgorithm', 'TEXT']
+    ];
+    const linha = {
+      BackupName: meta.name || `${nome}-Full Database Backup`,
+      BackupDescription: meta.description || null,
+      BackupType: 1,
+      ExpirationDate: meta.expiration_date || null,
+      Compressed: 0,
+      Position: meta.position == null ? 1 : meta.position,
+      DeviceType: 2,
+      UserName: meta.user_name || 'admin',
+      ServerName: meta.server_name || 'LOCAL',
+      DatabaseName: String(nome),
+      DatabaseVersion: meta.database_version == null ? 904 : meta.database_version,
+      DatabaseCreationDate: meta.database_creation_date || data,
+      BackupSize: tamanho,
+      FirstLSN: meta.first_lsn == null ? 0 : meta.first_lsn,
+      LastLSN: meta.last_lsn == null ? 0 : meta.last_lsn,
+      CheckpointLSN: meta.checkpoint_lsn == null ? 0 : meta.checkpoint_lsn,
+      DatabaseBackupLSN: meta.database_backup_lsn == null ? 0 : meta.database_backup_lsn,
+      BackupStartDate: meta.backup_start_date || data,
+      BackupFinishDate: data,
+      SortOrder: meta.sort_order == null ? 52 : meta.sort_order,
+      CodePage: meta.code_page == null ? 0 : meta.code_page,
+      UnicodeLocaleId: meta.unicode_locale == null ? 1033 : meta.unicode_locale,
+      UnicodeComparisonStyle: meta.unicode_compare_style == null ? 196609 : meta.unicode_compare_style,
+      CompatibilityLevel: meta.compatibility_level == null ? 160 : meta.compatibility_level,
+      SoftwareVendorId: meta.software_vendor_id == null ? 4608 : meta.software_vendor_id,
+      SoftwareVersionMajor: meta.software_major_version == null ? 16 : meta.software_major_version,
+      SoftwareVersionMinor: meta.software_minor_version == null ? 0 : meta.software_minor_version,
+      SoftwareVersionBuild: meta.software_build_version == null ? 4035 : meta.software_build_version,
+      MachineName: meta.machine_name || 'LOCAL',
+      Flags: meta.flags == null ? 0 : meta.flags,
+      BindingID: meta.database_guid || guia,
+      RecoveryForkID: meta.last_recovery_fork_guid || guia,
+      Collation: meta.collation_name || 'SQL_Latin1_General_CP1_CI_AS',
+      FamilyGUID: meta.family_guid || guia,
+      HasBulkLoggedData: meta.has_bulk_logged_data || 0,
+      IsSnapshot: meta.is_snapshot || 0,
+      IsReadOnly: meta.is_readonly || 0,
+      IsSingleUser: meta.is_single_user || 0,
+      HasBackupChecksums: meta.has_backup_checksums || 0,
+      IsDamaged: meta.is_damaged || 0,
+      BeginsLogChain: meta.begins_log_chain || 0,
+      HasIncompleteMetaData: meta.has_incomplete_metadata || 0,
+      IsForceOffline: meta.is_force_offline || 0,
+      IsCopyOnly: meta.is_copy_only || 0,
+      FirstRecoveryForkID: meta.first_recovery_fork_guid || guia,
+      ForkPointLSN: meta.fork_point_lsn == null ? 0 : meta.fork_point_lsn,
+      RecoveryModel: meta.recovery_model || 'SIMPLE',
+      DifferentialBaseLSN: meta.differential_base_lsn == null ? 0 : meta.differential_base_lsn,
+      DifferentialBaseGUID: meta.differential_base_guid || guia,
+      BackupTypeDescription: 'Database',
+      BackupSetGUID: meta.backup_set_uuid || guia,
+      CompressedBackupSize: meta.compressed_backup_size == null ? 0 : meta.compressed_backup_size,
+      Containment: 0,
+      KeyAlgorithm: meta.key_algorithm || null,
+      EncryptorThumbprint: meta.encryptor_thumbprint || null,
+      EncryptorType: meta.encryptor_type || null,
+      LastValidRestoreTime: data,
+      TimeZone: 'UTC',
+      CompressionAlgorithm: 'MS_XPRESS'
+    };
+    return {
+      type: 'select',
+      rows: [linha],
+      columns: definicoes.map(([name, type]) => ({ name, type })),
+      changes: 0,
+      lastInsertRowid: 0
+    };
+  }
+
+  /**
+   * Resultado de RESTORE FILELISTONLY. O SSMS usa a pagina Files do Restore
+   * Wizard para sugerir os nomes logicos e os caminhos de dados/log.
+   * @private
+   */
+  _resultadoBackupFileList(origem) {
+    if (!fs.existsSync(origem)) {
+      throw this._erroTsql(3201, 16, `Cannot open backup device '${origem}'. Operating system error 2(The system cannot find the file specified.).`);
+    }
+    const meta = this._metadadosBackupPorDispositivo(origem);
+    const nome = meta.database_name || path.basename(String(origem), path.extname(String(origem)));
+    const caminho = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
+    const guia = '00000000-0000-0000-0000-000000000000';
+    const tamanho = meta.backup_size == null ? fs.statSync(origem).size : meta.backup_size;
+
+    const definicoes = [
+      ['LogicalName', 'TEXT'], ['PhysicalName', 'TEXT'], ['Type', 'TEXT'],
+      ['FileGroupName', 'TEXT'], ['Size', 'DECIMAL(20,0)'], ['MaxSize', 'DECIMAL(20,0)'],
+      ['FileID', 'BIGINT'], ['CreateLSN', 'DECIMAL(25,0)'], ['DropLSN', 'DECIMAL(25,0)'],
+      ['UniqueID', 'UNIQUEIDENTIFIER'], ['ReadOnlyLSN', 'DECIMAL(25,0)'],
+      ['ReadWriteLSN', 'DECIMAL(25,0)'], ['BackupSizeInBytes', 'BIGINT'],
+      ['SourceBlockSize', 'INT'], ['FileGroupID', 'INT'], ['LogGroupGUID', 'UNIQUEIDENTIFIER'],
+      ['DifferentialBaseLSN', 'DECIMAL(25,0)'], ['DifferentialBaseGUID', 'UNIQUEIDENTIFIER'],
+      ['IsReadOnly', 'BIT'], ['IsPresent', 'BIT'], ['TDEThumbprint', 'VARBINARY'],
+      ['SnapshotURL', 'TEXT']
+    ];
+    const linhas = [
+      {
+        LogicalName: String(nome), PhysicalName: path.join(caminho, `${nome}.mdf`), Type: 'D',
+        FileGroupName: 'PRIMARY', Size: tamanho, MaxSize: tamanho, FileID: 1,
+        CreateLSN: 0, DropLSN: 0, UniqueID: guia, ReadOnlyLSN: 0, ReadWriteLSN: 0,
+        BackupSizeInBytes: tamanho, SourceBlockSize: 4096, FileGroupID: 1, LogGroupGUID: null,
+        DifferentialBaseLSN: 0, DifferentialBaseGUID: guia, IsReadOnly: 0, IsPresent: 1,
+        TDEThumbprint: null, SnapshotURL: null
+      },
+      {
+        LogicalName: `${nome}_log`, PhysicalName: path.join(caminho, `${nome}.ldf`), Type: 'L',
+        FileGroupName: null, Size: tamanho, MaxSize: tamanho, FileID: 2,
+        CreateLSN: 0, DropLSN: 0, UniqueID: guia, ReadOnlyLSN: 0, ReadWriteLSN: 0,
+        BackupSizeInBytes: tamanho, SourceBlockSize: 4096, FileGroupID: 0, LogGroupGUID: null,
+        DifferentialBaseLSN: 0, DifferentialBaseGUID: guia, IsReadOnly: 0, IsPresent: 1,
+        TDEThumbprint: null, SnapshotURL: null
+      }
+    ];
+    return {
+      type: 'select',
+      rows: linhas,
+      columns: definicoes.map(([name, type]) => ({ name, type })),
+      changes: 0,
+      lastInsertRowid: 0
+    };
+  }
+
+  /**
+   * Resultado de RESTORE LABELONLY. O SMO usa MediaSetId para agrupar os
+   * dispositivos de um mesmo media set antes de ler o header.
+   * @private
+   */
+  _resultadoBackupLabel(origem) {
+    if (!fs.existsSync(origem)) {
+      throw this._erroTsql(3201, 16, `Cannot open backup device '${origem}'. Operating system error 2(The system cannot find the file specified.).`);
+    }
+    const meta = this._metadadosBackupPorDispositivo(origem);
+    const data = meta.backup_finish_date || new Date(fs.statSync(origem).mtimeMs).toISOString().replace('T', ' ').slice(0, 19);
+    const mediaId = Number(meta.media_set_id || 1);
+    const sufixo = String(mediaId).padStart(12, '0');
+
+    const definicoes = [
+      ['MediaName', 'TEXT'], ['MediaSetId', 'UNIQUEIDENTIFIER'], ['FamilyCount', 'INT'],
+      ['FamilySequenceNumber', 'INT'], ['MediaFamilyId', 'UNIQUEIDENTIFIER'],
+      ['MediaSequenceNumber', 'INT'], ['MediaLabelPresent', 'TINYINT'],
+      ['MediaDescription', 'TEXT'], ['SoftwareName', 'TEXT'], ['SoftwareVendorId', 'INT'],
+      ['MediaDate', 'DATETIME'], ['Mirror_Count', 'INT'], ['IsCompressed', 'BIT']
+    ];
+    const linha = {
+      MediaName: meta.media_name || `${path.basename(String(origem), path.extname(String(origem)))} Media`,
+      MediaSetId: `00000000-0000-0000-0000-${sufixo}`,
+      FamilyCount: 1,
+      FamilySequenceNumber: 1,
+      MediaFamilyId: `00000000-0000-0000-0001-${sufixo}`,
+      MediaSequenceNumber: 1,
+      MediaLabelPresent: 1,
+      MediaDescription: meta.media_description || null,
+      SoftwareName: 'Microsoft SQL Server',
+      SoftwareVendorId: meta.software_vendor_id == null ? 4608 : meta.software_vendor_id,
+      MediaDate: data,
+      Mirror_Count: 1,
+      IsCompressed: 0
+    };
+    return {
+      type: 'select',
+      rows: [linha],
+      columns: definicoes.map(([name, type]) => ({ name, type })),
+      changes: 0,
+      lastInsertRowid: 0
+    };
+  }
+
+  /**
+   * Consulta o msdb para reaproveitar os metadados gravados no BACKUP.
+   * @private
+   */
+  _metadadosBackupPorDispositivo(origem) {
+    try {
+      const msdb = this.getOrCreateDatabase('msdb');
+      const dispositivo = msdb.prepare(
+        'SELECT media_set_id FROM backupmediafamily WHERE physical_device_name = ? ORDER BY media_set_id DESC LIMIT 1'
+      ).get(String(origem));
+      const id = dispositivo && dispositivo.media_set_id;
+      // Backups gravados antes do media_set_id ser persistido ficam com NULL;
+      // nesse caso usa o registro mais recente em vez de devolver um header vazio.
+      return (id == null
+        ? msdb.prepare('SELECT * FROM backupset ORDER BY backup_set_id DESC LIMIT 1').get()
+        : msdb.prepare(
+          'SELECT * FROM backupset WHERE media_set_id = ? OR media_set_id IS NULL ORDER BY backup_set_id DESC LIMIT 1'
+        ).get(id)) || {};
+    } catch (_) {
+      return {};
+    }
+  }
+
   _registrarBackupMsdb(databaseName, physicalDevice, tipo = 'BACKUP') {
     try {
       const msdb = this.getOrCreateDatabase('msdb');
       const now = new Date().toISOString().replace('T', ' ').replace('Z', '');
       msdb.prepare('INSERT INTO backupmediafamily (media_set_id, physical_device_name, device_type) VALUES (1, ?, 2)').run(physicalDevice);
       if (tipo === 'BACKUP') {
-        msdb.prepare('INSERT INTO backupset (database_name, type, backup_start_date, backup_finish_date, name, server_name) VALUES (?, ?, ?, ?, ?, ?)').run(databaseName, 'D', now, now, databaseName + '-Full Database Backup', 'LOCAL');
+        msdb.prepare('INSERT INTO backupset (media_set_id, database_name, type, backup_start_date, backup_finish_date, name, server_name) VALUES (1, ?, ?, ?, ?, ?, ?)').run(databaseName, 'D', now, now, databaseName + '-Full Database Backup', 'LOCAL');
       }
     } catch (_) { /* msdb indisponivel no backup */ }
   }
