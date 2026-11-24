@@ -1132,4 +1132,43 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(linhas[0].AssemblyName).toBe('');
     expect(linhas[0].Startup).toBe(0);
   });
+
+  test('publica funcoes legadas na lista de scalar-valued functions do SMO', () => {
+    const funcoes = engine.execute('principal', `
+      SELECT SCHEMA_NAME(udf.schema_id) AS [Schema], udf.name AS [Name],
+             udf.object_id AS [ID],
+             (case when 'FN' = udf.type then 1 when 'FS' = udf.type then 1
+                   when 'IF' = udf.type then 3 when 'TF' = udf.type then 2
+                   when 'FT' = udf.type then 2 else 0 end) AS [FunctionType]
+      FROM sys.all_objects AS udf
+      WHERE udf.type in ('TF', 'FN', 'IF', 'FS', 'FT')
+        AND udf.name = 'TOUNIX_TIMESTAMP'
+    `).rows;
+
+    expect(funcoes).toEqual([expect.objectContaining({
+      Schema: 'dbo', Name: 'TOUNIX_TIMESTAMP', FunctionType: 1
+    })]);
+
+    const parametros = engine.execute('principal', `
+      SELECT p.parameter_id, p.name, p.is_output
+      FROM sys.all_parameters AS p
+      INNER JOIN sys.objects AS o ON o.object_id = p.object_id
+      WHERE o.name = 'TOUNIX_TIMESTAMP'
+      ORDER BY p.parameter_id ASC
+    `).rows;
+    expect(parametros[0]).toEqual(expect.objectContaining({
+      parameter_id: 0, is_output: 1
+    }));
+  });
+
+  test('CREATE FUNCTION substitui a funcao de compatibilidade sem duplicar o nome', () => {
+    expect(() => engine.execute('principal',
+      'CREATE FUNCTION [dbo].[TOUNIX_TIMESTAMP] (@x int) RETURNS int AS BEGIN RETURN @x END'
+    )).not.toThrow();
+
+    const linhas = engine.execute('principal',
+      "SELECT name, type FROM sys.objects WHERE name = 'TOUNIX_TIMESTAMP'"
+    ).rows;
+    expect(linhas).toEqual([{ name: 'TOUNIX_TIMESTAMP', type: 'FN' }]);
+  });
 });

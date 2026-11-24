@@ -838,6 +838,14 @@ class SqlTranslator {
       () => 'sys.'
     );
     resultado = this._substituirTodos(resultado, '\\bdbo\\s*\\.\\s*', () => '');
+    // Depois de remover o `dbo.`, resta `database.FUNCAO(...)` quando o cliente
+    // qualifica a chamada com o nome do database atual. O SQLite nao aceita
+    // `database.funcao(`; remove-se o qualificador apenas quando o proximo
+    // token e uma chamada de funcao, preservando tabelas e catalogos anexados.
+    resultado = resultado.replace(
+      /(?<![\w$#@\]])\b(?!master\b|msdb\b|tempdb\b|model\b|sys\b|dbo\b|main\b)[A-Za-z_][\w$#@]*\s*\.\s*(?=[A-Za-z_][\w$#@]*\s*\()/gi,
+      ''
+    );
 
     const tokens = this._mascarar(resultado).tokens;
     for (let i = tokens.length - 1; i >= 0; i -= 1) {

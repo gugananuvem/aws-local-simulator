@@ -424,6 +424,10 @@ describe('DbEngine (RDS SQL Server)', () => {
       expect(linhas[0].DataCriacao).toBeGreaterThan(0);
       expect(linhas[0].DataAtualiacao).toBeGreaterThan(0);
 
+      const qualificada = comTradutor.execute('principal',
+        'SELECT principal.DBO.TOUNIX_TIMESTAMP(getdate()) AS ts');
+      expect(qualificada.rows[0].ts).toBeGreaterThan(0);
+
       const defaults = comTradutor.execute('principal', `
         SELECT d.name, d.definition FROM sys.default_constraints AS d
         WHERE d.parent_object_id = (SELECT object_id FROM sys.objects WHERE name = 'TB001')

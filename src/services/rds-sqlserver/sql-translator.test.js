@@ -932,6 +932,13 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       );
     });
 
+    test('remove o qualificador do database atual em chamadas de funcao', () => {
+      const sql = 'SELECT ultrapoints.DBO.TOUNIX_TIMESTAMP(getdate()) AS ts';
+      expect(translator.translate(sql)).toBe(
+        "SELECT TOUNIX_TIMESTAMP(datetime('now')) AS ts"
+      );
+    });
+
     test('remove USE no meio do batch sem afetar o comando isolado', () => {
       expect(translator.translate('use [master];select 1 AS [ok]')).toBe(
         'select 1 AS [ok]'

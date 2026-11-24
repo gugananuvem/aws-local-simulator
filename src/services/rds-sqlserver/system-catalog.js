@@ -34,6 +34,37 @@ const EDICOES = {
 
 const VERSAO = '16.00.4035.2';
 
+/** Marca as UDFs criadas automaticamente para funcoes legadas importadas. */
+const MARCADOR_COMPATIBILIDADE = '/* compatibilidade-rds-sqlserver */';
+
+/** Funcoes legadas registradas como UDF SQLite e publicadas no catalogo T-SQL. */
+const FUNCOES_COMPATIBILIDADE = [
+  {
+    nome: 'TOUNIX_TIMESTAMP',
+    tipoRetorno: 'int',
+    parametros: [{ nome: '@ctimestamp', tipo: 'datetime' }],
+    corpo: "RETURN CAST(DATEDIFF(SECOND, '1970-01-01', @ctimestamp) AS int)"
+  },
+  {
+    nome: 'UNIX_TIMESTAMP',
+    tipoRetorno: 'int',
+    parametros: [{ nome: '@valor', tipo: 'datetime' }],
+    corpo: "RETURN CAST(DATEDIFF(SECOND, '1970-01-01', @valor) AS int)"
+  },
+  {
+    nome: 'FROMUNIX_TIMESTAMP',
+    tipoRetorno: 'datetime',
+    parametros: [{ nome: '@valor', tipo: 'bigint' }],
+    corpo: "RETURN DATEADD(SECOND, @valor, '1970-01-01')"
+  },
+  {
+    nome: 'FROM_UNIXTIME',
+    tipoRetorno: 'datetime',
+    parametros: [{ nome: '@valor', tipo: 'bigint' }],
+    corpo: "RETURN DATEADD(SECOND, @valor, '1970-01-01')"
+  }
+];
+
 /** Diretorio padrao de dados/log usado pelo SSMS ao criar um database. */
 const DIRETORIO_DADOS_PADRAO = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL16.MSSQLSERVER\\MSSQL\\DATA';
 
@@ -2985,6 +3016,7 @@ function sincronizarCatalogoDatabase(db, dbName) {
 
   restaurarProcedimentos(db, rotinasSalvas, parametrosSalvos);
   restaurarFuncoes(db, funcoesSalvas, parametrosFuncoesSalvos);
+  registrarFuncoesCompatibilidade(db);
 
   // Cache usado por OBJECT_ID/OBJECT_NAME. O better-sqlite3 nao permite
   // executar preparacoes dentro do callback de uma UDF ("database connection
@@ -3084,6 +3116,38 @@ function registrarFuncoesData(db) {
   registrarUnix('UNIX_TIMESTAMP');
   registrarFromUnix('FROMUNIX_TIMESTAMP');
   registrarFromUnix('FROM_UNIXTIME');
+}
+
+/**
+ * Publica no catalogo as UDFs legadas registradas no SQLite. O SSMS so exibe
+ * `Programmability > Functions > Scalar-valued Functions` e reconhece o `dbo.`
+ * no IntelliSense quando a funcao existe em sys.all_objects.
+ * @private
+ */
+function registrarFuncoesCompatibilidade(db) {
+  for (const funcao of FUNCOES_COMPATIBILIDADE) {
+    const existente = db.prepare(`
+      SELECT o.object_id FROM main.objects AS o
+      WHERE o.type = 'FN' AND o.name = ? COLLATE NOCASE
+    `).get(funcao.nome);
+    if (existente) continue;
+    const argumentos = funcao.parametros
+      .map((parametro) => `${parametro.nome} ${parametro.tipo}`)
+      .join(', ');
+    const definicao = `CREATE FUNCTION [dbo].[${funcao.nome}] (${argumentos})\n` +
+      `RETURNS ${funcao.tipoRetorno}\nAS\nBEGIN\n` +
+      `${MARCADOR_COMPATIBILIDADE}\n${funcao.corpo}\nEND`;
+    try {
+      criarFuncao(db, {
+        nome: funcao.nome,
+        definicao,
+        parametros: funcao.parametros,
+        tipoRetorno: funcao.tipoRetorno
+      });
+    } catch (_erro) {
+      // Outra rotina com o mesmo nome pode ter sido criada no mesmo batch.
+    }
+  }
 }
 
 /**
@@ -3677,7 +3741,13 @@ function restaurarFuncoes(db, funcoes, parametros) {
   `);
 
   for (const funcao of funcoes) {
-    const objectId = funcao.object_id > 0 ? funcao.object_id : proximoObjectIdUsuario(db);
+    let objectId = funcao.object_id > 0 ? funcao.object_id : proximoObjectIdUsuario(db);
+    // A reconstrucao usa rowid das tabelas SQLite como object_id. Uma funcao
+    // salva pode, por coincidencia, receber o mesmo id de uma procedure
+    // restaurada logo antes; nesse caso precisa realoca-la para nao apagar a
+    // procedure do catalogo.
+    const ocupado = db.prepare('SELECT name FROM main.objects WHERE object_id = ?').get(objectId);
+    if (ocupado && ocupado.name !== funcao.name) objectId = proximoObjectIdUsuario(db);
     db.prepare('DELETE FROM main.objects WHERE object_id = ?').run(objectId);
     db.prepare('DELETE FROM main.sql_modules WHERE object_id = ?').run(objectId);
     db.prepare('DELETE FROM main.all_parameters WHERE object_id = ?').run(objectId);
@@ -3953,13 +4023,17 @@ function criarFuncao(db, { nome, definicao, corpo, parametros = [], tipoRetorno 
   if (!nomeFuncao) throw erroTsqlProcedimento(102, 1, 'Incorrect syntax near FUNCTION.');
 
   const existente = db.prepare(`
-    SELECT object_id FROM main.objects
-    WHERE name = ? COLLATE NOCASE AND type = 'FN'
+    SELECT o.object_id, m.definition
+    FROM main.objects AS o
+    LEFT JOIN main.sql_modules AS m ON m.object_id = o.object_id
+    WHERE o.name = ? COLLATE NOCASE AND o.type = 'FN'
   `).get(nomeFuncao);
+  const substituiCompatibilidade = existente &&
+    String(existente.definition || '').includes(MARCADOR_COMPATIBILIDADE);
   if (alterar && !existente) {
     throw erroTsqlProcedimento(2812, 62, `Could not find function '${nomeFuncao}'.`);
   }
-  if (!alterar && existente) {
+  if (!alterar && existente && !substituiCompatibilidade) {
     throw erroTsqlProcedimento(2714, 1, `There is already an object named '${nomeFuncao}' in the database.`);
   }
 
