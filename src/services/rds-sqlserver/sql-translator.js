@@ -404,6 +404,7 @@ class SqlTranslator {
     resultado = this._traduzirFuncoes(resultado, gravarDataHora);
     resultado = this._traduzirTop(resultado);
     resultado = this._removerHintsTabela(resultado);
+    resultado = this._traduzirTransacoesNomeadas(resultado);
     resultado = this._traduzirDdl(resultado);
     resultado = this._normalizarWhitespace(resultado);
 
@@ -2516,6 +2517,21 @@ class SqlTranslator {
     }
 
     return resultado;
+  }
+
+  /**
+   * SQLite nao suporta nomes em BEGIN/COMMIT/ROLLBACK TRAN. Remove o rotulo
+   * (ex.: BEGIN TRAN SP50 -> BEGIN TRANSACTION) para procedures T-SQL simples.
+   * SAVE TRAN e tratado como SAVEPOINT quando houver nome.
+   * @private
+   */
+  _traduzirTransacoesNomeadas(sql) {
+    let r = sql;
+    r = r.replace(/\bBEGIN\s+(?:TRAN|TRANSACTION)\s+([A-Za-z_@#][\w@#$]*)\b/gi, 'BEGIN TRANSACTION /* $1 */');
+    r = r.replace(/\bCOMMIT\s+(?:TRAN|TRANSACTION)\s+([A-Za-z_@#][\w@#$]*)\b/gi, 'COMMIT TRANSACTION /* $1 */');
+    r = r.replace(/\bROLLBACK\s+(?:TRAN|TRANSACTION)\s+([A-Za-z_@#][\w@#$]*)\b/gi, 'ROLLBACK TRANSACTION /* $1 */');
+    r = r.replace(/\bSAVE\s+(?:TRAN|TRANSACTION)\s+([A-Za-z_@#][\w@#$]*)\b/gi, 'SAVEPOINT [$1]');
+    return r;
   }
 
   /** Desembrulha EXEC/EXECUTE sp_executesql com SQL literal. @private */

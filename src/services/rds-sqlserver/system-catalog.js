@@ -3046,6 +3046,37 @@ function registrarFuncoesData(db) {
     const fator = ms(u);
     return fator ? Math.trunc((b.getTime() - a.getTime()) / fator) : null;
   });
+
+  // Compatibilidade: funções comuns em bases legadas/MySQL-like usadas por
+  // views/procedures importadas (ex.: ultrapoints VW08/SP50_000).
+  const registrarUnix = (nome) => {
+    try {
+      db.function(nome, { deterministic: true }, (valor) => {
+        if (valor == null) return null;
+        if (typeof valor === 'number') return Math.trunc(valor);
+        const d = paraData(valor);
+        if (Number.isNaN(d.getTime())) return null;
+        return Math.floor(d.getTime() / 1000);
+      });
+    } catch (_) { /* já registrada nesta conexão */ }
+  };
+  const registrarFromUnix = (nome) => {
+    try {
+      db.function(nome, { deterministic: true }, (valor) => {
+        if (valor == null) return null;
+        const n = Number(valor);
+        if (!Number.isFinite(n)) return null;
+        const msValue = Math.abs(n) < 1e12 ? n * 1000 : n;
+        const d = new Date(msValue);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toISOString().slice(0, 19).replace('T', ' ');
+      });
+    } catch (_) { /* já registrada nesta conexão */ }
+  };
+  registrarUnix('TOUNIX_TIMESTAMP');
+  registrarUnix('UNIX_TIMESTAMP');
+  registrarFromUnix('FROMUNIX_TIMESTAMP');
+  registrarFromUnix('FROM_UNIXTIME');
 }
 
 /**
