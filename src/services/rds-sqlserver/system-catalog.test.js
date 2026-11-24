@@ -1161,6 +1161,15 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     }));
   });
 
+  test('OBJECTPROPERTYEX identifica funcoes escalares para o IntelliSense', () => {
+    const propriedades = engine.execute('principal', `
+      SELECT OBJECTPROPERTYEX(object_id, 'IsScalarFunction') AS escalar,
+             OBJECTPROPERTYEX(object_id, 'IsTableFunction') AS tabela
+      FROM sys.objects WHERE name = 'UNIX_TIMESTAMP'
+    `).rows;
+    expect(propriedades).toEqual([{ escalar: 1, tabela: 0 }]);
+  });
+
   test('CREATE FUNCTION substitui a funcao de compatibilidade sem duplicar o nome', () => {
     expect(() => engine.execute('principal',
       'CREATE FUNCTION [dbo].[TOUNIX_TIMESTAMP] (@x int) RETURNS int AS BEGIN RETURN @x END'

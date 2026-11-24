@@ -3022,12 +3022,15 @@ function sincronizarCatalogoDatabase(db, dbName) {
   // executar preparacoes dentro do callback de uma UDF ("database connection
   // is busy executing a query"), entao o catalogo e lido aqui, fora da UDF,
   // sempre que a sincronizacao roda (abertura e apos DDL).
-  const objetosCatalogo = db.prepare('SELECT object_id, name FROM main.objects').all();
+  const objetosCatalogo = db.prepare('SELECT object_id, name, type FROM main.objects').all();
   db.__objetosPorNome = new Map(
     objetosCatalogo.map((objeto) => [objeto.name.toLowerCase(), objeto.object_id])
   );
   db.__objetosPorId = new Map(
     objetosCatalogo.map((objeto) => [objeto.object_id, objeto.name])
+  );
+  db.__tiposPorId = new Map(
+    objetosCatalogo.map((objeto) => [objeto.object_id, objeto.type])
   );
   const colunasCatalogo = db.prepare(
     'SELECT object_id, column_id, name FROM main.all_columns'
@@ -3256,23 +3259,32 @@ function registrarFuncoes(db, { dataDir, dbName, engine, listarDatabases, usuari
   // Prepara a consulta uma unica vez: chamar db.prepare() de dentro de uma UDF
   // enquanto outra instrucao esta em execucao faz o better-sqlite3 lanocar
   // "This database connection is busy executing a query".
-  let existeObjeto = null;
-  try {
-    existeObjeto = db.prepare('SELECT 1 AS existe FROM main.objects WHERE object_id = ?');
-  } catch {
-    existeObjeto = null;
-  }
+  // Nao preparar SQL aqui: esta funcao e registrada antes da tabela objects
+  // existir, e preparar dentro da UDF e proibido pelo better-sqlite3. O mapa
+  // __tiposPorId e montado pela sincronizacao do catalogo.
   const objectProperty = (id, propriedade) => {
     const nome = String(propriedade || '').toLowerCase();
     if (nome === 'ownerid') return 1;
     if (nome === 'isindexed' || nome === 'isindexable') return 1;
-    if (nome.startsWith('is')) return 0;
-    if (!existeObjeto) return 0;
-    try {
-      return existeObjeto.get(Number(id)) ? 1 : 0;
-    } catch {
-      return 0;
+    const tipos = db.__tiposPorId;
+    const tipo = tipos && tipos.get(Number(id));
+    if (!tipo) return 0;
+    // O IntelliSense do SSMS usa OBJECTPROPERTYEX para decidir se um objeto
+    // e uma funcao escalar. Devolver 0 para `IsScalarFunction` faz o editor
+    // marcar `dbo.FUNCAO(...)` como erro 4121 mesmo com a funcao catalogada.
+    const tiposPorPropriedade = {
+      isscalarfunction: ['FN', 'FS'],
+      istablefunction: ['IF', 'TF', 'FT'],
+      isinlinefunction: ['IF'],
+      isprocedure: ['P', 'PC', 'RF'],
+      isview: ['V'],
+      isusertable: ['U']
+    };
+    if (tiposPorPropriedade[nome]) {
+      return tiposPorPropriedade[nome].includes(String(tipo)) ? 1 : 0;
     }
+    if (nome.startsWith('is')) return 0;
+    return 1;
   };
   db.function('OBJECTPROPERTY', { varargs: true }, objectProperty);
   db.function('OBJECTPROPERTYEX', { varargs: true }, objectProperty);
