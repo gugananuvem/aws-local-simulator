@@ -155,7 +155,10 @@ function columnMetadata(columns = [], rows = []) {
         return Number.isInteger(numero) && (numero === 0 || numero === 1);
       });
       const todosInteiros = values.length > 0 && values.every((value) => Number.isInteger(Number(value)));
-      if (/^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$|SkipTapeLabel$)/.test(name)) {
+      // IsContainedAuthentication é lido pelo SMO/ConnectionInfo como INT, não BIT.
+      if (/^(?:Server_)?IsContainedAuthentication$/i.test(name)) {
+        if (values.length === 0 || todosInteiros) kind = 'int';
+      } else if (/^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$|SkipTapeLabel$)/.test(name)) {
         if (values.length === 0 || todosZeroUm) kind = 'bit';
       } else if (/^(?:FillFactor|IndexType|SpatialIndexType|SecondaryXmlIndexType|ResumableOperationState|BackupSetType)$/i.test(name)) {
         if (values.length === 0 || todosInteiros) kind = 'tinyint';

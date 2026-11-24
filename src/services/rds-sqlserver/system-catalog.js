@@ -934,6 +934,76 @@ const DDL_DATABASE = `
     schema_id INTEGER NOT NULL DEFAULT 1
   );
 
+  CREATE TABLE IF NOT EXISTS plan_guides (
+    plan_guide_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    create_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    modify_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    is_disabled BIT NOT NULL DEFAULT 0,
+    query_text TEXT,
+    scope_type INTEGER NOT NULL DEFAULT 1,
+    scope_type_desc TEXT NOT NULL DEFAULT 'OBJECT',
+    scope_object_id INTEGER,
+    scope_batch TEXT,
+    parameters TEXT,
+    hints TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS symmetric_keys (
+    symmetric_key_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    principal_id INTEGER,
+    key_algorithm TEXT,
+    key_length INTEGER,
+    key_guid TEXT,
+    create_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    modify_date DATETIME NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS column_master_keys (
+    column_master_key_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    key_store_provider_name TEXT,
+    key_path TEXT,
+    create_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    modify_date DATETIME NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS database_audit_specifications (
+    database_specification_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    create_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    modify_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    is_state_enabled BIT NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS security_policies (
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    schema_id INTEGER NOT NULL DEFAULT 1,
+    principal_id INTEGER,
+    is_enabled BIT NOT NULL DEFAULT 0,
+    is_not_for_replication BIT NOT NULL DEFAULT 0,
+    is_schema_bound BIT NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS security_predicates (
+    object_id INTEGER NOT NULL,
+    security_predicate_id INTEGER NOT NULL PRIMARY KEY,
+    target_object_id INTEGER NOT NULL,
+    predicate_definition TEXT,
+    predicate_type INTEGER,
+    operation INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS external_libraries (
+    external_library_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    principal_id INTEGER,
+    language TEXT,
+    scope INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS sensitivity_classifications (
     major_id INTEGER NOT NULL,
     minor_id INTEGER NOT NULL DEFAULT 0,
@@ -1295,6 +1365,8 @@ const OBJETOS_DO_CATALOGO = new Set([
   'sql_modules', 'system_sql_modules', 'all_sql_modules', 'extended_properties',
   'default_constraints', 'default_definitions', 'foreign_key_definitions', 'check_constraints', 'edge_constraints', 'index_resumable_operations', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_keys', 'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
+  'plan_guides', 'symmetric_keys', 'column_master_keys', 'database_audit_specifications',
+  'security_policies', 'security_predicates', 'external_libraries',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
   'external_tables', 'external_data_sources', 'external_file_formats', 'partitions',
