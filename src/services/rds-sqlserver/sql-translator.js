@@ -358,6 +358,11 @@ class SqlTranslator {
       'fn_syspolicy_is_automation_enabled'
     );
     resultado = this._traduzirCatalogoLocal(resultado);
+    // SMO scripting: OBJECTPROPERTY boolean flags sem alias chegam como INTN
+    // sem nome e SqlClient faz Boolean.Parse("0"/"1") -> falha. Alias seguro.
+    if (/ExecIsQuotedIdentOn|ExecIsAnsiNullsOn/i.test(resultado)) {
+      resultado = this._aliasarObjectPropertyBooleanSmo(resultado);
+    }
     // fn_helpcollations() e uma table-valued function no SQL Server; no SQLite
     // ela e uma tabela comum do catalogo master anexado como schema sys.
     resultado = resultado.replace(
@@ -794,7 +799,7 @@ class SqlTranslator {
       '(?:',
       '\\[(?!master\\]|msdb\\]|tempdb\\]|model\\]|sys\\]|dbo\\])[^\\]]+\\]',
       '|"(?!master"|msdb"|tempdb"|model"|sys"|dbo")[^"]+"',
-      '|\\b(?!master\\b|msdb\\b|tempdb\\b|model\\b|sys\\b|dbo\\b)[A-Za-z_][\\w$#@]*',
+      '|\\b(?!master\\b|msdb\\b|tempdb\\b|model\\b|sys\\b|dbo\\b|from\\b|join\\b|into\\b|update\\b|delete\\b|merge\\b|table\\b|on\\b|where\\b|set\\b|and\\b|or\\b|as\\b|select\\b|with\\b)[A-Za-z_][\\w$#@]*',
       ')'
     ].join('');
     const qualificadorDatabase = [
@@ -1050,9 +1055,19 @@ class SqlTranslator {
       'procedures', 'numbered_procedures', 'assemblies', 'assembly_modules',
       'table_types', 'assembly_types'
     ].join('|');
+    const identificadorNaoSistema = [
+      '(?:',
+      '\\[(?!master\\]|msdb\\]|tempdb\\]|model\\]|sys\\]|dbo\\]|main\\])[^\\]]+\\]',
+      '|"(?!master"|msdb"|tempdb"|model"|sys"|dbo"|main")[^"]+"',
+      '|\\b(?!master\\b|msdb\\b|tempdb\\b|model\\b|sys\\b|dbo\\b|main\\b)[A-Za-z_][\\w$#@]*',
+      ')'
+    ].join('');
     return semFuncao.replace(
-      new RegExp(`\\bsys\\s*\\.\\s*(${objetos})\\b`, 'gi'),
-      (_correspondencia, nome) => `main.${nome}`
+      new RegExp(
+        `(?<![A-Za-z0-9_$#@\\]])${identificadorNaoSistema}\\s*\\.\\s*(?:sys|main)\\s*\\.\\s*(${objetos})\\b|\\b(?:sys|main)\\s*\\.\\s*(${objetos})\\b`,
+        'gi'
+      ),
+      (_correspondencia, nomeQualificado, nomeSimples) => `main.${nomeQualificado || nomeSimples}`
     );
   }
 
@@ -3383,6 +3398,28 @@ class SqlTranslator {
       `(SELECT 1 FROM ${origem} WHERE ${condição}${filtro})`;
     return comPontoVirgula ? `${resultado};` : resultado;
   }
+
+
+  /**
+   * O SMO consulta OBJECTPROPERTY/OBJECTPROPERTYEX para flags booleanas de
+   * modulo sem alias; sem nome, a coluna chega como INTN e SqlClient falha com
+   * Boolean.Parse no script de procedure. Adiciona alias estável quando ausente.
+   * @private
+   */
+  _aliasarObjectPropertyBooleanSmo(sql) {
+    return sql.replace(
+      /\b(CONVERT\s*\(\s*(?:'BIT'|BIT)\s*,\s*OBJECTPROPERTY(?:EX)?\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*\)|CAST\s*\(\s*OBJECTPROPERTY(?:EX)?\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s+AS\s+BIT\s*\))/gi,
+      (match, _full, argsConvert, argsCast, offset, source) => {
+        const args = argsConvert || argsCast || '';
+        const prop = args.match(/,\s*N?'(ExecIsQuotedIdentOn|ExecIsAnsiNullsOn)'\s*$/i);
+        if (!prop) return match;
+        const after = source.slice(offset + match.length);
+        if (/^\s+AS\s+(?:\[|"|[A-Za-z_])/i.test(after)) return match;
+        return `${match} AS [${prop[1]}]`;
+      }
+    );
+  }
+
 }
 
 module.exports = SqlTranslator;

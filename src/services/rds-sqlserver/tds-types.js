@@ -158,7 +158,7 @@ function columnMetadata(columns = [], rows = []) {
       // IsContainedAuthentication é lido pelo SMO/ConnectionInfo como INT, não BIT.
       if (/^(?:Server_)?IsContainedAuthentication$/i.test(name)) {
         if (values.length === 0 || todosInteiros) kind = 'int';
-      } else if (/^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$|SkipTapeLabel$)/.test(name)) {
+      } else if (/^(?:Is[A-Z_]|Has[A-Z_]|No[A-Z_]|PadIndex$|Unique$|Temporary$|IsOptimizedForSequentialKey$|IsFileTableDefined$|IsSystemNamed$|DisallowRowLocks$|DisallowPageLocks$|IgnoreDuplicateKeys$|IsDisabled$|IsUnique$|IsClustered$|IsSystemObject$|IsFullTextKey$|IsXmlIndex$|IsSpatialIndex$|HasSparseColumn$|HasFilter$|IsPartitioned$|SkipTapeLabel$|QuotedIdentifierStatus$|AnsiNullsStatus$|ForReplication$|Recompile$|Startup$|IsEncrypted$|ExecIsQuotedIdentOn$|ExecIsAnsiNullsOn$)/.test(name)) {
         if (values.length === 0 || todosZeroUm) kind = 'bit';
       } else if (/^(?:FillFactor|IndexType|SpatialIndexType|SecondaryXmlIndexType|ResumableOperationState|BackupSetType)$/i.test(name)) {
         if (values.length === 0 || todosInteiros) kind = 'tinyint';

@@ -483,7 +483,8 @@ const DDL_DATABASE = `
     default_language_lcid INT DEFAULT 1033,
     default_language_name TEXT DEFAULT 'us_english',
     state CHAR(2) DEFAULT 'G',
-    is_disabled BIT NOT NULL DEFAULT 0
+    is_disabled BIT NOT NULL DEFAULT 0,
+    owning_principal_id INTEGER NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS objects (
@@ -1004,6 +1005,61 @@ const DDL_DATABASE = `
     scope INTEGER NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS external_languages (
+    external_language_id INTEGER NOT NULL PRIMARY KEY,
+    language TEXT NOT NULL,
+    create_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    principal_id INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS external_language_files (
+    external_language_id INTEGER NOT NULL,
+    content BLOB,
+    file_name TEXT,
+    platform INTEGER,
+    platform_desc TEXT,
+    parameters TEXT,
+    environment_variables TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS database_scoped_credentials (
+    credential_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    credential_identity TEXT,
+    create_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    modify_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    target_type TEXT,
+    target_id INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS sequences (
+    object_id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    schema_id INTEGER NOT NULL DEFAULT 1,
+    principal_id INTEGER,
+    parent_object_id INTEGER NOT NULL DEFAULT 0,
+    type TEXT NOT NULL DEFAULT 'SO',
+    type_desc TEXT NOT NULL DEFAULT 'SEQUENCE_OBJECT',
+    create_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    modify_date DATETIME NOT NULL DEFAULT (datetime('now')),
+    is_ms_shipped BIT NOT NULL DEFAULT 0,
+    is_published BIT NOT NULL DEFAULT 0,
+    is_schema_published BIT NOT NULL DEFAULT 0,
+    start_value SQL_VARIANT,
+    increment SQL_VARIANT,
+    minimum_value SQL_VARIANT,
+    maximum_value SQL_VARIANT,
+    is_cycling BIT NOT NULL DEFAULT 0,
+    is_cached BIT NOT NULL DEFAULT 0,
+    cache_size INTEGER,
+    system_type_id TINYINT,
+    user_type_id INTEGER,
+    precision TINYINT,
+    scale TINYINT,
+    current_value SQL_VARIANT,
+    is_exhausted BIT NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS sensitivity_classifications (
     major_id INTEGER NOT NULL,
     minor_id INTEGER NOT NULL DEFAULT 0,
@@ -1203,6 +1259,25 @@ const DDL_DATABASE = `
     name TEXT NOT NULL
   );
 
+  -- Dependências entre objetos (SMO Generate Scripts / dependency ordering).
+  CREATE TABLE IF NOT EXISTS sql_expression_dependencies (
+    referencing_id INTEGER NOT NULL DEFAULT 0,
+    referencing_minor_id INTEGER NOT NULL DEFAULT 0,
+    referencing_class INTEGER NOT NULL DEFAULT 1,
+    referencing_class_desc TEXT NOT NULL DEFAULT 'OBJECT_OR_COLUMN',
+    is_schema_bound_reference BIT NOT NULL DEFAULT 0,
+    referenced_class INTEGER NOT NULL DEFAULT 1,
+    referenced_class_desc TEXT NOT NULL DEFAULT 'OBJECT_OR_COLUMN',
+    referenced_server_name TEXT,
+    referenced_database_name TEXT,
+    referenced_schema_name TEXT,
+    referenced_entity_name TEXT,
+    referenced_id INTEGER,
+    referenced_minor_id INTEGER NOT NULL DEFAULT 0,
+    is_caller_dependent BIT NOT NULL DEFAULT 0,
+    is_ambiguous BIT NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS fulltext_index_columns (
     object_id INTEGER NOT NULL,
     column_id INTEGER NOT NULL,
@@ -1366,7 +1441,9 @@ const OBJETOS_DO_CATALOGO = new Set([
   'default_constraints', 'default_definitions', 'foreign_key_definitions', 'check_constraints', 'edge_constraints', 'index_resumable_operations', 'index_columns', 'computed_columns', 'identity_columns',
   'foreign_keys', 'foreign_key_columns', 'column_encryption_keys', 'xml_schema_collections',
   'plan_guides', 'symmetric_keys', 'column_master_keys', 'database_audit_specifications',
-  'security_policies', 'security_predicates', 'external_libraries',
+  'sql_expression_dependencies',
+  'security_policies', 'security_predicates', 'external_libraries', 'external_languages', 'external_language_files', 'database_scoped_credentials',
+  'sequences',
   'sensitivity_classifications', 'change_tracking_tables', 'filetables',
   'periods', 'remote_data_archive_tables',
   'external_tables', 'external_data_sources', 'external_file_formats', 'partitions',
@@ -1683,7 +1760,7 @@ const VIEWS_DO_SISTEMA = Object.freeze({
   column_encryption_keys: [['encryption_algorithm_name', 'NVARCHAR', 128]],
   columns: [['column_id', 'INT', 4], ['user_type_id', 'INT', 4], ['max_length', 'SMALLINT', 2], ['is_nullable', 'BIT', 1]],
   computed_columns: [['column_id', 'INT', 4], ['definition', 'NVARCHAR', 4000]],
-  database_principals: [['sid', 'BLOB', 8000], ['is_disabled', 'BIT', 1]],
+  database_principals: [['sid', 'BLOB', 8000], ['is_disabled', 'BIT', 1], ['owning_principal_id', 'INT', 4]],
   data_spaces: [['data_space_id', 'INT', 4], ['type', 'CHAR', 2]],
   database_permissions: [['grantee_principal_id', 'INT', 4], ['state', 'CHAR', 2]],
   default_constraints: [['parent_object_id', 'INT', 4], ['definition', 'NVARCHAR', 4000]],
@@ -2414,7 +2491,8 @@ function sincronizarCatalogoDatabase(db, dbName) {
     ['default_language_lcid', 'INT DEFAULT 1033'],
     ['default_language_name', "TEXT DEFAULT 'us_english'"],
     ['state', "CHAR(2) DEFAULT 'G'"],
-    ['is_disabled', 'BIT NOT NULL DEFAULT 0']
+    ['is_disabled', 'BIT NOT NULL DEFAULT 0'],
+    ['owning_principal_id', 'INT NOT NULL DEFAULT 1']
   ]);
 
   const data = '2023-01-01 00:00:00';
