@@ -260,7 +260,7 @@ describe('DbEngine (RDS SQL Server)', () => {
   test('CREATE FUNCTION escalar registra o corpo e permite chamar a funcao', () => {
     const comTradutor = new DbEngine(dataDir, new SqlTranslator());
     const criacao = [
-      'CREATE FUNCTION [dbo].[TOUNIX_TIMESTAMP] (',
+      'CREATE FUNCTION [dbo].[TOUNIX_TIMESTAMP_UDF] (',
       '  @ctimestamp datetime',
       ')',
       'RETURNS integer',
@@ -274,20 +274,20 @@ describe('DbEngine (RDS SQL Server)', () => {
     try {
       expect(comTradutor.execute('principal', criacao).rows[0].FunctionCreated).toBe(1);
       expect(comTradutor.execute('principal',
-        "SELECT name, type FROM sys.objects WHERE name = 'TOUNIX_TIMESTAMP'"
-      ).rows).toEqual([{ name: 'TOUNIX_TIMESTAMP', type: 'FN' }]);
+        "SELECT name, type FROM sys.objects WHERE name = 'TOUNIX_TIMESTAMP_UDF'"
+      ).rows).toEqual([{ name: 'TOUNIX_TIMESTAMP_UDF', type: 'FN' }]);
 
       const chamada = comTradutor.execute('principal',
-        "SELECT dbo.TOUNIX_TIMESTAMP({d '1970-01-01 00:00:10'}) AS ts"
+        "SELECT dbo.TOUNIX_TIMESTAMP_UDF({d '1970-01-01 00:00:10'}) AS ts"
       );
       expect(chamada.rows).toEqual([{ ts: 10 }]);
 
-      comTradutor.execute('principal', 'DROP FUNCTION [dbo].[TOUNIX_TIMESTAMP]');
+      comTradutor.execute('principal', 'DROP FUNCTION [dbo].[TOUNIX_TIMESTAMP_UDF]');
       expect(comTradutor.execute('principal',
-        "SELECT name FROM sys.objects WHERE name = 'TOUNIX_TIMESTAMP'"
+        "SELECT name FROM sys.objects WHERE name = 'TOUNIX_TIMESTAMP_UDF'"
       ).rows).toEqual([]);
       expect(() => comTradutor.execute('principal',
-        "SELECT dbo.TOUNIX_TIMESTAMP({d '1970-01-01 00:00:10'}) AS ts"
+        "SELECT dbo.TOUNIX_TIMESTAMP_UDF({d '1970-01-01 00:00:10'}) AS ts"
       )).toThrow(/Invalid object name/);
     } finally {
       comTradutor.close();

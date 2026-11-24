@@ -1681,12 +1681,18 @@ function extrairMetadadosDdl(sql) {
     if (!trecho) continue;
     const marcador = /\/\*TSQL:([0-9A-Fa-f]+)\*\//.exec(trecho);
     const nomeColuna = /^\s*(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([A-Za-z_][\w]*))/.exec(trecho);
-    if (marcador && nomeColuna) {
+    // Databases importados e .db criados fora do tradutor nao gravam os
+    // marcadores TSQL, mas ainda podem ter PRIMARY KEY inline. O catalogo
+    // precisa reconhecer essa coluna para publicar a constraint no SMO.
+    const ehDefinicaoColuna = nomeColuna && !/^(?:CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN)\b/i.test(trecho);
+    if (ehDefinicaoColuna) {
       let tipoOriginal = '';
-      try {
-        tipoOriginal = Buffer.from(marcador[1], 'hex').toString('utf8');
-      } catch {
-        tipoOriginal = '';
+      if (marcador) {
+        try {
+          tipoOriginal = Buffer.from(marcador[1], 'hex').toString('utf8');
+        } catch {
+          tipoOriginal = '';
+        }
       }
       const nome = nomeColuna[1] || nomeColuna[2] || nomeColuna[3] || nomeColuna[4];
       const marcadorIdentidade = /\/\*TSQLID:(\d+)_(\d+)\*\//i.exec(trecho);
@@ -1697,8 +1703,9 @@ function extrairMetadadosDdl(sql) {
         incremento: marcadorIdentidade ? Number(marcadorIdentidade[2]) : 1
       });
       if (/\bPRIMARY\s+KEY\b/i.test(trecho)) {
+        const nomeConstraint = /\bCONSTRAINT\s+(?:\[([^\]]+)\]|"([^"]+)"|([A-Za-z_][\w]*))/i.exec(trecho);
         resultado.pk = {
-          nome: '',
+          nome: nomeConstraint ? (nomeConstraint[1] || nomeConstraint[2] || nomeConstraint[3]) : '',
           clusterizado: !/\bNONCLUSTERED\b/i.test(trecho),
           colunas: [nome]
         };

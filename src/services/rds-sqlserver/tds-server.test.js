@@ -435,7 +435,9 @@ describe('TdsServer', () => {
       0x05, 0x09, 0x04, 0x00, 0x00, 0x00
     ]);
     expect(payload.includes(envchangeCollation)).toBe(true);
-    expect(payload.indexOf(TOKEN.LOGINACK)).toBeGreaterThan(payload.indexOf(envchangeCollation));
+    // O LOGINACK vem primeiro: o SqlClient precisa da versao TDS antes de
+    // interpretar os ENVCHANGE de database/collation seguintes.
+    expect(payload.indexOf(TOKEN.LOGINACK)).toBeLessThan(payload.indexOf(envchangeCollation));
   });
 
   test('LOGIN7 incompleto e falha interna nas credenciais devolvem ERROR', async () => {

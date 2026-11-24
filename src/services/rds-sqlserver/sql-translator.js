@@ -349,6 +349,17 @@ class SqlTranslator {
         );
       }
     }
+    // A lista de Functions do SSMS 19 envia FunctionType/is_ms_shipped como
+    // nvarchar. A expressao CASE nao tem afinidade de coluna e o SQLite nao
+    // converte "1" para inteiro, deixando a lista vazia.
+    if (/\bFunctionType\b/i.test(resultado) && /\b(?:sys|main)\.all_objects\b/i.test(resultado)) {
+      resultado = resultado.replace(/@_msparam_\d+\b/gi, (parametro, deslocamento, texto) => {
+        const antes = texto.slice(Math.max(0, deslocamento - 6), deslocamento);
+        const depois = texto.slice(deslocamento + parametro.length, deslocamento + parametro.length + 12);
+        if (/CAST\(\s*$/i.test(antes) && /^ AS INTEGER\)/i.test(depois)) return parametro;
+        return `CAST(${parametro} AS INTEGER)`;
+      });
+    }
     resultado = this._traduzirParametrosSmo(resultado);
     resultado = this._removerRuido(resultado);
     resultado = this._removerColchetesSimples(resultado);
@@ -1054,7 +1065,12 @@ class SqlTranslator {
       'fulltext_stoplists', 'registered_search_property_lists', 'fulltext_index_columns', 'schemas',
       'all_parameters', 'parameters', 'triggers', 'database_permissions',
       'procedures', 'numbered_procedures', 'assemblies', 'assembly_modules',
-      'table_types', 'assembly_types'
+      'table_types', 'assembly_types',
+      'sql_expression_dependencies', 'sequences', 'plan_guides',
+      'symmetric_keys', 'column_master_keys', 'security_policies',
+      'security_predicates', 'database_audit_specifications',
+      'external_libraries', 'external_languages', 'external_language_files',
+      'database_scoped_credentials'
     ].join('|');
     const identificadorNaoSistema = [
       '(?:',
@@ -1790,6 +1806,23 @@ class SqlTranslator {
       };
     }
 
+    // Variante curta da listagem de Functions (sem IsEncrypted/IsNativelyCompiled).
+    // FunctionType precisa chegar como INT: NVARCHAR faz o SMO ignorar as UDFs.
+    if (
+      /\b(?:sys|main)\.all_objects\b/i.test(sql) &&
+      /\bFunctionType\b/i.test(sql)
+    ) {
+      return {
+        Name: 'TEXT',
+        Schema: 'TEXT',
+        Urn: 'TEXT',
+        CreateDate: 'DATETIME',
+        Owner: 'TEXT',
+        FunctionType: 'INT',
+        IsNativelyCompiled: 'BIT'
+      };
+    }
+
     if (/\b(?:sys|main)\.procedures\b/i.test(sql)) {
       return {
         IsMSShipped: 'BIT',
@@ -1799,6 +1832,27 @@ class SqlTranslator {
         IsSchemaPublished: 'BIT',
         CreateDate: 'DATETIME',
         ModifyDate: 'DATETIME'
+      };
+    }
+
+    // Lista curta de Indexes/Keys/Constraints do SSMS 19: sem tipos explicitos
+    // o SMO descarta a PK ao ler IndexKeyType/SecondaryXmlIndexType com
+    // GetInt16/GetByte e o no "Keys" aparece vazio.
+    if (
+      /\b(?:sys|main)\.indexes\b/i.test(sql) &&
+      /\bIndexKeyType\b/i.test(sql) &&
+      !/\bResumableOperationState\b|\bDisallowPageLocks\b/i.test(sql)
+    ) {
+      return {
+        Name: 'TEXT',
+        Urn: 'TEXT',
+        IndexType: 'TINYINT',
+        IndexKeyType: 'SMALLINT',
+        IsUnique: 'BIT',
+        SecondaryXmlIndexType: 'TINYINT',
+        IsDisabled: 'BIT',
+        HasFilter: 'BIT',
+        IsMemoryOptimized: 'BIT'
       };
     }
 
@@ -2041,13 +2095,13 @@ class SqlTranslator {
             for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
               const full = path.join(base, entry.name);
               let isFile = 0;
-              try { isFile = entry.isFile() ? 1 : 0; } catch {}
+              try { isFile = entry.isFile() ? 1 : 0; } catch { /* Dirent sem isFile */ }
               rows.push({ Name: entry.name, IsFile: isFile, FullName: full });
               if (rows.length >= 500) break;
             }
           }
         }
-      } catch {}
+      } catch { /* diretorio indisponivel */ }
       const wantsPath = /\bFullName\s+AS\s+\[FullName\]\s*,\s*@Path\s+AS\s+\[Path\]\s*,\s*IsFile\s+AS\s+\[IsFile\]/i.test(sql);
       if (rows.length === 0) {
         return wantsPath

@@ -694,6 +694,56 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(translator.columnTypesFor("SELECT 'x' AS [Name]")).toBeNull();
     });
 
+    test('informa tipos TDS nas listagens curtas de Indexes e Functions do SSMS 19', () => {
+      const indice = [
+        'SELECT i.name AS [Name],',
+        'CAST(CASE i.type WHEN 1 THEN 0 ELSE 1 END AS tinyint) AS [IndexType],',
+        'i.is_primary_key + 2*i.is_unique_constraint AS [IndexKeyType],',
+        'i.is_unique AS [IsUnique],',
+        "case UPPER(COALESCE(xi.secondary_type,'')) when 'P' then 1 else 0 end AS [SecondaryXmlIndexType],",
+        'i.is_disabled AS [IsDisabled], i.has_filter AS [HasFilter]',
+        'FROM sys.indexes AS i LEFT OUTER JOIN sys.xml_indexes AS xi ON xi.object_id = i.object_id'
+      ].join('\n');
+      expect(translator.columnTypesFor(indice)).toMatchObject({
+        IndexType: 'TINYINT',
+        IndexKeyType: 'SMALLINT',
+        IsUnique: 'BIT',
+        SecondaryXmlIndexType: 'TINYINT',
+        IsDisabled: 'BIT',
+        HasFilter: 'BIT'
+      });
+
+      const funcao = [
+        'SELECT udf.name AS [Name], udf.create_date AS [CreateDate],',
+        "(case when 'FN' = udf.type then 1 else 0 end) AS [FunctionType]",
+        'FROM sys.all_objects AS udf'
+      ].join('\n');
+      expect(translator.columnTypesFor(funcao)).toMatchObject({
+        CreateDate: 'DATETIME',
+        FunctionType: 'INT'
+      });
+    });
+
+    test('converte filtros nvarchar das listagens de Functions para INTEGER', () => {
+      const sql = [
+        'SELECT udf.name AS [Name],',
+        "(case when 'FN' = udf.type then 1 else 0 end) AS [FunctionType]",
+        'FROM sys.all_objects AS udf',
+        'WHERE (case when \'FN\' = udf.type then 1 else 0 end) = @_msparam_0',
+        'AND udf.is_ms_shipped = @_msparam_1'
+      ].join('\n');
+
+      expect(translator.translate(sql)).toContain(
+        '= CAST(? AS INTEGER) AND udf.is_ms_shipped = CAST(? AS INTEGER)'
+      );
+    });
+
+    test('traduz sql_expression_dependencies para o catalogo local', () => {
+      expect(translator.translate(
+        'SELECT dep.referencing_id FROM sys.sql_expression_dependencies AS dep'
+      )).toContain('FROM main.sql_expression_dependencies AS dep');
+    });
+
     test('informa BIT nas colunas Boolean do PolicyStore do DMF', () => {
       expect(translator.columnTypesFor(
         "SELECT 'PolicyStore[@Name=' AS [Urn], " +
@@ -1067,7 +1117,7 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
 
       const traduzido = translator.translate(sql);
       expect(traduzido).toContain(
-        'NULL AS [Server_ServerType], 1 AS [Server_Status], ' +
+        '0 AS [Server_ServerType], 1 AS [Server_Status], ' +
         '0 AS [Server_IsContainedAuthentication]'
       );
       expect(traduzido.match(/AS \[[A-Za-z_]+\]/g)).toHaveLength(15);
@@ -1120,7 +1170,7 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       const traduzido = translator.translate(sql);
       expect(traduzido).toContain('2 AS [AuditLevel]');
       expect(traduzido).toContain('0 AS [PolicyHealthState]');
-      expect(traduzido).toContain('NULL AS [ServiceAccountSid]');
+      expect(traduzido).toContain('0 AS [ServiceAccountSid]');
       expect(traduzido).toContain("'MSSQLSERVER' AS [ServiceName]");
       expect(traduzido).not.toContain('AS [HostPlatform]');
       expect(translator.columnTypesFor(sql)).toMatchObject({
@@ -1187,7 +1237,7 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
 
     test('preserva databases de sistema qualificados', () => {
       expect(translator.translate('SELECT * FROM master.dbo.sysdatabases'))
-        .toBe('SELECT * FROM master.sysdatabases');
+        .toBe('SELECT * FROM sysdatabases');
       expect(translator.translate('SELECT * FROM msdb.dbo.syspolicy_configuration'))
         .toBe('SELECT * FROM msdb.syspolicy_configuration');
     });
@@ -1485,7 +1535,8 @@ describe('SqlTranslator - SQL Server (T-SQL) para SQLite', () => {
       expect(resultado).toMatch(/CREATE TABLE IF NOT EXISTS _tmp_tmp_sync_states/i);
       expect(resultado).toContain('AS [Database_Name]');
       expect(resultado).toContain('JOIN _tmp_tmp_sync_states AS sync_state');
-      expect(resultado).toMatch(/drop table _tmp_tmp_db_ars\s*;\s*drop table _tmp_tmp_sync_states/i);
+      // Os DROPs finais sao removidos: as tabelas temporarias sao recriadas no proximo batch.
+      expect(resultado).not.toMatch(/\bdrop\s+table\b/i);
     });
 
     test('remove o bloco IF/EXECUTE de arquivamento remoto mantendo o SELECT', () => {

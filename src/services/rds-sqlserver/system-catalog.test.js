@@ -373,7 +373,7 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     `).rows;
     expect(texto).toHaveLength(1);
     // DATALENGTH(sc.text) nao tem alias, então o engine devolve linha posicional.
-    expect(texto[0][0]).toBe(1);
+    expect(texto[0][0]).toBe(2); // texttype 2 = definicao nao criptografada
     expect(String(texto[0][1])).toMatch(/VW001/i);
     expect(texto[0][2]).toBeGreaterThan(0);
 
@@ -669,6 +669,30 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     expect(chaves.rows).toEqual([{ name: 'PK_TB001' }]);
   });
 
+  test('publica PRIMARY KEY inline de database importado sem marcadores TSQL', () => {
+    // Arquivos .db vindos de restore/import nao tem os comentarios /*TSQL:*/.
+    const db = engine.getOrCreateDatabase('principal');
+    db.exec('CREATE TABLE TB_IMPORTADA (Id INTEGER PRIMARY KEY AUTOINCREMENT, Nome TEXT)');
+    catalogoSistema.sincronizarCatalogoDatabase(db);
+
+    const pk = engine.execute('principal', `
+      SELECT i.name AS nome, i.type_desc AS tipo, i.type AS codigo, i.index_id AS indice
+      FROM sys.indexes AS i
+      INNER JOIN sys.objects AS o ON o.object_id = i.object_id
+      WHERE o.name = 'TB_IMPORTADA' AND i.is_primary_key = 1
+    `);
+    expect(pk.rows).toEqual([
+      { nome: 'PK_TB_IMPORTADA', tipo: 'CLUSTERED', codigo: 1, indice: 1 }
+    ]);
+
+    const chaves = engine.execute('principal', `
+      SELECT k.name FROM sys.key_constraints AS k
+      INNER JOIN sys.objects AS o ON o.object_id = k.parent_object_id
+      WHERE o.name = 'TB_IMPORTADA'
+    `);
+    expect(chaves.rows).toEqual([{ name: 'PK_TB_IMPORTADA' }]);
+  });
+
   test('registra seed/increment apenas nas colunas IDENTITY reais', () => {
     engine.execute('principal',
       'CREATE TABLE [dbo].[TB002] ([Id] [int] IDENTITY(1,1) NOT NULL PRIMARY KEY, [Nome] [nvarchar](50) NULL)');
@@ -773,7 +797,7 @@ describe('Catálogo de sistema do SQL Server simulado', () => {
     `).rows;
     expect(colunas).toEqual([
       { column_id: 1, name: 'Id', tipo: 'int' },
-      { column_id: 2, name: 'Nome', tipo: 'varchar' }
+      { column_id: 2, name: 'Nome', tipo: 'nvarchar' }
     ]);
   });
 

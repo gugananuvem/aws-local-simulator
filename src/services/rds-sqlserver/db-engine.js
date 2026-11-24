@@ -560,7 +560,7 @@ class DbEngine {
         throw this._erroTsql(911, 1, `Database '${nome}' does not exist. Make sure that the name is entered correctly.`);
       }
       fs.mkdirSync(path.dirname(destino), { recursive: true });
-      try { const inst = this.getOrCreateDatabase(nome); inst.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+      try { const inst = this.getOrCreateDatabase(nome); inst.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) { /* database ainda sem WAL */ }
       fs.copyFileSync(caminhoDb, destino);
       this._registrarBackupMsdb(nome, destino);
       return { type: 'dml', rowCount: 0, rows: [], columns: [] };
@@ -576,7 +576,7 @@ class DbEngine {
       fs.mkdirSync(path.dirname(caminhoDb), { recursive: true });
       const chave = String(nome).toLowerCase();
       const existente = this.databases.get(chave);
-      if (existente) { try { existente.close(); } catch (_) {} this.databases.delete(chave); }
+      if (existente) { try { existente.close(); } catch (_) { /* conexao ja fechada */ } this.databases.delete(chave); }
       fs.copyFileSync(origem, caminhoDb);
       this._registrarBackupMsdb(nome, origem, 'RESTORE');
       return { type: 'dml', rowCount: 0, rows: [], columns: [] };
@@ -592,7 +592,7 @@ class DbEngine {
       if (tipo === 'BACKUP') {
         msdb.prepare('INSERT INTO backupset (database_name, type, backup_start_date, backup_finish_date, name, server_name) VALUES (?, ?, ?, ?, ?, ?)').run(databaseName, 'D', now, now, databaseName + '-Full Database Backup', 'LOCAL');
       }
-    } catch (_) {}
+    } catch (_) { /* msdb indisponivel no backup */ }
   }
 
   /**
@@ -1363,6 +1363,17 @@ class DbEngine {
               database_id = excluded.database_id,
               create_date = COALESCE(sys.databases.create_date, excluded.create_date)
           `).run(nome, proximo, new Date().toISOString());
+          // O SMO le essas tabelas logo apos CREATE DATABASE. Sem as linhas o
+          // DatabaseGuid/RecoveryForkGuid voltam NULL e a criacao falha.
+          const guid = `00000000-0000-0000-0000-${String(proximo).padStart(12, '0')}`;
+          alvo.prepare(`
+            INSERT OR IGNORE INTO sys.database_recovery_status
+              (database_id, database_guid, recovery_fork_guid) VALUES (?, ?, ?)
+          `).run(proximo, guid, guid);
+          alvo.prepare('INSERT OR IGNORE INTO sys.change_tracking_databases (database_id) VALUES (?)')
+            .run(proximo);
+          alvo.prepare('INSERT OR IGNORE INTO sys.database_filestream_options (database_id) VALUES (?)')
+            .run(proximo);
           if (ajustes.length) {
             const conjuntos = ajustes.map(([coluna]) => `${coluna} = ?`).join(', ');
             alvo.prepare(`UPDATE sys.databases SET ${conjuntos} WHERE name = ?`)
@@ -1691,11 +1702,7 @@ class DbEngine {
     if (!m) return;
     const selectSql = m[1].trim().replace(/;+\s*$/, '');
     if (!selectSql) return;
-    try {
-      db.prepare(selectSql);
-    } catch (erro) {
-      throw erro;
-    }
+    db.prepare(selectSql);
   }
 
   /** @private */
